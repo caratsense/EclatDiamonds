@@ -449,8 +449,11 @@ export class PartiesService {
   async exportXlsx(user: AuthUser, headerStore?: string): Promise<{ buffer: Buffer; rows: number }> {
     const rows = await this.prisma.party.findMany({
       where: {
-        ...this.scope.storeFilter(user, headerStore),
-        ...(isSalesScoped(user) ? { AND: [partyWorkedBy(user.id)] } : {}),
+        organisationId: user.organisationId,
+        AND: [
+          this.scope.storeOrUnbranchedFilter(user, headerStore),
+          ...(isSalesScoped(user) ? [partyWorkedBy(user.id)] : []),
+        ],
         archivedAt: null,
       },
       // The workbook reads in the same order as the screen it came from.
@@ -492,10 +495,29 @@ export class PartiesService {
     pagination: PageRequest,
   ): Promise<Paginated<PartyRow>> {
     const where: Prisma.PartyWhereInput = {
-      ...this.scope.storeFilter(user, headerStore),
-      // A salesperson's directory is their own customers — never the branch's
-      // phone list.
-      ...(isSalesScoped(user) ? { AND: [partyWorkedBy(user.id)] } : {}),
+      /*
+       * Organisation, then branch — and a customer with no branch is kept.
+       *
+       * `storeFilter` alone excluded every null-store party, which on the live
+       * database is four hundred-odd real customers: the ones an inbound
+       * message created before routing knew a branch. They were reachable from
+       * Customer 360 by id and from nowhere a person could actually look, which
+       * is the same complaint `inScope()` above was written for. See
+       * StoreScopeService.storeOrUnbranchedFilter for the rule.
+       */
+      organisationId: user.organisationId,
+      /*
+       * Under `AND`, not spread as a top-level `OR`: the search below assigns
+       * `where.OR` outright, and a branch clause sitting in that key would be
+       * overwritten the moment somebody typed a name — the whole directory,
+       * every branch, returned by a search box.
+       */
+      AND: [
+        this.scope.storeOrUnbranchedFilter(user, headerStore),
+        // A salesperson's directory is their own customers — never the
+        // branch's phone list.
+        ...(isSalesScoped(user) ? [partyWorkedBy(user.id)] : []),
+      ],
       /*
        * Archived contacts are not in the directory.
        *

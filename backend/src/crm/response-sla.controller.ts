@@ -13,6 +13,7 @@ import {
 import { HumansOnly } from '../auth/machine.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { AuthUser, CurrentUser } from '../common/auth-user';
+import { StoreHeader } from '../common/store-header.decorator';
 import { ResponseSlaService } from './response-sla.service';
 
 export class ResponseSlaSettingsDto {
@@ -90,17 +91,31 @@ export class ResponseSlaController {
     return this.sla.saveSettings(user, dto);
   }
 
-  // Management information: store manager and above, never a salesperson.
+  /**
+   * Management information: store manager and above, never a salesperson.
+   *
+   * Branch from the store switcher unless the caller named one. Without this
+   * the breach board answered for every branch while the rest of the screen
+   * answered for one, so a manager reading "4 breached" could not tell whose.
+   */
   @Roles('store_manager')
   @Get('summary')
-  summary(@CurrentUser() user: AuthUser, @Query() query: ResponseSlaQueryDto) {
-    return this.sla.summary(user, { storeId: query.storeId, days: query.days });
+  summary(
+    @CurrentUser() user: AuthUser,
+    @Query() query: ResponseSlaQueryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.sla.summary(user, { storeId: query.storeId ?? store, days: query.days });
   }
 
   // A salesperson sees the clocks on the threads assigned to them (service).
   @Get('clocks')
-  clocks(@CurrentUser() user: AuthUser, @Query() query: ResponseSlaQueryDto) {
-    return this.sla.list(user, query);
+  clocks(
+    @CurrentUser() user: AuthUser,
+    @Query() query: ResponseSlaQueryDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.sla.list(user, { ...query, storeId: query.storeId ?? store });
   }
 
   /**

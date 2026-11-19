@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, Role } from '@prisma/client';
 import { PRODUCT_NAME } from '../common/brand';
 import { PrismaService } from '../prisma/prisma.service';
 import { canOpen, canOpenById } from '../auth/access';
@@ -20,7 +20,7 @@ import { MetaAdMetadataService } from '../integrations/meta-ad-metadata.service'
 import { extractMetaReferral } from '../integrations/meta-referral';
 import { ConversationAiGate } from '../crm/ai-responder';
 import { AdSetRulesService } from '../crm/adset-rules.service';
-import { chooseHandoffOwner, chooseHandoffStore } from './handoff-destination';
+import { chooseHandoffOwner, chooseHandoffStore, handoffAudience } from './handoff-destination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { isUnambiguousOptOut } from '../omnichannel/omnichannel-policy';
@@ -916,33 +916,41 @@ export class WhatsAppBotService {
   }
 
   /**
-   * Hand a thread to the manager of the branch the ad routed it to.
+   * Hand a thread to the branch the ad routed it to.
    *
-   * THE THREAD STAYS ON THE SAME NUMBER. The manager answers from the CRM
+   * THE THREAD STAYS ON THE SAME NUMBER. Whoever answers does so from the CRM
    * inbox and the customer sees the one chat they have been in all along —
    * there is no transfer the customer can perceive.
    *
-   * ## Why the store manager, and not a queue
+   * ## The branch, and then one owner
    *
-   * An unowned thread is everybody's and therefore nobody's, and — because a
-   * salesperson's inbox is "threads assigned to me" — an unassigned thread is
-   * invisible to every salesperson at the branch. Naming an owner is what makes
-   * the lead land somewhere a person is accountable for it.
+   * Writing `storeId` is what puts the thread in the branch's inbox: a store
+   * manager's Conversations are scoped to their stores, so the moment the
+   * thread has a branch it is in every manager-level inbox there, read or
+   * unread, whether or not a bell was sent. That is the real mechanism, and it
+   * is why the branch is written before anybody is told about it.
    *
-   * ## Which manager
+   * A SALESPERSON'S inbox is narrower by design — their Conversations screen
+   * is held at `own`, and `ConversationsService.visibility` turns that into
+   * "threads assigned to me". So a salesperson sees this lead only by being
+   * its owner, which is exactly why the owner may now be one of them.
    *
-   * The active `store_manager` at the conversation's store, oldest account
-   * first so the choice is STABLE: a branch with two managers always routes to
-   * the same one until somebody reassigns, which is a rule people can learn.
-   * Rotating silently between them would make "why didn't I get that lead?"
-   * unanswerable.
+   * ## Which person
+   *
+   * `chooseHandoffOwner`: whoever already holds it, then the person the script
+   * nominates, then the branch's first manager, then its first salesperson.
+   * Oldest account first within each, so the choice is STABLE — a branch with
+   * two managers always routes to the same one until somebody reassigns, which
+   * is a rule people can learn. Rotating silently between them would make "why
+   * didn't I get that lead?" unanswerable.
    *
    * ## When there is no store
    *
-   * Nothing is assigned, deliberately. No store means no ad rule matched, so
-   * the business has not said which branch owns this customer — and guessing a
-   * branch is worse than leaving it in the head-office queue where the non-ad
-   * tab surfaces it. The thread still becomes `human`, so the assistant stops.
+   * Nothing is assigned and nobody is told, deliberately. No store means no ad
+   * rule matched, so the business has not said which branch owns this customer
+   * — and guessing a branch is worse than leaving it in the head-office queue
+   * where the non-ad tab surfaces it. The thread still becomes `human`, so the
+   * assistant stops.
    */
   private async handToAPerson(
     organisationId: string,
@@ -1001,21 +1009,36 @@ export class WhatsAppBotService {
 
     const storeId = chooseHandoffStore(conversation.storeId, ruleStoreId);
 
-    const managers = storeId
+    /*
+     * EVERYBODY AT THAT BRANCH, not just its managers.
+     *
+     * The Mumbai Bandra bridal ad is why. Its enquiries reached nobody because
+     * the only people at that counter were salespeople, and this looked for a
+     * `store_manager` or gave up. The client's instruction after watching it:
+     * the conversation goes to everybody assigned to that store — salesperson,
+     * store manager, anybody.
+     *
+     * Oldest account first, so "the first manager" and "the first salesperson"
+     * are the same people tomorrow as today.
+     */
+    const branch = storeId
       ? await this.prisma.user.findMany({
           where: {
             organisationId,
             isActive: true,
-            role: 'store_manager',
+            role: { in: [Role.store_manager, Role.salesperson] },
             userStores: { some: { storeId } },
           },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
         })
       : [];
-    // The first of them who can open Conversations: a manager head office has
-    // switched the inbox off for would be handed a thread they cannot see.
-    const manager = managers.find((m) => canOpen(m, 'conversations')) ?? null;
+    // Only those who can open Conversations at all: somebody head office has
+    // switched the inbox off for would be handed, or told about, a thread they
+    // cannot reach.
+    const atTheBranch = branch.filter((p) => canOpen(p, 'conversations'));
+    const manager = atTheBranch.find((p) => p.role === Role.store_manager) ?? null;
+    const salesperson = atTheBranch.find((p) => p.role === Role.salesperson) ?? null;
     // The same goes for whoever holds the thread now. An owner who cannot open
     // Conversations (given it before their screens changed, or since left)
     // would never see it, so the thread counts as nobody's.
@@ -1039,7 +1062,12 @@ export class WhatsAppBotService {
         ? ruleOwnerId
         : null;
 
-    const owner = chooseHandoffOwner({ holder, named, manager: manager?.id ?? null });
+    const owner = chooseHandoffOwner({
+      holder,
+      named,
+      manager: manager?.id ?? null,
+      salesperson: salesperson?.id ?? null,
+    });
 
     await this.prisma.conversation.update({
       where: { id: conversationId },
@@ -1086,31 +1114,59 @@ export class WhatsAppBotService {
     }
 
     /*
-     * Tell the person who now owns it.
+     * Tell the branch, and name the person who has it.
      *
      * Assigning a thread and not saying so is the same as not assigning it: the
-     * manager learns about the lead whenever they next happen to open the inbox,
+     * owner learns about the lead whenever they next happen to open the inbox,
      * which on a busy counter is hours. The bell is the only thing that reaches
      * them while the customer is still holding their phone.
      *
-     * WHO: the owner AFTER this handoff — the manager just named, or whoever
-     * already held the thread (the bot stops talking either way, so a
-     * pre-existing owner needs telling just as much). Exactly one person, never
-     * the branch: a notification sent to everyone is one nobody treats as theirs.
+     * WHO: everybody at that branch who can open Conversations, plus the owner.
+     * This was one person until today, on the argument that a notification sent
+     * to everyone is one nobody treats as theirs. The client overruled it after
+     * watching the Bandra ad's enquiries reach nobody at all: she would rather
+     * five people see a lead than none of them do. The owner's name goes in the
+     * body so the branch knows who is answering — telling a counter is not the
+     * same as asking five people to reply to one customer.
+     *
+     * WHAT THEY CAN THEN OPEN differs by role, and the bell is written for
+     * that. A manager opens the thread from the link, because the branch is
+     * now on it. A salesperson who is not its owner reads the news and the
+     * owner's name, and the link lands on "Could not open thread" — their
+     * Conversations screen is held at `own`. Head office's lever for that is
+     * the role, not this bell: make them a store manager, or give them the
+     * thread.
      *
      * WHO NOT: when no ad rule matched there is no store, so nothing was
-     * assigned and there is no right recipient. Inventing one — the nearest
-     * branch, every manager — is the guess `handToAPerson` refuses to make above.
-     * Head office finds these in the Non-ad queue, which exists for this case.
+     * assigned, there is no branch to tell, and there is no right recipient.
+     * Inventing one — the nearest branch, every manager — is the guess
+     * `handToAPerson` refuses to make above. Head office finds these in the
+     * Non-ad queue, which exists for this case.
      *
      * Best-effort by contract, and emitted after the writes have committed.
      */
-    if (owner) {
+    const recipients = handoffAudience(
+      owner,
+      atTheBranch.map((p) => p.id),
+    );
+    // The owner is normally one of the branch's own staff. A holder head office
+    // gave the thread to is not, and the bell should still say their name.
+    const ownerName = owner
+      ? ((atTheBranch.find((p) => p.id === owner)?.name ??
+          (
+            await this.prisma.user.findFirst({
+              where: { id: owner, organisationId },
+              select: { name: true },
+            })
+          )?.name) ??
+        null)
+      : null;
+    if (recipients.length) {
       const who = conversation.party?.name?.trim() || 'A customer';
-      await this.notifications.emit([owner], {
+      await this.notifications.emit(recipients, {
         kind: 'reminder',
         title: `${who} is waiting for a person on WhatsApp`,
-        body: reason,
+        body: ownerName ? `${reason} ${ownerName} has it.` : reason,
         href: `/conversations?thread=${conversationId}`,
         storeId,
         entityType: 'Conversation',
@@ -1125,8 +1181,10 @@ export class WhatsAppBotService {
     this.logger.log(
       `  handed to a person on ${conversationId}` +
         (owner
-          ? ` → ${named === owner ? 'the script’s own owner' : (manager?.name ?? 'its existing owner')}`
-          : ' (the ad matched no script with a branch — stays in the head-office queue)'),
+          ? ` → ${ownerName ?? owner}, and ${recipients.length} told`
+          : storeId
+            ? ' (nobody at that branch can open Conversations — left unassigned)'
+            : ' (the ad matched no script with a branch — stays in the head-office queue)'),
     );
   }
 

@@ -570,12 +570,12 @@ export class DashboardService {
     // `{ storeId: { in: [...] } }` — and a global (null-store) task matches no
     // `in` list. Manager-created organisation-wide tasks were therefore written
     // successfully and then never appeared in the list, which read as the save
-    // having failed. Global tasks are now included explicitly, bounded by
-    // organisation so the widened query cannot cross a tenant.
+    // having failed. `storeOrUnbranchedFilter` is that rule for every list,
+    // bounded by organisation so the widened query cannot cross a tenant.
     const rows = await this.prisma.task.findMany({
       where: {
         organisationId: user.organisationId,
-        OR: [this.scope.storeFilter(user, headerStore), { storeId: null }],
+        ...this.scope.storeOrUnbranchedFilter(user, headerStore),
         ...(filter.mine ? { assigneeId: user.id } : {}),
         // A salesperson's tasks are the ones on them or raised by them.
         ...(isSalesScoped(user) ? { AND: [{ OR: [{ assigneeId: user.id }, { createdById: user.id }] }] } : {}),
