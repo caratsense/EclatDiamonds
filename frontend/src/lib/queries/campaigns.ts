@@ -110,6 +110,8 @@ export interface AudienceSegment {
 export interface AudiencePreview {
   total: number;
   contactable: number;
+  /** Contactable less the blocked — the figure the campaign later calls `targeted`. */
+  sendable: number;
   consentCheckedAtSend: boolean;
   excluded: { noContactPoint: number; blocked: number };
   reasons: string[];

@@ -488,9 +488,12 @@ export default function NewCampaignPage() {
                     <div className="font-[family-name:var(--font-display-face)] text-4xl tabular-nums">
                       {preview.data.total.toLocaleString()}
                     </div>
+                    {/* The sendable figure, not the contactable one. Blocked
+                        customers have a number and are still never messaged, so
+                        showing `contactable` here promised a bigger send than
+                        the campaign screen afterwards reported. */}
                     <p className="text-xs text-muted-foreground">
-                      people match. {preview.data.contactable.toLocaleString()} have a number we can
-                      message.
+                      people match. {preview.data.sendable.toLocaleString()} will be messaged.
                     </p>
                   </div>
 
@@ -652,7 +655,7 @@ export default function NewCampaignPage() {
               label="Audience"
               value={
                 preview.data
-                  ? `${preview.data.total.toLocaleString()} match, ${preview.data.contactable.toLocaleString()} contactable`
+                  ? `${preview.data.total.toLocaleString()} match, ${preview.data.sendable.toLocaleString()} will be messaged`
                   : "Not counted yet"
               }
             />
