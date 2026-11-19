@@ -44,6 +44,17 @@ function editSeed(row: MessageTemplateRow): TemplateEditSeed | string {
   if (m.isCarousel) {
     return "A carousel is edited at Meta for now — its cards cannot be rebuilt from here.";
   }
+  if (m.headerFormat && m.headerFormat !== "TEXT" && m.headerFormat !== "IMAGE") {
+    /*
+     * A DOCUMENT, VIDEO or LOCATION header.
+     *
+     * The editor offers none, text or picture, so one of these would seed as
+     * "none" and the save would silently strip the header off a working
+     * template. `quotation_pdf_v1` is exactly that: its header is the
+     * quotation PDF, and editing the wording would detach it.
+     */
+    return `This template's header is a ${m.headerFormat.toLowerCase()}, which this editor cannot carry. Edit it at Meta.`;
+  }
   if (!m.bodySource) {
     return "The original wording has not been read from Meta yet. Press Synchronise now, then edit.";
   }
@@ -180,8 +191,13 @@ export function TemplateDetail({
 
           <div className="space-y-1.5">
             <p className="text-xs font-medium text-muted-foreground">What the customer sees</p>
+            {/*
+              Only a picture is drawn as one. Meta returns a CDN URL for a
+              DOCUMENT header too — the quotation PDF — and putting that in an
+              img gives a broken image where a document should be.
+            */}
             <WhatsAppPreview
-              headerImageUrl={m.headerImageUrl ?? null}
+              headerImageUrl={m.headerFormat === "IMAGE" ? m.headerImageUrl ?? null : null}
               header={m.headerText ?? null}
               body={body || "—"}
               footer={m.footerText ?? null}
