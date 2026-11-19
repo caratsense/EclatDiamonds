@@ -35,6 +35,19 @@ export const SEGMENT_FIELDS = [
    * place for all of that to be forgotten.
    */
   'party.id',
+  /*
+   * TAGS, THE WAY THE CLIENT ACTUALLY SEGMENTS.
+   *
+   * "Meta Leads", "Walk-in Leads", a tag per branch -- the vocabulary already
+   * exists as LeadTag and is already editable on a customer's profile. What
+   * was missing was any way to build an audience from it, which is the one
+   * thing the client asked tags FOR.
+   *
+   * `in` includes, `not_in` excludes. "Has ALL of these tags" needs no new
+   * operator: it is one condition per tag with the segment's own
+   * `match: 'all'`, which is how every other field already composes.
+   */
+  'party.tag',
   'party.type',
   'party.storeId',
   'party.city',
@@ -316,6 +329,21 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
         where: { leads: { some: { stage: { in: values as never } } } },
         reason: `has a lead at stage ${values.join(' or ')}`,
       };
+    }
+    case 'party.tag': {
+      const values = asStringArray(c.value, c.field);
+      const has = { partyTagAssignments: { some: { tagId: { in: values } } } };
+      /*
+       * `not_in` is honoured here deliberately. Most fields in this compiler
+       * switch on the FIELD and ignore the operator, so a `not_in` elsewhere
+       * is accepted and then silently compiled as an include -- the opposite
+       * of what the rule says. An exclusion that quietly includes is the worst
+       * possible failure for a broadcast, so this field reads the operator.
+       */
+      if (c.op === 'not_in') {
+        return { where: { NOT: has }, reason: `is not tagged ${values.length} selected tag(s)` };
+      }
+      return { where: has, reason: `is tagged ${values.length} selected tag(s)` };
     }
     case 'lead.source': {
       const values = asStringArray(c.value, c.field);

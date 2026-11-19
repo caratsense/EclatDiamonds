@@ -123,6 +123,24 @@ export const SEGMENT_FIELD_GROUPS: {
     label: "Who they are",
     fields: [
       {
+        /*
+         * Tags, first in the list because they are how the client segments:
+         * "Meta Leads", "Walk-in Leads", a tag per branch. Both operators are
+         * offered — the exclusion is the half she asked for by name, and the
+         * compiler honours it with a real NOT rather than silently including.
+         *
+         * "Has ALL of these" is one rule per tag with Match set to "all of
+         * these"; there is no separate operator to learn.
+         */
+        field: "party.tag",
+        label: "Tag",
+        ops: [
+          { op: "in", label: "has any of" },
+          { op: "not_in", label: "does not have" },
+        ],
+        hint: "Meta Leads, Walk-in Leads, a branch tag",
+      },
+      {
         field: "party.type",
         label: "Record type",
         ops: [{ op: "in", label: "is one of" }],
