@@ -126,8 +126,31 @@ export function TemplateComposer({
    * Switching clears what no longer applies, which is what makes "the picture
    * went somewhere" impossible rather than merely unlikely.
    */
-  type Layout = "TEXT" | "IMAGE" | "CAROUSEL";
-  const [layout, setLayoutState] = useState<Layout>("TEXT");
+  type HeaderType = "NONE" | "TEXT" | "IMAGE";
+  const [headerType, setHeaderTypeState] = useState<HeaderType>("NONE");
+  const [isCarousel, setIsCarousel] = useState(false);
+  const bodyRef = useRef<HTMLTextAreaElement>(null);
+
+  /**
+   * Put the next `{{n}}` where the cursor is.
+   *
+   * Always `used.length + 1`, never a gap: Meta rejects a body that jumps from
+   * {{1}} to {{3}}, and the only way to produce one by hand is to delete a
+   * variable from the middle. Numbering from what is actually in the text
+   * means the next one is always correct, however the body was edited.
+   */
+  const insertVariable = () => {
+    const el = bodyRef.current;
+    const next = `{{${placeholdersIn(body).length + 1}}}`;
+    const at = el?.selectionStart ?? body.length;
+    const to = el?.selectionEnd ?? body.length;
+    setBody(body.slice(0, at) + next + body.slice(to));
+    // Put the caret after what was just inserted, so typing continues naturally.
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(at + next.length, at + next.length);
+    });
+  };
   const [header, setHeader] = useState("");
   const [headerImage, setHeaderImage] = useState<{ handle: string; previewUrl: string } | null>(null);
   const [cards, setCards] = useState<TemplateCardInput[]>([]);
@@ -142,10 +165,11 @@ export function TemplateComposer({
   const cardFileRef = useRef<HTMLInputElement>(null);
   const upload = useUploadTemplateImage(integrationId);
 
-  const isCarousel = layout === "CAROUSEL";
 
-  const setLayout = (next: Layout) => {
-    setLayoutState(next);
+
+  /** Changing the header type clears whatever the other types were holding. */
+  const setHeaderType = (next: HeaderType) => {
+    setHeaderTypeState(next);
     if (next !== "TEXT") setHeader("");
     if (next !== "IMAGE") {
       setHeaderImage((prev) => {
@@ -153,7 +177,18 @@ export function TemplateComposer({
         return null;
       });
     }
-    if (next !== "CAROUSEL") {
+  };
+
+  /**
+   * Turning the carousel on drops any header, because Meta refuses a template
+   * that has both and the server says so. Doing it here means the refusal is
+   * never reached: the two controls agree on screen instead of disagreeing a
+   * day later in a rejection.
+   */
+  const setCarousel = (on: boolean) => {
+    setIsCarousel(on);
+    if (on) setHeaderType("NONE");
+    if (!on) {
       setCards((prev) => {
         for (const c of prev) if (c.previewUrl) URL.revokeObjectURL(c.previewUrl);
         return [];
@@ -243,7 +278,7 @@ export function TemplateComposer({
                 : cards.some((c) => c.buttons.some((b) => b.type === "URL" && !b.url?.trim()))
                   ? "A link button needs a link."
                   : null
-    : layout === "IMAGE" && !headerImage
+    : headerType === "IMAGE" && !headerImage
       ? "Upload the picture that goes above the message."
       : null;
 
@@ -267,7 +302,8 @@ export function TemplateComposer({
     setExamples([]);
     setCategory("UTILITY");
     setLanguageCode("en_US");
-    setLayoutState("TEXT");
+    setHeaderTypeState("NONE");
+    setIsCarousel(false);
     setHeader("");
     setHeaderImage((prev) => {
       if (prev) URL.revokeObjectURL(prev.previewUrl);
@@ -305,7 +341,7 @@ export function TemplateComposer({
         // mutually exclusive here exactly as they are at Meta.
         ...(isCarousel
           ? { cards: cards.map(({ previewUrl: _preview, ...card }) => card) }
-          : layout === "IMAGE" && headerImage
+          : headerType === "IMAGE" && headerImage
             ? { headerFormat: "IMAGE" as const, headerHandle: headerImage.handle }
             : header.trim()
               ? { header: header.trim() }
@@ -404,20 +440,41 @@ export function TemplateComposer({
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="tpl-body" className="text-xs">
-              Message
-            </Label>
+            <div className="flex items-center justify-between">
+              <Label htmlFor="tpl-body" className="text-xs">
+                Message
+              </Label>
+              {/*
+                Meta puts an "Add variable" control under its body box and the
+                client asked for the same. Nobody should have to remember that
+                the syntax is two braces and that the numbers must run 1, 2, 3
+                with no gaps — this inserts the next one at the cursor and the
+                sample box below appears for it immediately.
+              */}
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="h-7 px-2 text-xs"
+                onClick={insertVariable}
+              >
+                <Plus className="mr-1 size-3" />
+                Add variable
+              </Button>
+            </div>
             <Textarea
               id="tpl-body"
+              ref={bodyRef}
               rows={4}
               value={body}
               onChange={(e) => setBody(e.target.value)}
-              placeholder="Hi {{1}}, your order at {{2}} is ready to collect."
+              placeholder="Hi there, your order is ready to collect."
             />
             <p className="text-[11px] text-muted-foreground">
-              Use <code className="rounded bg-muted px-1">{"{{1}}"}</code>,{" "}
-              <code className="rounded bg-muted px-1">{"{{2}}"}</code> for anything that changes per
-              customer. {body.length}/1024
+              {used.length
+                ? `${used.length} variable${used.length === 1 ? "" : "s"} — give each a sample below. `
+                : "Add a variable for anything that changes per customer, like their name. "}
+              {body.length}/1024
             </p>
           </div>
 
@@ -449,37 +506,60 @@ export function TemplateComposer({
             </div>
           )}
 
-          {/* ── What this template looks like ───────────────────────────── */}
+          {/*
+            HEADER AND CAROUSEL ARE TWO DIFFERENT QUESTIONS.
+
+            They used to be one three-way choice — "Just words / One picture /
+            Product cards" — which is not how Meta models it and not how the
+            client thinks about it. In Meta's own editor a Header is its own
+            optional section with a media type, and a carousel is a separate
+            thing entirely.
+
+            Conflating them had a real consequence: picking "One picture" and
+            then "Product cards" put her photograph on a CARD, and Meta does
+            crop card media ("automatically cropped to a wide ratio based on
+            the WhatsApp user's device"). She reported an image being cut and
+            was right about where it came from.
+
+            A carousel genuinely cannot have a template header — Meta's rule,
+            enforced in template-draft.ts buildCarousel — so the two sections
+            say so to each other rather than hiding one inside the other.
+          */}
           <div className="space-y-1.5">
-            <Label className="text-xs">What does this template look like?</Label>
+            <Label className="text-xs">
+              Header <span className="text-muted-foreground">(optional)</span>
+            </Label>
             <div className="flex flex-wrap gap-2">
               {(
                 [
-                  ["TEXT", "Just words"],
-                  ["IMAGE", "One picture"],
-                  ["CAROUSEL", "Product cards"],
+                  ["NONE", "None"],
+                  ["TEXT", "Text"],
+                  ["IMAGE", "Image"],
                 ] as const
               ).map(([value, label]) => (
                 <Button
                   key={value}
                   type="button"
                   size="sm"
-                  variant={layout === value ? "default" : "outline"}
-                  onClick={() => setLayout(value)}
+                  disabled={isCarousel}
+                  variant={headerType === value ? "default" : "outline"}
+                  onClick={() => setHeaderType(value)}
                 >
                   {label}
                 </Button>
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              {layout === "TEXT"
-                ? "An optional line above the message — usually the shop name."
-                : layout === "IMAGE"
-                  ? "One photo sits above the message. Meta reviews it with the template."
-                  : "A swipeable row under the message: 2–10 photos, each with its own buttons. Every card must carry the same buttons as the others."}
+              {isCarousel
+                ? "A carousel carries its pictures on the cards, so the message itself cannot also have a header."
+                : headerType === "NONE"
+                  ? "Nothing above the message."
+                  : headerType === "TEXT"
+                    ? "One short line above the message — usually the shop name."
+                    : "One photo above the message, sent whole. Meta reviews it with the template."}
             </p>
 
-            {layout === "TEXT" ? (
+            {headerType === "TEXT" ? (
               <Input
                 value={header}
                 maxLength={60}
@@ -488,7 +568,7 @@ export function TemplateComposer({
               />
             ) : null}
 
-            {layout === "IMAGE" ? (
+            {headerType === "IMAGE" ? (
               <div className="flex items-center gap-3 rounded-lg border border-dashed p-3">
                 {headerImage ? (
                   /* eslint-disable-next-line @next/next/no-img-element -- a blob: preview of a local file */
@@ -517,6 +597,41 @@ export function TemplateComposer({
           {/* ── Carousel ────────────────────────────────────────────────── */}
           {/* Only when chosen: two upload buttons on screen at once is what
               made it unclear which one a photo had gone to. */}
+          {/*
+            The carousel, as its own question rather than a third value of the
+            header's. Always visible so it can be discovered; the cards appear
+            under it once it is on.
+          */}
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              Product cards <span className="text-muted-foreground">(optional)</span>
+            </Label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={isCarousel ? "outline" : "default"}
+                onClick={() => setCarousel(false)}
+              >
+                No cards
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={isCarousel ? "default" : "outline"}
+                onClick={() => setCarousel(true)}
+              >
+                Add a carousel
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              A swipeable row under the message: 2–10 photos, each with its own
+              buttons, and every card carrying the same buttons as the others.
+              Meta crops card pictures to suit the reader&apos;s phone — a photo you
+              need shown whole belongs in the header instead.
+            </p>
+          </div>
+
           {isCarousel ? (
           <div className="space-y-2 rounded-lg border p-3">
             <div className="flex items-center justify-between gap-3">
@@ -784,8 +899,8 @@ export function TemplateComposer({
             <div className="space-y-1.5">
               <Label className="text-xs">What the customer sees</Label>
               <WhatsAppPreview
-                headerImageUrl={layout === "IMAGE" ? headerImage?.previewUrl ?? null : null}
-                header={layout === "TEXT" ? header : null}
+                headerImageUrl={headerType === "IMAGE" ? headerImage?.previewUrl ?? null : null}
+                header={headerType === "TEXT" ? header : null}
                 body={preview || " "}
                 footer={footer}
                 buttons={isCarousel ? [] : buttons.map((b) => ({ type: b.type, text: b.text }))}
