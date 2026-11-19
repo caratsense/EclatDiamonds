@@ -119,16 +119,58 @@ export const MAX_CONDITIONS = 25;
 
 // ---------------------------------------------------------------- parsing
 
+/**
+ * What a rule is called on screen.
+ *
+ * The messages below are read by whoever is building the audience, and they
+ * used to quote the internal key: a rule left unfilled came back as
+ * `"party.tag" needs a non-empty list of values`. The client hit that, read it
+ * as the builder refusing to count at all, and concluded she could not build
+ * an audience from branches alone. A name she recognises and a sentence that
+ * says what to do would have cost her nothing.
+ *
+ * Falls back to the key, which is better than a blank: an unnamed field here
+ * is one somebody added above and did not name, and the key at least finds it.
+ */
+const FIELD_LABELS: Record<string, string> = {
+  'party.id': 'Named customers',
+  'party.tag': 'Tag',
+  'party.type': 'Record type',
+  'party.storeId': 'Branch',
+  'party.city': 'City',
+  'party.state': 'State',
+  'party.createdAt': 'Added',
+  'party.importBatchId': 'Came from an import',
+  'party.isBlacklisted': 'Blocked',
+  'lead.stage': 'Enquiry stage',
+  'lead.source': 'Enquiry source',
+  'lead.storeId': 'Enquiry branch',
+  'lead.ownerId': 'Enquiry owner',
+  'lead.createdAt': 'Enquiry raised',
+  'interaction.lastAt': 'Last activity',
+  'transaction.orderCount': 'Has ever bought',
+  'transaction.totalSpend': 'An order worth at least',
+  'intent.score': 'Interest score',
+  'consent.marketing': 'Marketing consent',
+};
+
+function labelFor(field: string): string {
+  return FIELD_LABELS[field] ?? field;
+}
+
 function asStringArray(value: unknown, field: string): string[] {
   if (!Array.isArray(value) || value.length === 0) {
-    throw new BadRequestException(`"${field}" needs a non-empty list of values.`);
+    throw new BadRequestException(
+      `The "${labelFor(field)}" rule has nothing chosen in it. ` +
+        'Pick a value, or delete that rule with the bin beside it.',
+    );
   }
   if (value.length > 200) {
-    throw new BadRequestException(`"${field}" accepts at most 200 values.`);
+    throw new BadRequestException(`"${labelFor(field)}" accepts at most 200 values.`);
   }
   return value.map((v) => {
     if (typeof v !== 'string' || !v.trim()) {
-      throw new BadRequestException(`"${field}" accepts text values only.`);
+      throw new BadRequestException(`"${labelFor(field)}" accepts text values only.`);
     }
     return v.trim();
   });
@@ -153,7 +195,7 @@ function asEnumArray<T extends string>(
   const unknown = values.filter((v) => !allowed.includes(v as T));
   if (unknown.length) {
     throw new BadRequestException(
-      `"${field}" does not have ${unknown.map((v) => `"${v}"`).join(', ')}. ` +
+      `"${labelFor(field)}" does not have ${unknown.map((v) => `"${v}"`).join(', ')}. ` +
         `Choose from: ${allowed.join(', ')}.`,
     );
   }
