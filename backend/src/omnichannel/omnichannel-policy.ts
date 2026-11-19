@@ -28,6 +28,27 @@ export interface DeliveryPolicyInput {
    * information, which is the correct way for a pure gate to fail.
    */
   channelDeliverable?: { deliverable: boolean; reason: string };
+  /**
+   * What the tenant treats as permission to send marketing.
+   *
+   * `explicit` — the default, and the stricter reading: marketing needs a
+   * recorded grant, and silence is not one.
+   *
+   * `implied` — everyone on the customer list may be messaged until they say
+   * otherwise. The Nibhana owner asked for this directly: "every customer
+   * which comes to the CRM already comes with marketing consent, until they
+   * explicitly tell us". It is their list, their relationship and their
+   * decision to make, and the shape of the data agrees with them — every
+   * customer here either walked into a shop, filled in a form or messaged an
+   * advert.
+   *
+   * It is deliberately a per-tenant setting and deliberately NOT the default:
+   * the strict reading is the safe one for a business that has not decided,
+   * and the permissive one has to be somebody's recorded choice.
+   *
+   * An actual revocation always wins, under either basis. STOP is STOP.
+   */
+  marketingConsentBasis?: 'explicit' | 'implied';
 }
 
 export type DeliveryPolicyDecision =
@@ -179,14 +200,28 @@ export function evaluateDeliveryPolicy(input: DeliveryPolicyInput): DeliveryPoli
     };
   }
 
-  // Marketing is opt-in, never inferred from a phone number, a purchase, or an
-  // inbound enquiry. Service replies are permitted without a marketing grant,
-  // but an explicit service/all-purpose revocation above still wins.
-  if (input.purpose === 'marketing' && input.consent !== 'granted') {
+  /*
+   * Marketing needs permission. What counts as permission is the tenant's.
+   *
+   * Under `explicit` it is a recorded grant and nothing else — not a phone
+   * number, not a purchase, not an inbound enquiry. Under `implied` it is
+   * everyone who has not revoked, which is the basis this business operates
+   * on and has said so.
+   *
+   * Either way a revocation has already been refused above, so STOP means
+   * STOP under both. This branch only decides what silence means.
+   */
+  if (
+    input.purpose === 'marketing' &&
+    input.consent !== 'granted' &&
+    (input.marketingConsentBasis ?? 'explicit') === 'explicit'
+  ) {
     return {
       allowed: false,
       code: 'consent_required',
-      reason: 'Recorded marketing consent is required before this message can be sent.',
+      reason:
+        'Recorded marketing consent is required before this message can be sent. ' +
+        'Head office can change that basis in messaging settings.',
     };
   }
 

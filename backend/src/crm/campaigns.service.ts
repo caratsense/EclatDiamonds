@@ -13,6 +13,7 @@ import { MessagingCampaignStatus, Prisma, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { JobsService, JobContext } from '../jobs/jobs.service';
 import { AuditService } from '../common/audit.service';
+import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { IdentityService } from './identity.service';
@@ -83,6 +84,7 @@ export class CampaignsService implements OnModuleInit {
     private readonly jobs: JobsService,
     private readonly audit: AuditService,
     private readonly identity: IdentityService,
+    private readonly scope: StoreScopeService,
     @Inject(forwardRef(() => OmnichannelService))
     private readonly omnichannel: OmnichannelService,
   ) {}
@@ -1020,13 +1022,29 @@ export class CampaignsService implements OnModuleInit {
       },
     });
     if (!user) throw new Error('The user who approved this campaign no longer exists.');
+    /*
+     * THE SAME SCOPE A SESSION WOULD GIVE THEM.
+     *
+     * Reading `userStores` directly looked equivalent and was not: for head
+     * office and an area manager `resolveScope` widens to every branch of the
+     * organisation, because those roles are not defined by their assignment
+     * rows. Head office here has two of them, so a campaign it approved could
+     * only reach customers at two branches — the other 36 were refused one at
+     * a time, at send, with "Store not in your scope", on a broadcast that had
+     * already been approved for all of them.
+     */
+    const { storeIds } = await this.scope.resolveScope(
+      user.id,
+      user.role,
+      user.organisationId,
+    );
     return {
       id: user.id,
       name: user.name,
       email: user.email,
       role: user.role,
       organisationId: user.organisationId,
-      storeIds: user.userStores.map((s) => s.storeId),
+      storeIds,
     } as AuthUser;
   }
 

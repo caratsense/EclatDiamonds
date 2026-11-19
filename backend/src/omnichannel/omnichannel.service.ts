@@ -300,6 +300,28 @@ export class OmnichannelService implements OnModuleInit {
     };
   }
 
+  /**
+   * What this tenant treats as permission to send marketing.
+   *
+   * Read per send rather than cached: it is one indexed lookup by primary key,
+   * and a business that turns the permissive basis off has turned it off —
+   * finding out a few minutes later is not good enough for a decision about
+   * messaging customers.
+   *
+   * Absent means `explicit`, the stricter reading. A tenant that has never
+   * made this decision has not made it permissively.
+   */
+  private async marketingConsentBasis(
+    organisationId: string,
+  ): Promise<'explicit' | 'implied'> {
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { settings: true },
+    });
+    const value = ((org?.settings ?? {}) as Record<string, unknown>).marketingConsentBasis;
+    return value === 'implied' ? 'implied' : 'explicit';
+  }
+
   async consentFor(
     user: AuthUser,
     partyId: string,
@@ -745,6 +767,7 @@ export class OmnichannelService implements OnModuleInit {
       consent: consent.state,
       hasApprovedTemplate: !!template,
       lastInboundAt: conversation.lastInboundAt,
+      marketingConsentBasis: await this.marketingConsentBasis(user.organisationId),
       channelDeliverable: await this.channelDeliverable(
         user.organisationId,
         conversation.channel,
@@ -1812,6 +1835,7 @@ export class OmnichannelService implements OnModuleInit {
       consent: consent.state,
       hasApprovedTemplate: !!template,
       lastInboundAt: message.conversation.lastInboundAt,
+      marketingConsentBasis: await this.marketingConsentBasis(ctx.organisationId),
       // The worker is the authority, so the check happens here and not only
       // where the message was queued: a queued message can be days old and the
       // connection it depended on may have been revoked since.
