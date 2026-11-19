@@ -72,7 +72,10 @@ export function useSetPartyTags(partyId: string) {
     },
     onSuccess: (data) => {
       qc.setQueryData([...KEY, "party", partyId], data);
-      void qc.invalidateQueries({ queryKey: ["customers"] });
+      // The directory draws the chips from its own list query, which is keyed
+      // "parties" — invalidating anything else leaves the row showing the tags
+      // the customer had a moment ago.
+      void qc.invalidateQueries({ queryKey: ["parties"] });
       void qc.invalidateQueries({ queryKey: KEY });
     },
   });

@@ -1,9 +1,15 @@
-import { Body, Controller, Delete, Get, Header, Param, Post, Query, Res, StreamableFile } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Header, Param, Patch, Post, Query, Res, StreamableFile } from '@nestjs/common';
 import type { Response } from 'express';
 import { PartyType } from '@prisma/client';
 import { PartiesService } from './parties.service';
-import { ArchivePartyDto, CreatePartyDto } from './dto/party.dto';
+import {
+  ArchivePartyDto,
+  BulkDeletePartiesDto,
+  CreatePartyDto,
+  RenamePartyDto,
+} from './dto/party.dto';
 import { PartyArchiveService } from './party-archive.service';
+import { HumansOnly } from '../auth/machine.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { CurrentUser, AuthUser } from '../common/auth-user';
 import { StoreHeader } from '../common/store-header.decorator';
@@ -108,10 +114,45 @@ export class PartiesController {
     return this.parties.requestDeletion(user, id, dto.reason);
   }
 
+  /**
+   * Delete the customers somebody ticked. Head office only and rule-for-rule
+   * identical to the single `DELETE` below — a Gati-synced customer or one with
+   * any history is reported back as skipped, with the reason, rather than being
+   * forced through.
+   *
+   * POST rather than `DELETE` with a body: the ids are the request, and bodies
+   * on DELETE are the kind of thing a proxy drops without telling anybody.
+   *
+   * `@HumansOnly()` because the Gati agent carries head-office reach by design.
+   * One customer at a time is a repair; two hundred in one call is the request
+   * no token sitting on a shop machine should be able to make.
+   */
+  @HumansOnly()
+  @Roles('head_office')
+  @Post('bulk-delete')
+  removeMany(@CurrentUser() user: AuthUser, @Body() dto: BulkDeletePartiesDto) {
+    return this.parties.removeMany(user, dto.ids);
+  }
+
   @Roles('head_office')
   @Delete(':id')
   remove(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.parties.remove(user, id);
+  }
+
+  /**
+   * Rename a customer (client, 19 Nov) — the Meta-identified ones whose names
+   * are hearts and symbols. Manager-level, like archiving: the name is what
+   * every colleague's list, export and campaign will show, not a private note.
+   */
+  @Roles('store_manager')
+  @Patch(':id')
+  rename(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: RenamePartyDto,
+  ) {
+    return this.parties.rename(user, id, dto.name);
   }
 
   @Roles('store_manager')

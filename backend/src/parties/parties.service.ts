@@ -36,6 +36,8 @@ export interface PartyFilters {
 export interface PartyRow {
   id: string;
   name: string;
+  /** The name this party arrived with, once somebody has renamed them. */
+  originalName: string | null;
   code: string | null;
   types: PartyType[];
   phone: string | null;
@@ -55,6 +57,12 @@ export interface PartyRow {
   salesCount: number;
   /** The customer's tags (client, 10 Oct): chips on the directory row. */
   tags: { id: string; name: string; colour: string | null }[];
+  /**
+   * Came from Gati, which owns the name and rewrites it on every sync — so the
+   * screen can leave the rename out rather than offer an edit that reverts.
+   * `legacyId` itself stays server-side; nothing on the client needs it.
+   */
+  isSynced: boolean;
   createdAt: string | null;
   /** Present only on the archived list, so the screen can show who and why. */
   archivedAt: string | null;
@@ -62,10 +70,26 @@ export interface PartyRow {
   archiveReason: string | null;
 }
 
+/**
+ * What a bulk delete actually did, customer by customer.
+ *
+ * `skipped` carries a reason per customer rather than a total, because the
+ * refusals are the useful half: a manager who ticked fifty rows needs to know
+ * which ones to archive instead, not that nine of them "failed".
+ */
+export interface BulkDeleteResult {
+  /** Distinct ids asked for — the duplicates a long selection can carry are collapsed. */
+  requested: number;
+  deleted: { id: string; name: string }[];
+  /** `name` is null only when the id matched nothing we may see. */
+  skipped: { id: string; name: string | null; reason: string }[];
+}
+
 /** One place to define the row shape, shared by list + create. */
 const PARTY_SELECT = {
   id: true,
   name: true,
+  originalName: true,
   code: true,
   types: true,
   phone: true,
@@ -81,6 +105,7 @@ const PARTY_SELECT = {
   anniversary: true,
   creditLimit: true,
   isBlacklisted: true,
+  legacyId: true,
   createdAt: true,
   archivedAt: true,
   archiveReason: true,
@@ -97,6 +122,7 @@ function toPartyRow(p: PartySelected): PartyRow {
   return {
     id: p.id,
     name: p.name,
+    originalName: p.originalName ?? null,
     code: p.code ?? null,
     types: p.types,
     phone: p.phone ?? null,
@@ -116,6 +142,7 @@ function toPartyRow(p: PartySelected): PartyRow {
     tags: [...p.partyTagAssignments]
       .sort((a, b) => a.tag.sortOrder - b.tag.sortOrder)
       .map((a) => ({ id: a.tag.id, name: a.tag.name, colour: a.tag.colour })),
+    isSynced: p.legacyId != null,
     createdAt: iso(p.createdAt),
     archivedAt: iso(p.archivedAt),
     archivedByName: p.archivedBy?.name ?? null,
@@ -225,29 +252,197 @@ export class PartiesService {
       select: { id: true, name: true, types: true, legacyId: true },
     });
     if (!party) throw new NotFoundException('Customer not found');
+
+    const blocked = await this.deletionBlock(party);
+    if (blocked) throw new BadRequestException(blocked.sentence);
+
+    await this.deleteAllowed(user, party);
+    return { deleted: true };
+  }
+
+  /**
+   * POST /parties/bulk-delete (client, 19 Nov): "There should be an option to
+   * select multiple and then delete it."
+   *
+   * Every rule the single delete applies is applied here, customer by customer,
+   * through the same `deletionBlock` — the bulk path cannot be the loophole
+   * that empties a Gati-synced record or takes a customer's sales with them.
+   * Nothing linked is ever cascade-deleted to force one through.
+   *
+   * The reply is per-customer, not a count. "41 of 50 deleted" leaves somebody
+   * re-ticking rows to find out which nine survived; naming each skipped
+   * customer and WHY is what lets them act on it — archive these, leave those.
+   *
+   * Deliberately NOT one transaction. The customers that may go are unrelated
+   * to the ones that may not, and rolling back nine good deletions because the
+   * tenth has a quote on it would make the whole feature useless on real data.
+   * Sequential, because each customer costs a fan-out of history counts.
+   */
+  async removeMany(user: AuthUser, ids: string[]): Promise<BulkDeleteResult> {
+    const unique = Array.from(new Set(ids.map((id) => id.trim()).filter(Boolean)));
+    if (!unique.length) {
+      throw new BadRequestException('Pick the customers to remove.');
+    }
+
+    const found = await this.prisma.party.findMany({
+      where: { id: { in: unique }, ...this.scope.orgFilter(user) },
+      select: { id: true, name: true, types: true, legacyId: true, storeId: true },
+    });
+    const byId = new Map(found.map((p) => [p.id, p]));
+
+    const deleted: BulkDeleteResult['deleted'] = [];
+    const skipped: BulkDeleteResult['skipped'] = [];
+
+    for (const id of unique) {
+      const party = byId.get(id);
+      if (!party) {
+        // Another tenant's id reads the same as a deleted one, on purpose.
+        skipped.push({ id, name: null, reason: 'No longer in the system.' });
+        continue;
+      }
+      if (!this.inScope(user, party.storeId)) {
+        skipped.push({ id, name: party.name, reason: 'Belongs to a branch outside your scope.' });
+        continue;
+      }
+      const blocked = await this.deletionBlock(party);
+      if (blocked) {
+        skipped.push({ id, name: party.name, reason: blocked.reason });
+        continue;
+      }
+      await this.deleteAllowed(user, party);
+      deleted.push({ id, name: party.name });
+    }
+
+    return { requested: unique.length, deleted, skipped };
+  }
+
+  /**
+   * Give a customer a readable name (client, 19 Nov): "Many customers Meta
+   * identified have symbols, hearts and so on, and you cannot tell what the
+   * customer's name is. How are we going to talk to that customer?"
+   *
+   * The profile name is not junk — it is what that person calls themselves on
+   * the channel we message them on — so the first rename keeps it in
+   * `originalName` and every later one leaves that alone.
+   *
+   * Refused for a Gati-synced customer. `syncParties` writes `name` on every
+   * run, so the new name would hold until the next sync and then quietly
+   * revert; an edit that undoes itself overnight is worse than no edit, and
+   * Gati is the master record for those rows.
+   */
+  async rename(user: AuthUser, id: string, name: string): Promise<PartyRow> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new BadRequestException('Give the customer a name.');
+
+    const party = await this.prisma.party.findFirst({
+      where: { id, ...this.scope.orgFilter(user) },
+      select: { id: true, name: true, originalName: true, legacyId: true, storeId: true },
+    });
+    if (!party || !this.inScope(user, party.storeId)) {
+      throw new NotFoundException('Customer not found');
+    }
     if (party.legacyId) {
       throw new BadRequestException(
-        'This customer is synced from Gati and would come straight back. Archive them instead.',
+        'This customer comes from Gati, which rewrites the name on every sync. Rename them in Gati instead.',
       );
     }
 
-    const held = await partyHistory(this.prisma, id);
+    if (trimmed === party.name) {
+      // Nothing changed, so nothing is audited — a rename to the same name is
+      // not a decision anybody needs to find in the trail later.
+      const unchanged = await this.prisma.party.findUniqueOrThrow({
+        where: { id: party.id },
+        select: PARTY_SELECT,
+      });
+      return toPartyRow(unchanged);
+    }
+
+    const row = await this.prisma.party.update({
+      where: { id: party.id },
+      data: {
+        name: trimmed,
+        ...(party.originalName == null ? { originalName: party.name } : {}),
+      },
+      select: PARTY_SELECT,
+    });
+
+    await this.audit.record(user, {
+      action: 'crm.contact_renamed',
+      entityType: 'Party',
+      entityId: party.id,
+      storeId: party.storeId,
+      summary: `Customer renamed to ${trimmed}`,
+      metadata: {
+        from: party.name,
+        to: trimmed,
+        originalName: party.originalName ?? party.name,
+      },
+    });
+
+    return toPartyRow(row);
+  }
+
+  /**
+   * Why this customer may not be deleted — or null when nothing stands in the
+   * way.
+   *
+   * ONE place decides it, for the same reason `party-history.ts` exists: a rule
+   * that holds for one customer and not for fifty of them is not a rule. Two
+   * lengths of the same refusal, because the audiences differ — `sentence` is
+   * the answer to "delete this customer", `reason` is what fits beside a name
+   * in a list of what was skipped.
+   */
+  private async deletionBlock(party: {
+    id: string;
+    name: string;
+    legacyId: string | null;
+  }): Promise<{ sentence: string; reason: string } | null> {
+    if (party.legacyId) {
+      return {
+        sentence:
+          'This customer is synced from Gati and would come straight back. Archive them instead.',
+        reason: 'Synced from Gati — a delete would come straight back. Archive instead.',
+      };
+    }
+
+    const held = await partyHistory(this.prisma, party.id);
     if (held.length) {
-      throw new BadRequestException(
-        `${party.name} has ${describeHistory(held)} on record. Archive them instead — it hides them from lists and keeps every number true.`,
-      );
+      return {
+        sentence: `${party.name} has ${describeHistory(held)} on record. Archive them instead — it hides them from lists and keeps every number true.`,
+        reason: `${describeHistory(held)} on record. Archive instead.`,
+      };
     }
 
+    return null;
+  }
+
+  /** The delete itself, once `deletionBlock` has allowed it. */
+  private async deleteAllowed(
+    user: AuthUser,
+    party: { id: string; name: string; types: PartyType[] },
+  ): Promise<void> {
     // Contact points, activity, interactions, attribution and tags cascade.
     await this.prisma.party.delete({ where: { id: party.id } });
     await this.audit.record(user, {
       action: 'crm.contact_deleted',
       entityType: 'Party',
-      entityId: id,
+      entityId: party.id,
       summary: `${party.name} deleted — no history`,
       metadata: { name: party.name, types: party.types },
     });
-    return { deleted: true };
+  }
+
+  /**
+   * Is this customer inside the caller's branches?
+   *
+   * A customer with no branch at all — an older row an inbound message created
+   * before routing knew a store — belongs to whoever's organisation it is,
+   * which is how the single delete has always treated them. A plain `storeId`
+   * filter would instead make them invisible AND unactionable: reachable from
+   * Customer 360, silently skipped by anything that tidies up.
+   */
+  private inScope(user: AuthUser, storeId: string | null): boolean {
+    return storeId == null || user.storeIds.includes(storeId);
   }
 
   /** The customer directory as a workbook — same scope as the list. */

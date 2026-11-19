@@ -2,7 +2,7 @@
 
 import { type ReactNode, useState } from "react";
 import Link from "next/link";
-import { Ban, Contact, Search } from "lucide-react";
+import { Ban, CheckSquare, Contact, Pencil, Search, Square, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { ExcelExportButton } from "@/components/common/excel-export-button";
@@ -37,14 +37,27 @@ import {
 import { getNavItem } from "@/lib/navigation";
 import { formatINR } from "@/lib/format";
 import {
+  useBulkDeleteParties,
   useCreateParty,
   useParties,
+  useRenameParty,
+  type BulkDeleteResult,
   type PartyRow,
   type PartyTypeName,
 } from "@/lib/queries/parties";
 import { useLeadTags } from "@/lib/queries/lead-tags";
 import { PartyTagsField } from "@/components/crm/lead-tags-field";
+import { useStoreKey } from "@/lib/queries/keys";
 import { useDebouncedValue } from "@/lib/queries/search";
+import {
+  bulkDeleteTone,
+  describeBulkDelete,
+  describeSelection,
+  skippedLines,
+} from "@/lib/party-bulk-delete";
+import { ROLE_RANK } from "@/lib/types";
+import { useResetOn } from "@/lib/use-reset-on";
+import { useSession } from "@/store/use-session";
 import {
   apiErrorMessage,
   isRealName,
@@ -104,6 +117,43 @@ export default function CustomersPage() {
 
   const rows = data?.items ?? [];
   const total = data?.total ?? 0;
+
+  /*
+   * Bulk delete is head office's, exactly as the single delete is. Ticking rows
+   * is hidden from everyone else rather than shown and then refused by the
+   * server — deleting a customer is the only bulk action on this screen, so a
+   * checkbox a manager cannot act on is just a dead control.
+   */
+  const baseRole = useSession((s) => s.baseRole);
+  const canBulkDelete = ROLE_RANK[baseRole] >= ROLE_RANK.head_office;
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkOpen, setBulkOpen] = useState(false);
+
+  /*
+   * A tick belongs to the rows that were on screen when it was made. Changing
+   * the store, the search, the tag or the page replaces those rows, so the
+   * selection goes with them — carrying it across would let somebody confirm a
+   * delete against a list they can no longer see.
+   */
+  const storeKey = useStoreKey();
+  useResetOn(`${storeKey}|${q}|${tagId}|${page}|${pageSize}`, () => {
+    setSelectedIds(new Set());
+  });
+
+  const selectedOnPage = rows.filter((p) => selectedIds.has(p.id));
+  const allOnPageSelected = rows.length > 0 && selectedOnPage.length === rows.length;
+
+  const toggleOne = (id: string) =>
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+
+  /** Ticks this page and only this page — never the other matches. */
+  const toggleAllOnPage = () =>
+    setSelectedIds(allOnPageSelected ? new Set() : new Set(rows.map((p) => p.id)));
 
   return (
     <div>
@@ -184,8 +234,32 @@ export default function CustomersPage() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  {canBulkDelete ? (
+                    <TableHead className="w-10">
+                      <button
+                        type="button"
+                        onClick={toggleAllOnPage}
+                        className="flex items-center justify-center text-muted-foreground hover:text-foreground"
+                        title={
+                          allOnPageSelected
+                            ? "Deselect this page"
+                            : "Select everyone on this page"
+                        }
+                      >
+                        {allOnPageSelected ? (
+                          <CheckSquare className="h-4 w-4 text-primary" />
+                        ) : (
+                          <Square className="h-4 w-4" />
+                        )}
+                      </button>
+                    </TableHead>
+                  ) : null}
                   <TableHead>Name</TableHead>
                   <TableHead>Phone</TableHead>
+                  {/* Tags were on the leads board but nowhere in the customer
+                      list (client, 19 Nov), so they get a column of their own
+                      rather than a line squeezed under the name. */}
+                  <TableHead className="hidden lg:table-cell">Tags</TableHead>
                   <TableHead className="hidden md:table-cell">City</TableHead>
                   <TableHead className="text-right">Bills</TableHead>
                 </TableRow>
@@ -194,9 +268,31 @@ export default function CustomersPage() {
                 {rows.map((p) => (
                   <TableRow
                     key={p.id}
-                    className="cursor-pointer"
+                    className={`cursor-pointer ${selectedIds.has(p.id) ? "bg-primary/5" : ""}`}
                     onClick={() => setActive(p)}
                   >
+                    {canBulkDelete ? (
+                      <TableCell
+                        className="w-10"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleOne(p.id);
+                        }}
+                      >
+                        <button
+                          type="button"
+                          aria-label={`Select ${p.name}`}
+                          aria-pressed={selectedIds.has(p.id)}
+                          className="flex items-center justify-center text-muted-foreground hover:text-foreground"
+                        >
+                          {selectedIds.has(p.id) ? (
+                            <CheckSquare className="h-4 w-4 text-primary" />
+                          ) : (
+                            <Square className="h-4 w-4" />
+                          )}
+                        </button>
+                      </TableCell>
+                    ) : null}
                     <TableCell>
                       <div className="flex items-center gap-2">
                         {/* The name opens Customer 360; the rest of the row keeps
@@ -220,27 +316,25 @@ export default function CustomersPage() {
                       <span className="num text-xs text-muted-foreground">
                         {p.code ?? "—"}
                       </span>
+                      {/* The tags have their own column from the lg breakpoint
+                          up; below it there is no column to put them in, so
+                          they stay under the name rather than disappearing. */}
                       {p.tags.length ? (
-                        /* The tags, right on the directory row (client, 10 Oct).
-                           Managing them lives on the customer's own page. */
-                        <span className="mt-0.5 flex flex-wrap gap-1">
-                          {p.tags.map((t) => (
-                            <span
-                              key={t.id}
-                              className="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium"
-                            >
-                              <span
-                                aria-hidden="true"
-                                className="h-1.5 w-1.5 rounded-full"
-                                style={{ background: t.colour ?? "var(--muted-foreground)" }}
-                              />
-                              {t.name}
-                            </span>
-                          ))}
+                        <span className="mt-0.5 flex flex-wrap gap-1 lg:hidden">
+                          <TagChips tags={p.tags} />
                         </span>
                       ) : null}
                     </TableCell>
                     <TableCell className="num">{p.phone ?? "—"}</TableCell>
+                    <TableCell className="hidden lg:table-cell">
+                      {p.tags.length ? (
+                        <span className="flex flex-wrap gap-1">
+                          <TagChips tags={p.tags} />
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
                     <TableCell className="hidden md:table-cell text-muted-foreground">
                       {[p.city, p.state].filter(Boolean).join(", ") || "—"}
                     </TableCell>
@@ -266,13 +360,193 @@ export default function CustomersPage() {
         </>
       )}
 
+      {selectedOnPage.length > 0 ? (
+        <div className="fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-full border border-border/80 bg-background/95 px-5 py-2.5 shadow-2xl backdrop-blur-md">
+          {/* Says what is actually ticked. "Select all" on a filtered list that
+              matches 248 customers ticks the 50 this page loaded, and the bar
+              is the only place that can admit it. */}
+          <span className="text-xs font-semibold text-foreground">
+            {describeSelection({
+              selected: selectedOnPage.length,
+              onPage: rows.length,
+              total,
+            })}
+          </span>
+          <div className="h-4 w-px bg-border" />
+          <Button
+            size="sm"
+            variant="destructive"
+            className="h-7 gap-1.5 rounded-full text-xs"
+            onClick={() => setBulkOpen(true)}
+          >
+            <Trash2 className="h-3.5 w-3.5" /> Delete
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="h-7 rounded-full px-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Clear
+          </Button>
+        </div>
+      ) : null}
+
+      <BulkDeleteDialog
+        open={bulkOpen}
+        parties={selectedOnPage}
+        onOpenChange={(open) => setBulkOpen(open)}
+        onDone={(result) => {
+          // Keep whoever was kept ticked, so the next action (archive them) is
+          // still a selection rather than a hunt back through the list.
+          setSelectedIds(new Set(result.skipped.map((s) => s.id)));
+        }}
+      />
+
       <CustomerDetailDialog
         party={active}
         onOpenChange={(open) => !open && setActive(null)}
+        onPartyChange={setActive}
       />
 
       <AddCustomerDialog open={addOpen} onOpenChange={setAddOpen} />
     </div>
+  );
+}
+
+/** The tag chips, drawn the same wherever the row has room for them. */
+function TagChips({
+  tags,
+}: {
+  tags: { id: string; name: string; colour: string | null }[];
+}) {
+  return (
+    <>
+      {tags.map((t) => (
+        <span
+          key={t.id}
+          className="inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-[10px] font-medium"
+        >
+          <span
+            aria-hidden="true"
+            className="h-1.5 w-1.5 rounded-full"
+            style={{ background: t.colour ?? "var(--muted-foreground)" }}
+          />
+          {t.name}
+        </span>
+      ))}
+    </>
+  );
+}
+
+/**
+ * Confirm, then report — deleting the ticked customers (client, 19 Nov).
+ *
+ * The confirmation is honest about the scope: these customers, on this page,
+ * and no others. The report afterwards is the part that matters on real data,
+ * because the server applies the existing rules one customer at a time: anyone
+ * synced from Gati or holding a sale, quote or visit is kept, and this dialog
+ * names them with the reason rather than collapsing it into "9 failed".
+ */
+function BulkDeleteDialog({
+  open,
+  parties,
+  onOpenChange,
+  onDone,
+}: {
+  open: boolean;
+  parties: PartyRow[];
+  onOpenChange: (open: boolean) => void;
+  onDone: (result: BulkDeleteResult) => void;
+}) {
+  const remove = useBulkDeleteParties();
+  const [result, setResult] = useState<BulkDeleteResult | null>(null);
+
+  useResetOn(open, () => setResult(null));
+
+  const run = () => {
+    remove.mutate(
+      parties.map((p) => p.id),
+      {
+        onSuccess: (data) => {
+          setResult(data);
+          onDone(data);
+          const message = describeBulkDelete(data);
+          if (bulkDeleteTone(data) === "all") toast.success(message);
+          else toast.warning(message);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not delete these customers.")),
+      },
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            {result ? "What happened" : `Delete ${parties.length} customer${parties.length === 1 ? "" : "s"}?`}
+          </DialogTitle>
+          <DialogDescription>
+            {result
+              ? describeBulkDelete(result)
+              : "Only the ticked customers on this page are affected. A customer synced from Gati, or one with any sales, quotes, payments or visits, is kept — archive them instead."}
+          </DialogDescription>
+        </DialogHeader>
+
+        {result ? (
+          <div className="space-y-3 text-sm">
+            {result.deleted.length ? (
+              <div>
+                <p className="mb-1 text-xs font-semibold text-muted-foreground">Deleted</p>
+                <ul className="space-y-0.5">
+                  {result.deleted.map((d) => (
+                    <li key={d.id}>{d.name}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+            {result.skipped.length ? (
+              <div>
+                <p className="mb-1 text-xs font-semibold text-muted-foreground">
+                  Kept — still selected, so you can archive them
+                </p>
+                <ul className="space-y-0.5 text-muted-foreground">
+                  {skippedLines(result).map((line) => (
+                    <li key={line}>{line}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </div>
+        ) : (
+          <ul className="max-h-60 space-y-0.5 overflow-y-auto text-sm">
+            {parties.map((p) => (
+              <li key={p.id}>
+                {p.name}
+                <span className="num text-xs text-muted-foreground"> {p.phone ?? "—"}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <DialogFooter>
+          {result ? (
+            <Button onClick={() => onOpenChange(false)}>Close</Button>
+          ) : (
+            <>
+              <Button variant="outline" onClick={() => onOpenChange(false)}>
+                Cancel
+              </Button>
+              <Button variant="destructive" onClick={run} disabled={remove.isPending}>
+                {remove.isPending ? "Deleting…" : "Delete these customers"}
+              </Button>
+            </>
+          )}
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -447,10 +721,51 @@ function DetailRow({ label, value }: { label: string; value: ReactNode }) {
 function CustomerDetailDialog({
   party,
   onOpenChange,
+  onPartyChange,
 }: {
   party: PartyRow | null;
   onOpenChange: (open: boolean) => void;
+  /** The renamed row, so the open dialog stops showing the old name. */
+  onPartyChange: (party: PartyRow) => void;
 }) {
+  const baseRole = useSession((s) => s.baseRole);
+  // The name is what every colleague's list, export and campaign shows, so
+  // changing it is a manager's call — the same level as archiving.
+  const canRename = ROLE_RANK[baseRole] >= ROLE_RANK.store_manager;
+  const rename = useRenameParty();
+  const [draft, setDraft] = useState<string | null>(null);
+
+  useResetOn(party?.id ?? null, () => setDraft(null));
+
+  const saveName = () => {
+    if (!party || draft == null) return;
+    const name = draft.trim();
+    if (!name) {
+      toast.error("Give the customer a name.");
+      return;
+    }
+    if (!isRealName(name)) {
+      toast.error("Enter a real name — letters, not just a number.");
+      return;
+    }
+    if (name === party.name) {
+      setDraft(null);
+      return;
+    }
+    rename.mutate(
+      { id: party.id, name },
+      {
+        onSuccess: (row) => {
+          onPartyChange(row);
+          setDraft(null);
+          toast.success(`Now shown as ${row.name}`);
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not rename this customer.")),
+      },
+    );
+  };
+
   return (
     <Dialog open={!!party} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
@@ -464,6 +779,18 @@ function CustomerDetailDialog({
                     <Ban className="h-3 w-3" /> Blacklisted
                   </Badge>
                 ) : null}
+                {canRename && !party.isSynced && draft == null ? (
+                  /* The client, 19 Nov: the names Meta gave are hearts and
+                     symbols, and nobody can tell who they are talking to. */
+                  <button
+                    type="button"
+                    aria-label="Rename this customer"
+                    onClick={() => setDraft(party.name)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                  </button>
+                ) : null}
               </DialogTitle>
               <DialogDescription>
                 {party.types.length
@@ -472,6 +799,44 @@ function CustomerDetailDialog({
                 {party.code ? ` · ${party.code}` : ""}
               </DialogDescription>
             </DialogHeader>
+
+            {draft != null ? (
+              <div className="flex items-center gap-2">
+                <Input
+                  aria-label="Customer name"
+                  autoFocus
+                  value={draft}
+                  maxLength={120}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") saveName();
+                    if (e.key === "Escape") setDraft(null);
+                  }}
+                />
+                <Button size="sm" onClick={saveName} disabled={rename.isPending}>
+                  {rename.isPending ? "Saving…" : "Save"}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setDraft(null)}>
+                  Cancel
+                </Button>
+              </div>
+            ) : null}
+
+            {party.originalName ? (
+              /* The WhatsApp profile name is kept, not replaced: it is still
+                 what this person is called on the channel we message them on,
+                 and the next colleague searching for it has to find them. */
+              <p className="text-xs text-muted-foreground">
+                Arrived as “{party.originalName}”
+              </p>
+            ) : null}
+
+            {party.isSynced && canRename ? (
+              <p className="text-xs text-muted-foreground">
+                Synced from Gati — the name has to be changed there, or the next
+                sync puts this one back.
+              </p>
+            ) : null}
 
             {/* Tag the customer right here — "imp", "bought" — without leaving
                 the directory (client, 10 Oct). Typing a new name creates it. */}
