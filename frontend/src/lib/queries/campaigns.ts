@@ -37,6 +37,34 @@ export interface CampaignCounts {
   cancelled: number;
 }
 
+/**
+ * Where one `{{n}}` gets its value when a broadcast goes out.
+ *
+ * Mirrors VARIABLE_SOURCES in the backend's campaign-variables. `fallback` is
+ * not optional for anything read off the customer: Meta refuses a message with
+ * a blank value in it, so a customer with no name recorded would fail the send
+ * rather than merely read oddly.
+ */
+export type CampaignVariableSource =
+  | "customer_first_name"
+  | "customer_name"
+  | "branch_name"
+  | "fixed";
+
+export interface CampaignVariable {
+  slot: number;
+  source: CampaignVariableSource;
+  text?: string;
+  fallback: string;
+}
+
+export const CAMPAIGN_VARIABLE_SOURCES: { value: CampaignVariableSource; label: string }[] = [
+  { value: "customer_first_name", label: "Customer's first name" },
+  { value: "customer_name", label: "Customer's full name" },
+  { value: "branch_name", label: "Their branch" },
+  { value: "fixed", label: "The same wording for everyone" },
+];
+
 export interface Campaign {
   id: string;
   name: string;
@@ -46,6 +74,7 @@ export interface Campaign {
   segmentId: string | null;
   templateName: string | null;
   templateLanguage: string | null;
+  templateVariables: CampaignVariable[] | null;
   bodyPreview: string | null;
   storeIds: string[];
   scheduledAt: string | null;
@@ -316,6 +345,7 @@ export function useCreateCampaign() {
       definition?: SegmentDefinition;
       templateName?: string;
       templateLanguage?: string;
+      templateVariables?: CampaignVariable[];
       bodyPreview?: string;
       storeIds?: string[];
       scheduledAt?: string;

@@ -34,10 +34,13 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  CAMPAIGN_VARIABLE_SOURCES,
   SEGMENT_FIELD_GROUPS,
   useAudiencePreview,
   useCreateCampaign,
   useSubmitCampaign,
+  type CampaignVariable,
+  type CampaignVariableSource,
   type SegmentCondition,
   type SegmentDefinition,
 } from "@/lib/queries/campaigns";
@@ -86,6 +89,17 @@ export default function NewCampaignPage() {
   const [templateName, setTemplateName] = useState("");
   const [templateLanguage, setTemplateLanguage] = useState("en_US");
   const [bodyPreview, setBodyPreview] = useState("");
+  /*
+   * What fills the template's {{1}}, {{2}} … for each customer.
+   *
+   * Held beside the template rather than inside it because it belongs to this
+   * broadcast: the same approved template can greet one audience by first name
+   * and another by branch. Picking a template rebuilds these rows, since a
+   * mapping for a different template's variables would be nonsense.
+   */
+  const [variables, setVariables] = useState<CampaignVariable[]>([]);
+  /** The approved wording with its `{{n}}` intact, so the rows read in context. */
+  const [templateSource, setTemplateSource] = useState("");
   const [scheduledAt, setScheduledAt] = useState("");
 
   const preview = useAudiencePreview();
@@ -122,6 +136,23 @@ export default function NewCampaignPage() {
       setStep("Message");
       return;
     }
+    /*
+     * Checked here as well as on the server, because the server's refusal
+     * lands on APPROVAL — by which point a manager has already signed off on a
+     * broadcast that cannot go out.
+     */
+    const unfilled = variables.find((v) =>
+      v.source === "fixed" ? !v.text?.trim() : !v.fallback.trim(),
+    );
+    if (unfilled) {
+      toast.error(
+        unfilled.source === "fixed"
+          ? `Type the wording for {{${unfilled.slot}}}.`
+          : `Give {{${unfilled.slot}}} something to say when a customer has no name on record.`,
+      );
+      setStep("Message");
+      return;
+    }
     create.mutate(
       {
         name: name.trim(),
@@ -130,6 +161,7 @@ export default function NewCampaignPage() {
         templateName: templateName.trim(),
         templateLanguage: templateLanguage.trim(),
         ...(bodyPreview.trim() ? { bodyPreview: bodyPreview.trim() } : {}),
+        ...(variables.length ? { templateVariables: variables } : {}),
         ...(storeIds.length ? { storeIds } : {}),
         ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
       },
@@ -504,8 +536,30 @@ export default function NewCampaignPage() {
                 // of it. Cleared along with the choice so a stale preview can
                 // never outlive the template it described.
                 setBodyPreview(picked?.preview ?? "");
+                setTemplateSource(picked?.source ?? "");
+                /*
+                 * One row per variable, defaulted to the thing almost every
+                 * template's first variable is. Rebuilt on every pick: a
+                 * mapping left over from another template would fill the wrong
+                 * slots with the right-looking values.
+                 */
+                setVariables(
+                  Array.from({ length: picked?.variableCount ?? 0 }, (_, i) => ({
+                    slot: i + 1,
+                    source: "customer_first_name" as const,
+                    fallback: "there",
+                  })),
+                );
               }}
             />
+
+            {variables.length ? (
+              <VariableMapper
+                variables={variables}
+                source={templateSource}
+                onChange={setVariables}
+              />
+            ) : null}
           </CardContent>
         </Card>
       ) : null}
@@ -705,6 +759,91 @@ function TagValuePicker({
         ) : null}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/**
+ * What fills each `{{n}}` when the broadcast goes out.
+ *
+ * A template is approved with its placeholders intact and the real values
+ * travel with each individual send. The wizard used to pick a template and
+ * send nothing, so an approved template with one variable was refused by Meta
+ * on every recipient — after the campaign was already running, and reported as
+ * though those customers had been deliberately skipped.
+ *
+ * The stand-in is a required field, not a nicety: Meta refuses a message with
+ * a blank value in it, so a customer with no name on record would fail the
+ * send rather than merely read oddly.
+ */
+function VariableMapper({
+  variables,
+  source,
+  onChange,
+}: {
+  variables: CampaignVariable[];
+  source: string;
+  onChange: (next: CampaignVariable[]) => void;
+}) {
+  const patch = (slot: number, change: Partial<CampaignVariable>) =>
+    onChange(variables.map((v) => (v.slot === slot ? { ...v, ...change } : v)));
+
+  return (
+    <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+      <div className="space-y-1">
+        <Label className="text-xs">What fills the blanks</Label>
+        <p className="text-[11px] text-muted-foreground">
+          This template has {variables.length} variable{variables.length === 1 ? "" : "s"}. Each
+          customer gets their own value.
+        </p>
+        {source ? (
+          <p className="whitespace-pre-wrap rounded-md border bg-background p-2 text-[11px] leading-relaxed text-muted-foreground">
+            {source}
+          </p>
+        ) : null}
+      </div>
+
+      {variables.map((v) => (
+        <div key={v.slot} className="grid gap-2 sm:grid-cols-[4rem_minmax(0,1fr)_minmax(0,1fr)]">
+          <span className="pt-2 font-mono text-xs text-muted-foreground">{`{{${v.slot}}}`}</span>
+          <Select
+            value={v.source}
+            onValueChange={(next) =>
+              patch(v.slot, {
+                source: next as CampaignVariableSource,
+                // Switching to a fixed wording drops a stand-in that no longer
+                // applies; switching away from one restores a usable default
+                // rather than leaving the field empty and invalid.
+                ...(next === "fixed" ? { fallback: "" } : { text: "", fallback: "there" }),
+              })
+            }
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CAMPAIGN_VARIABLE_SOURCES.map((s) => (
+                <SelectItem key={s.value} value={s.value}>
+                  {s.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {v.source === "fixed" ? (
+            <Input
+              value={v.text ?? ""}
+              onChange={(e) => patch(v.slot, { text: e.target.value })}
+              placeholder="Diwali collection"
+            />
+          ) : (
+            <Input
+              value={v.fallback}
+              onChange={(e) => patch(v.slot, { fallback: e.target.value })}
+              placeholder="If we don't know — e.g. there"
+            />
+          )}
+        </div>
+      ))}
+    </div>
   );
 }
 

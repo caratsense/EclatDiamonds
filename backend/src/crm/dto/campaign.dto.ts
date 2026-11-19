@@ -122,6 +122,17 @@ export class CreateCampaignDto {
   @Length(0, 2000)
   bodyPreview?: string;
 
+  /*
+   * One row per `{{n}}` the template carries, saying what fills it. Shape is
+   * checked in campaign-variables against the template Meta actually approved,
+   * which a decorator here cannot see; the ceiling is Meta's own limit on body
+   * variables.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  templateVariables?: unknown[];
+
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(100)
@@ -172,6 +183,17 @@ export class UpdateCampaignDto {
   @IsString()
   @Length(0, 2000)
   bodyPreview?: string;
+
+  /*
+   * One row per `{{n}}` the template carries, saying what fills it. Shape is
+   * checked in campaign-variables against the template Meta actually approved,
+   * which a decorator here cannot see; the ceiling is Meta's own limit on body
+   * variables.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  templateVariables?: unknown[];
 
   @IsOptional()
   @IsArray()

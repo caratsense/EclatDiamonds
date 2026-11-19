@@ -44,6 +44,16 @@ export interface PickedTemplate {
   languageCode: string;
   /** The approved wording, as a customer reads it. Sent to the approver verbatim. */
   preview: string;
+  /**
+   * How many `{{n}}` the template carries, from Meta's own record of it.
+   *
+   * Carried out of the picker because the wizard has to ask what fills each
+   * one. A broadcast used to send no values at all, so an approved template
+   * with a single variable was refused on every recipient.
+   */
+  variableCount: number;
+  /** The wording with its placeholders intact, for showing the mapping against. */
+  source: string;
 }
 
 export function TemplatePicker({
@@ -113,7 +123,13 @@ export function TemplatePicker({
                 onChange(
                   chosen
                     ? null
-                    : { name, languageCode: language, preview: preview ?? "" },
+                    : {
+                        name,
+                        languageCode: language,
+                        preview: preview ?? "",
+                        variableCount: row.metadata.variables?.length ?? 0,
+                        source: row.metadata.bodySource ?? "",
+                      },
                 )
               }
               className={cn(

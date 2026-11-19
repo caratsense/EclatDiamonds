@@ -5582,6 +5582,12 @@ model MessagingCampaign {
   /// Resolved IntegrationAsset at approval time, so a template deleted from the
   /// tenant afterwards fails loudly instead of sending something else.
   templateAssetId  String?
+  /// What fills the template's `{{1}}`, `{{2}}` … for each recipient: one row
+  /// per placeholder naming its source (the customer's name, their branch, or
+  /// a fixed wording) and what to send when that source is empty. Campaigns
+  /// used to send no parameters at all, so any template with a variable was
+  /// rejected by the provider on every recipient. See crm/campaign-variables.
+  templateVariables Json?
   /// Rendered example for the review screen. NOT what is sent.
   bodyPreview      String?
 

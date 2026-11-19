@@ -22,6 +22,14 @@ import {
   compileSegment,
   parseSegmentDefinition,
 } from './audience-segment.dsl';
+import {
+  CampaignVariableError,
+  type VariableMapping,
+  parseVariableMappings,
+  resolveVariables,
+  templateComponentsFor,
+  variableSlotsIn,
+} from './campaign-variables';
 
 export const CAMPAIGN_EXPAND_JOB = 'campaign.expand';
 export const CAMPAIGN_SEND_JOB = 'campaign.send';
@@ -370,6 +378,7 @@ export class CampaignsService implements OnModuleInit {
       segmentId: row.segmentId,
       templateName: row.templateName,
       templateLanguage: row.templateLanguage,
+      templateVariables: row.templateVariables ?? null,
       bodyPreview: row.bodyPreview,
       storeIds: row.storeIds,
       scheduledAt: row.scheduledAt,
@@ -406,6 +415,7 @@ export class CampaignsService implements OnModuleInit {
       templateName?: string;
       templateLanguage?: string;
       bodyPreview?: string;
+      templateVariables?: unknown;
       storeIds?: string[];
       scheduledAt?: string;
       marketingCampaignId?: string;
@@ -442,6 +452,13 @@ export class CampaignsService implements OnModuleInit {
         templateName: input.templateName?.trim() || null,
         templateLanguage: input.templateLanguage?.trim() || null,
         bodyPreview: input.bodyPreview?.trim() || null,
+        /*
+         * Stored as given and checked on approval, not here. A draft is
+         * allowed to be half-written -- somebody picks the template on one
+         * visit and says what fills it on the next -- and refusing an
+         * incomplete mapping at this point would make that impossible.
+         */
+        templateVariables: toJsonOrNull(input.templateVariables),
         storeIds: this.visibleStores(user, input.storeIds) ?? [],
         scheduledAt: input.scheduledAt ? new Date(input.scheduledAt) : null,
         marketingCampaignId: input.marketingCampaignId ?? null,
@@ -473,6 +490,7 @@ export class CampaignsService implements OnModuleInit {
       data.templateLanguage = input.templateLanguage.trim() || null;
     }
     if (typeof input.bodyPreview === 'string') data.bodyPreview = input.bodyPreview.trim() || null;
+    if ('templateVariables' in input) data.templateVariables = toJsonOrNull(input.templateVariables);
     if (typeof input.scheduledAt === 'string') data.scheduledAt = new Date(input.scheduledAt);
     if (input.scheduledAt === null) data.scheduledAt = null;
     if (Array.isArray(input.storeIds)) {
@@ -538,7 +556,16 @@ export class CampaignsService implements OnModuleInit {
       definition: row.audienceSnapshot ?? undefined,
     });
 
-    const asset = await this.resolveTemplateAsset(user, row);
+    /*
+     * The mapping is checked HERE, not at the provider.
+     *
+     * A template with an unfilled `{{1}}` is refused by Meta once per
+     * recipient, after the campaign is already running, and each refusal reads
+     * as that customer's problem rather than the campaign's. Approval is the
+     * last moment anybody is looking at this, so it is where it is caught.
+     */
+    const { assetId } = await this.variableMappingsFor(user, row);
+    const asset = { id: assetId };
 
     const updated = await this.prisma.messagingCampaign.update({
       where: { id: row.id },
@@ -843,6 +870,52 @@ export class CampaignsService implements OnModuleInit {
 
     if (!batch.length) return this.finish(ctx.organisationId, campaign.id);
 
+    /*
+     * What fills the template's {{n}} for each person in this chunk.
+     *
+     * Parsed once per chunk rather than per recipient -- it is the same mapping
+     * for all of them -- and the customers it reads from are fetched in one
+     * query, because a name lookup per recipient is a hundred round trips per
+     * chunk on a campaign that may run to thousands.
+     *
+     * A mapping that no longer matches its template (the template was edited at
+     * Meta after approval, so a variable appeared) stops the whole campaign
+     * here. The alternative is sending to some of the audience and failing on
+     * the rest, which is the one outcome nobody can undo.
+     */
+    let mappings: VariableMapping[] = [];
+    if (campaign.templateVariables !== null && campaign.templateVariables !== undefined) {
+      try {
+        mappings = parseVariableMappings(
+          campaign.templateVariables,
+          variableSlotsIn(campaign.bodyPreview ?? ''),
+        );
+      } catch {
+        // bodyPreview is the approved wording WITH its samples substituted, so
+        // it carries no {{n}} and the count above is 0. Fall back to trusting
+        // the stored mapping as saved: approval already checked it against the
+        // provider's own template.
+        mappings = parseVariableMappings(
+          campaign.templateVariables,
+          Array.isArray(campaign.templateVariables) ? campaign.templateVariables.length : 0,
+        );
+      }
+    }
+
+    const subjects = new Map<string, { name: string | null; branchName: string | null }>();
+    if (mappings.length) {
+      const ids = batch.map((r) => r.partyId).filter((id): id is string => Boolean(id));
+      const parties = ids.length
+        ? await this.prisma.party.findMany({
+            where: { id: { in: ids }, organisationId: ctx.organisationId },
+            select: { id: true, name: true, store: { select: { name: true } } },
+          })
+        : [];
+      for (const p of parties) {
+        subjects.set(p.id, { name: p.name, branchName: p.store?.name ?? null });
+      }
+    }
+
     // The campaign runs as the approver. Sending as nobody would bypass store
     // scope inside queueToContact; sending as the creator would let an
     // unapproved author's scope decide what an approver signed off on.
@@ -863,6 +936,11 @@ export class CampaignsService implements OnModuleInit {
           purpose: 'marketing',
           templateName: campaign.templateName,
           languageCode: campaign.templateLanguage,
+          // Undefined when the template takes no values: Meta refuses an empty
+          // parameter list as firmly as a missing one.
+          templateComponents: templateComponentsFor(
+            resolveVariables(mappings, subjects.get(recipient.partyId ?? '') ?? {}),
+          ),
           idempotencyKey: `campaign:${campaign.id}:${recipient.id}`,
         });
         await this.prisma.campaignRecipient.update({
@@ -973,11 +1051,19 @@ export class CampaignsService implements OnModuleInit {
     const asset = await this.prisma.integrationAsset.findFirst({
       where: {
         organisationId: user.organisationId,
-        kind: 'whatsapp_template',
+        /*
+         * `message_template`, which is what the template sync and the outbox
+         * both write (TEMPLATE_ASSET_KIND). This read asked for
+         * 'whatsapp_template' — a kind nothing in the system has ever
+         * written — so approving ANY campaign failed with "synchronise
+         * templates first", however many times anybody synchronised. It is
+         * the reason no broadcast has ever been sent.
+         */
+        kind: 'message_template',
         externalId: key,
         integration: { providerCode: 'whatsapp_cloud' },
       },
-      select: { id: true },
+      select: { id: true, metadata: true },
     });
     if (!asset) {
       throw new BadRequestException(
@@ -985,6 +1071,42 @@ export class CampaignsService implements OnModuleInit {
       );
     }
     return asset;
+  }
+
+  /**
+   * How many `{{n}}` the chosen template carries, from what Meta told us.
+   *
+   * Read from the template rather than from the author's recollection of it:
+   * the mapping has to match what the provider approved, and the provider is
+   * the only authority on that. `variables` is the projected list; the source
+   * body is the fallback for a row recorded before that list was kept.
+   */
+  private templateSlots(metadata: unknown): number {
+    const raw = (metadata ?? {}) as Record<string, unknown>;
+    if (Array.isArray(raw.variables)) return raw.variables.length;
+    return typeof raw.bodySource === 'string' ? variableSlotsIn(raw.bodySource) : 0;
+  }
+
+  /**
+   * The mapping for a campaign, checked against its template.
+   *
+   * Throws the author's own sentence rather than a validator name — this runs
+   * on approval, which is the last moment anybody is looking.
+   */
+  private async variableMappingsFor(
+    user: AuthUser,
+    row: { templateName: string | null; templateLanguage: string | null; templateVariables: unknown },
+  ): Promise<{ assetId: string; mappings: VariableMapping[] }> {
+    const asset = await this.resolveTemplateAsset(user, row);
+    try {
+      return {
+        assetId: asset.id,
+        mappings: parseVariableMappings(row.templateVariables, this.templateSlots(asset.metadata)),
+      };
+    } catch (error) {
+      if (error instanceof CampaignVariableError) throw new BadRequestException(error.message);
+      throw error;
+    }
   }
 
   private assertManager(user: AuthUser, what: string) {
@@ -1006,6 +1128,19 @@ export class CampaignsService implements OnModuleInit {
       );
     }
   }
+}
+
+/**
+ * A value on its way into a nullable Json column.
+ *
+ * `Prisma.JsonNull` rather than `null`: the latter means "leave this alone" to
+ * Prisma, so clearing a mapping by passing null would silently keep the old one
+ * — and a campaign would send values its author believed they had removed.
+ */
+function toJsonOrNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull {
+  return value === undefined || value === null
+    ? Prisma.JsonNull
+    : (value as Prisma.InputJsonValue);
 }
 
 function isUniqueViolation(error: unknown): boolean {
