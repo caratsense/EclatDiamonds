@@ -197,6 +197,26 @@ export const SEGMENT_FIELD_GROUPS: {
           { value: "account", label: "Account" },
         ],
       },
+      {
+        /*
+         * The branch a customer belongs to.
+         *
+         * The chips under the rules already narrow a broadcast to branches,
+         * but only as a filter over the whole audience. As a RULE it composes:
+         * "at Bandra OR tagged Meta Leads", or "everyone except Head Office".
+         * The client asked for it beside City, and the compiler has always
+         * understood the field — it was simply never offered.
+         *
+         * Options are the tenant's own branches, so they are filled in by the
+         * screen from the session rather than listed here.
+         */
+        field: "party.storeId",
+        label: "Branch",
+        ops: [
+          { op: "in", label: "is one of" },
+          { op: "not_in", label: "is not one of" },
+        ],
+      },
       { field: "party.city", label: "City", ops: [{ op: "in", label: "is one of" }, { op: "contains", label: "contains" }] },
       { field: "party.state", label: "State", ops: [{ op: "in", label: "is one of" }] },
       {

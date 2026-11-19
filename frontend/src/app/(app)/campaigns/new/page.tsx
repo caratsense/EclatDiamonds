@@ -359,6 +359,18 @@ export default function NewCampaignPage() {
                           exclude={c.op === "not_in"}
                           onChange={(tagIds) => updateCondition(i, { value: tagIds })}
                         />
+                      ) : c.field === "party.storeId" ? (
+                        /*
+                          The tenant's own branches, from the session. A list
+                          that ships with the release would be wrong for every
+                          tenant but the first.
+                        */
+                        <ChoiceValuePicker
+                          label="Branch"
+                          options={realStores.map((st) => ({ value: st.id, label: st.name }))}
+                          value={Array.isArray(c.value) ? (c.value as string[]) : []}
+                          onChange={(picked) => updateCondition(i, { value: picked })}
+                        />
                       ) : meta?.options ? (
                         /*
                           A field with a fixed vocabulary is picked from, never
