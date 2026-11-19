@@ -17,7 +17,7 @@ import { compileSegment, parseSegmentDefinition } from './audience-segment.dsl';
  */
 
 const compile = (definition: unknown) =>
-  compileSegment(parseSegmentDefinition(definition), { now: new Date('2026-11-19T00:00:00Z') });
+  compileSegment(parseSegmentDefinition(definition), new Date('2026-11-19T00:00:00Z'));
 
 const tagRule = (op: string, value: string[]) => ({
   match: 'all',
