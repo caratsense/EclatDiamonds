@@ -619,6 +619,23 @@ export class TemplateSyncService implements OnModuleInit {
       );
     }
 
+    /*
+     * A header this editor cannot carry.
+     *
+     * The draft only expresses a text header or a picture, so a template
+     * whose header is a DOCUMENT, a VIDEO or a LOCATION would be rewritten
+     * without one -- and `quotation_pdf_v1` is exactly that: its header IS the
+     * quotation PDF. Refused here as well as on the screen, because the screen
+     * is not the thing that protects the template.
+     */
+    const currentHeader =
+      typeof existing.headerFormat === 'string' ? existing.headerFormat.toUpperCase() : null;
+    if (currentHeader && currentHeader !== 'TEXT' && currentHeader !== 'IMAGE') {
+      throw new BadRequestException(
+        `This template's header is a ${currentHeader.toLowerCase()}, which cannot be rewritten from here. Edit it at Meta.`,
+      );
+    }
+
     const currentStatus = providerTemplateStatus(existing.providerStatus);
     const currentCategory =
       typeof existing.category === 'string' ? existing.category.toUpperCase() : null;
