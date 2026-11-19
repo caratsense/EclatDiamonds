@@ -116,6 +116,26 @@ export class OmnichannelController {
   }
 
   /**
+   * Change a template that already exists at Meta.
+   *
+   * Head office only and audited, like submission, and for the same reason:
+   * the edit rewrites something that carries the business's name into a
+   * customer's WhatsApp. It also un-approves it — Meta reviews an edited
+   * template again, so this call makes a sendable template unsendable until a
+   * sync says otherwise.
+   */
+  @Roles('head_office')
+  @Post('integrations/:integrationId/templates/:assetId/edit')
+  editTemplate(
+    @CurrentUser() user: AuthUser,
+    @Param('integrationId') integrationId: string,
+    @Param('assetId') assetId: string,
+    @Body() dto: SubmitMessageTemplateDto,
+  ) {
+    return this.templateSync.edit(user, integrationId, assetId, dto);
+  }
+
+  /**
    * Refresh template approval from the provider now. Head office only, and
    * audited: it is the act that decides what may leave the building.
    */

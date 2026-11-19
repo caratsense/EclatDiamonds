@@ -1,6 +1,9 @@
 "use client";
 
+import { Pencil } from "lucide-react";
+
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -9,6 +12,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { WhatsAppPreview } from "@/components/integrations/whatsapp-preview";
+import type { TemplateEditSeed } from "@/components/integrations/template-composer";
 import type { MessageTemplateRow } from "@/lib/queries/meta-admin";
 
 /**
@@ -27,15 +31,49 @@ import type { MessageTemplateRow } from "@/lib/queries/meta-admin";
 const when = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—";
 
+/**
+ * The seed the editor opens from, or the reason this one cannot be edited.
+ *
+ * Two templates refuse, and both say so rather than offering a button that
+ * breaks something: a carousel, whose cards are not recoverable from what Meta
+ * returns, and anything recorded before the source was kept, where the only
+ * body we hold has the sample values already substituted into it.
+ */
+function editSeed(row: MessageTemplateRow): TemplateEditSeed | string {
+  const m = row.metadata;
+  if (m.isCarousel) {
+    return "A carousel is edited at Meta for now — its cards cannot be rebuilt from here.";
+  }
+  if (!m.bodySource) {
+    return "The original wording has not been read from Meta yet. Press Synchronise now, then edit.";
+  }
+  return {
+    assetId: row.id,
+    name: row.name ?? row.externalId,
+    languageCode: m.languageCode,
+    category: m.category.toUpperCase() as TemplateEditSeed["category"],
+    body: m.bodySource,
+    examples: m.bodyExamples ?? [],
+    headerFormat: m.headerFormat ?? null,
+    header: m.headerText ?? null,
+    footer: m.footerText ?? null,
+    buttons: (m.buttons ?? []).map((b) => ({ type: b.type, text: b.text, url: b.url })),
+  };
+}
+
 export function TemplateDetail({
   row,
   onClose,
+  onEdit,
 }: {
   row: MessageTemplateRow | null;
   onClose: () => void;
+  /** Absent while no connection is chosen, which is when editing has no target. */
+  onEdit?: (seed: TemplateEditSeed) => void;
 }) {
   if (!row) return null;
   const m = row.metadata;
+  const seed = editSeed(row);
   /*
    * `bodyPreview` already carries the sample values substituted in, so the
    * preview is given no separate example list — passing both would fill the
@@ -113,6 +151,30 @@ export function TemplateDetail({
               <p className="rounded-md border border-destructive/40 bg-destructive/5 p-2.5 text-xs text-destructive">
                 {row.lastError}
               </p>
+            ) : null}
+
+            {onEdit ? (
+              typeof seed === "string" ? (
+                <p className="text-xs text-muted-foreground">{seed}</p>
+              ) : (
+                <div className="space-y-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      onEdit(seed);
+                      onClose();
+                    }}
+                  >
+                    <Pencil className="size-3.5" />
+                    Edit template
+                  </Button>
+                  <p className="text-[11px] text-muted-foreground">
+                    Meta reviews an edited template again, so it stops being sendable until that
+                    comes back approved. The name and the language cannot change.
+                  </p>
+                </div>
+              )
             ) : null}
           </div>
 

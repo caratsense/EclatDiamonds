@@ -1249,6 +1249,12 @@ model Party {
   id             String       @id @default(cuid())
   storeId        String?
   name           String
+  /// The name as it arrived, kept the first time a person renames this party.
+  /// A WhatsApp profile name full of hearts and symbols is unreadable in a list
+  /// but it IS what the customer calls themselves on the channel we message
+  /// them on, so renaming must not be the act that loses it. Written once and
+  /// never overwritten: the original is the original, not the previous value.
+  originalName   String?
   legalName      String?
   code           String?
   /// Which roles this party plays (customer / supplier / staff / salesperson ...).

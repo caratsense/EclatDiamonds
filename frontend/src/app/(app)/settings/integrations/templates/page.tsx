@@ -34,7 +34,10 @@ import {
   type ProviderTemplateStatus,
 } from "@/lib/queries/meta-admin";
 import { NumbersOnAccount } from "@/components/integrations/numbers-on-account";
-import { TemplateComposer } from "@/components/integrations/template-composer";
+import {
+  TemplateComposer,
+  type TemplateEditSeed,
+} from "@/components/integrations/template-composer";
 import { TemplateDetail } from "@/components/integrations/template-detail";
 import { useIntegrations } from "@/lib/queries/tenant-config";
 import { apiErrorMessage } from "@/lib/utils";
@@ -85,6 +88,15 @@ function Templates() {
   // reason and fight the list arriving.
   /** The template whose detail is open, or null. */
   const [detail, setDetail] = useState<MessageTemplateRow | null>(null);
+  /**
+   * The template being edited, seeded from its detail view.
+   *
+   * Held here rather than inside the detail dialog because the editor is the
+   * composer, and one composer cannot be both the "New template" button in the
+   * header and a dialog opened from a row. The detail closes as the editor
+   * opens, so two dialogs are never stacked.
+   */
+  const [editing, setEditing] = useState<TemplateEditSeed | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const integrationId = chosen ?? connections[0]?.id ?? null;
   const setIntegrationId = setChosen;
@@ -284,8 +296,30 @@ function Templates() {
             </Table>
           )}
         </CardContent>
-      </Card>
-      <TemplateDetail row={detail} onClose={() => setDetail(null)} />
+      </Card>
+
+      <TemplateDetail
+        row={detail}
+        onClose={() => setDetail(null)}
+        onEdit={integrationId ? setEditing : undefined}
+      />
+      {integrationId && editing ? (
+        <TemplateComposer
+          /*
+            Keyed on the template, so opening a second one mounts a fresh
+            editor seeded from it. The composer reads the seed into its state
+            once, when it mounts; without the key, React would reuse the
+            instance and show the previous template's wording.
+          */
+          key={editing.assetId}
+          integrationId={integrationId}
+          editing={editing}
+          open
+          onOpenChange={(next) => {
+            if (!next) setEditing(null);
+          }}
+        />
+      ) : null}
     </div>
   );
 }

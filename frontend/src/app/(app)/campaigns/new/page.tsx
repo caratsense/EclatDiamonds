@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, Plus, RefreshCw, ShieldCheck, Trash2, Users } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Plus, RefreshCw, ShieldCheck, Tag, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -15,6 +15,14 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -33,6 +41,7 @@ import {
   type SegmentCondition,
   type SegmentDefinition,
 } from "@/lib/queries/campaigns";
+import { useLeadTags } from "@/lib/queries/lead-tags";
 import { TemplatePicker } from "@/components/campaigns/template-picker";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
@@ -287,6 +296,12 @@ export default function NewCampaignPage() {
                         <div className="flex items-center text-xs text-muted-foreground">
                           No value needed
                         </div>
+                      ) : c.field === "party.tag" ? (
+                        <TagValuePicker
+                          value={Array.isArray(c.value) ? (c.value as string[]) : []}
+                          exclude={c.op === "not_in"}
+                          onChange={(tagIds) => updateCondition(i, { value: tagIds })}
+                        />
                       ) : (
                         <Input
                           value={
@@ -582,6 +597,114 @@ export default function NewCampaignPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The value editor for a tag rule: the organisation's own tags, picked by name.
+ *
+ * Every other field here takes a free-text list, and so did this one. The
+ * client typed "meta leads" — the NAME of her tag — and reached nobody, because
+ * a tag rule is matched against tag ids and a name can never be one. Her words:
+ * "firstly it is not working and secondly, it's not obvious." Tags are a closed
+ * vocabulary a manager maintains in Settings, so the only honest editor for one
+ * is that vocabulary itself; what gets stored is still the ids the compiler
+ * reads.
+ *
+ * Deliberately not the board's LeadTagFilter. Its menu reads "show leads tagged
+ * with any of", which would contradict the "does not have" operator chosen
+ * beside it here, and it carries fixed element ids that would repeat the moment
+ * a second tag rule is added — which is exactly how "has ALL of these tags" is
+ * written on this screen.
+ */
+function TagValuePicker({
+  value,
+  exclude,
+  onChange,
+}: {
+  value: string[];
+  exclude: boolean;
+  onChange: (tagIds: string[]) => void;
+}) {
+  const tags = useLeadTags();
+  const active = tags.data ?? [];
+  const selected = new Set(value);
+  const names = active.filter((t) => selected.has(t.id)).map((t) => t.name);
+  /*
+   * Values the list cannot name: a tag retired since the rule was written, or a
+   * name carried in from an older audience. They still narrow the audience, and
+   * the server still resolves them, so they are counted rather than hidden.
+   */
+  const unnamed = value.length - names.length;
+
+  const label = !value.length
+    ? "Choose tags"
+    : names.length
+      ? [...names, ...(unnamed ? [`${unnamed} more`] : [])].join(", ")
+      : `${unnamed} tag${unnamed === 1 ? "" : "s"}`;
+
+  const toggle = (id: string) =>
+    onChange(selected.has(id) ? value.filter((v) => v !== id) : [...value, id]);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          variant="outline"
+          className="w-full justify-start gap-1.5 px-3 font-normal"
+          aria-label={exclude ? "Tags to leave out" : "Tags to include"}
+        >
+          <Tag className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+          <span className="truncate">{label}</span>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+          {exclude ? "Leave out anyone tagged" : "Include anyone tagged"}
+        </DropdownMenuLabel>
+        {tags.isLoading ? (
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</p>
+        ) : active.length === 0 ? (
+          <p className="px-2 py-1.5 text-sm text-muted-foreground">
+            No tags yet. A manager adds them in Settings.
+          </p>
+        ) : (
+          active.map((t) => (
+            <DropdownMenuItem
+              key={t.id}
+              role="menuitemcheckbox"
+              aria-checked={selected.has(t.id)}
+              // Keep the menu open so several tags can be picked in one go.
+              onSelect={(e) => {
+                e.preventDefault();
+                toggle(t.id);
+              }}
+            >
+              <span className="flex h-4 w-4 items-center justify-center">
+                {selected.has(t.id) ? <Check className="h-4 w-4" /> : null}
+              </span>
+              <span
+                aria-hidden="true"
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: t.colour ?? "var(--muted-foreground)" }}
+              />
+              <span className="truncate">{t.name}</span>
+            </DropdownMenuItem>
+          ))
+        )}
+        {unnamed > 0 ? (
+          <p className="px-2 py-1.5 text-xs text-muted-foreground">
+            Also using {unnamed} {unnamed === 1 ? "tag" : "tags"} not in this list.
+          </p>
+        ) : null}
+        {value.length ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onChange([])}>Clear tags</DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 

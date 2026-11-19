@@ -145,7 +145,7 @@ const MAX_CARD_BODY = 160;
 const MAX_BUTTON_TEXT = 25;
 
 /** See TemplateDraft.buttons — a floor Meta always permits, not its ceiling. */
-const MAX_TEMPLATE_BUTTONS = 2;
+export const MAX_TEMPLATE_BUTTONS = 2;
 
 /**
  * One button in the shape Meta wants, validated on the way.

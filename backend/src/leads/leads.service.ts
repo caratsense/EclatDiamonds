@@ -58,6 +58,19 @@ function endOfDayUtc(s: string): Date {
   return new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999));
 }
 
+/**
+ * Whether a remark says anything.
+ *
+ * The client asked for a remark after every follow-up, so blank is refused —
+ * and so is punctuation or a stray space, which passes a length check and
+ * still leaves the next person reading the lead none the wiser. One letter or
+ * digit in any script is the bar: remarks are written in Hindi as often as in
+ * English, and "Paid 20000" is a remark.
+ */
+export function hasMeaningfulRemark(note: string | null | undefined): boolean {
+  return /[\p{L}\p{N}]/u.test(note ?? '');
+}
+
 const followUpInclude = { orderBy: { seq: 'asc' } } as const;
 
 const DAY_MS = 86_400_000;
@@ -647,6 +660,18 @@ export class LeadsService {
       throw new ForbiddenException('You can only update follow-ups on your own leads');
     }
 
+    // Both refusals happen before anything is written. A follow-up closed with
+    // no remark cannot be reconstructed afterwards, and stopping the reminders
+    // while also booking the next one is two contradictory decisions.
+    if (dto.done && !hasMeaningfulRemark(dto.note)) {
+      throw new BadRequestException('Add a remark before marking this follow-up done.');
+    }
+    if (dto.stopReminders && dto.nextDueDate) {
+      throw new BadRequestException(
+        'Either stop the reminders or set the next follow-up date, not both.',
+      );
+    }
+
     const data: Prisma.LeadFollowUpUpdateInput = {};
     if (dto.dueDate) data.dueDate = parseYmd(dto.dueDate);
     const newDueDay = dto.dueDate ? parseYmd(dto.dueDate) : existing.dueDate;
@@ -702,6 +727,80 @@ export class LeadsService {
       });
     }
 
+    /*
+     * What happens to the REST of the schedule — a decision of its own, taken
+     * after this row is closed so that a stop or a new date also catches this
+     * follow-up when it was not the one being marked done. Completing a
+     * follow-up on its own changes nothing here: the next reminder still goes.
+     */
+    if (dto.stopReminders) {
+      await this.closePendingFollowUps(
+        existing.leadId,
+        user,
+        `Reminders stopped by ${user.name}`,
+      );
+    } else if (dto.nextDueDate) {
+      // The next reminder REPLACES the pending schedule instead of standing
+      // beside it — two live follow-ups on one lead is two reminders about the
+      // same customer, on two different days.
+      const nextDue = parseYmd(dto.nextDueDate);
+      const reminderAt = await this.followUpReminders.resolveReminderAt({
+        organisationId: existing.lead.organisationId,
+        timezone: existing.lead.store?.timezone,
+        dueDay: nextDue,
+      });
+      await this.closePendingFollowUps(
+        existing.leadId,
+        user,
+        `Next follow-up moved to ${dto.nextDueDate}`,
+      );
+      const max = await this.prisma.leadFollowUp.aggregate({
+        where: { leadId: existing.leadId },
+        _max: { seq: true },
+      });
+      await this.prisma.leadFollowUp.create({
+        data: {
+          leadId: existing.leadId,
+          storeId: existing.storeId, // denormalized, same as the auto-seeded ones
+          seq: (max._max.seq ?? 0) + 1,
+          dueDate: nextDue,
+          assigneeId: existing.lead.ownerId ?? user.id,
+          reminderAt,
+        },
+      });
+    }
+
     return toReminderView(updated);
+  }
+
+  /**
+   * Close every follow-up still pending on ONE lead, with the reason appended.
+   *
+   * LeadFollowUp carries no separate cancelled flag, so a stopped follow-up is
+   * closed the same way a sale closes one (see sales.service): `done`, by whom
+   * and when, with the reason added to whatever was already written on the row.
+   * Nothing is deleted — a remark, an actor or a timestamp already on a row
+   * survives, and only this lead's rows are touched.
+   */
+  private async closePendingFollowUps(leadId: string, user: AuthUser, reason: string) {
+    const pending = await this.prisma.leadFollowUp.findMany({
+      where: { leadId, done: false },
+      select: { id: true, note: true },
+    });
+    if (!pending.length) return;
+    const now = new Date();
+    await this.prisma.$transaction(
+      pending.map((f) =>
+        this.prisma.leadFollowUp.update({
+          where: { id: f.id },
+          data: {
+            done: true,
+            doneAt: now,
+            doneById: user.id,
+            note: f.note ? `${f.note} · ${reason}` : reason,
+          },
+        }),
+      ),
+    );
   }
 }

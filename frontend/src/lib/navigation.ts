@@ -296,10 +296,18 @@ export const NAV_ITEMS: NavItem[] = [
   },
   {
     /*
-     * CRM > NPS. Its own screen beside Feedback rather than a tab inside it:
-     * Feedback is the product's generic 1-5 ask; NPS is the client's own form,
-     * its own stages and its own reconciliation against their sheet.
+     * CRM > NPS, now a view inside Feedback Requests rather than an entry of
+     * its own. The argument for separating them was that Feedback is the
+     * product's generic 1-5 ask while NPS is the client's own form, with its
+     * own stages and its own reconciliation against their sheet. The client
+     * has twice said she does not want them apart: "I told you to club NPS and
+     * feedback request into feedback request."
+     *
+     * `hidden` rather than removed, because the entry is still what gives the
+     * screen its name and purpose, still what the access matrix grants, and
+     * still what `/nps` renders for anyone holding a link to it.
      */
+    hidden: true,
     module: 1,
     slug: "nps",
     title: "NPS",

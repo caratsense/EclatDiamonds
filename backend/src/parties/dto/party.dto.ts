@@ -1,4 +1,13 @@
-import { IsEmail, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validator';
+import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
+  IsArray,
+  IsEmail,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 import { IsCustomerPhone, IsRealName } from '../../common/contact.util';
 
 /**
@@ -32,6 +41,37 @@ export class CreatePartyDto {
   city?: string;
 }
 
+
+/**
+ * PATCH /parties/:id — give a customer a readable name (client, 19 Nov).
+ *
+ * `@IsRealName` is the same guard the add form uses: a rename that produces
+ * "9825012345" or "..." leaves the list exactly as unreadable as the hearts and
+ * symbols it was meant to fix.
+ */
+export class RenamePartyDto {
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(120)
+  @IsRealName()
+  name!: string;
+}
+
+/**
+ * POST /parties/bulk-delete — remove the customers somebody ticked.
+ *
+ * Capped, because the ids can only have come from one page of the directory and
+ * every one of them costs a history count. A cap that matches the largest page
+ * the list offers keeps "select everything on this page" working and refuses a
+ * hand-written request to sweep the whole tenant in one call.
+ */
+export class BulkDeletePartiesDto {
+  @IsArray()
+  @ArrayNotEmpty()
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  ids!: string[];
+}
 
 /**
  * Archiving takes a contact out of the working lists. It never deletes one, and

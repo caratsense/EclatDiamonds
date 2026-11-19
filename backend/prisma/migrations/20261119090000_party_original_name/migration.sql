@@ -1,0 +1,11 @@
+-- The name a customer arrived with (19 Nov).
+--
+-- The client: "Many customers Meta identified have symbols, hearts and so on,
+-- and you cannot tell what the customer's name is." Renaming them is the fix,
+-- but the profile name is still what that person is called on WhatsApp, so the
+-- rename writes it here on the first edit and never again — the original is
+-- the original, not the previous value.
+--
+-- Nullable and backfill-free: NULL means nobody has renamed this party, which
+-- is true of every row written before this migration.
+ALTER TABLE "Party" ADD COLUMN "originalName" TEXT;

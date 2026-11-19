@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  useEditTemplate,
   useSubmitTemplate,
   useUploadTemplateImage,
   type TemplateButtonInput,
@@ -89,22 +90,61 @@ function placeholdersIn(text: string): number[] {
   return [...found].sort((a, b) => a - b);
 }
 
+/**
+ * An existing template, opened for editing.
+ *
+ * Meta lets a template be changed after approval and reviews it again; we had
+ * no way to, so a typo in an approved template meant inventing `..._v2` and
+ * leaving the wrong one behind. The client asked for parity: "it gives edit
+ * option in template so that is not there".
+ *
+ * `body` is the SOURCE, with `{{1}}` still in it, never the filled preview —
+ * re-submitting the preview would approve a template that greets everybody by
+ * the name in the example.
+ */
+export interface TemplateEditSeed {
+  assetId: string;
+  name: string;
+  languageCode: string;
+  category: TemplateDraftInput["category"];
+  body: string;
+  examples: string[];
+  headerFormat: string | null;
+  header: string | null;
+  footer: string | null;
+  buttons: TemplateButtonInput[];
+}
+
 export function TemplateComposer({
   integrationId,
   disabled,
+  editing,
+  open: openProp,
+  onOpenChange,
 }: {
   integrationId: string;
   disabled?: boolean;
+  /** Present means edit that template rather than write a new one. */
+  editing?: TemplateEditSeed | null;
+  /** Set both to drive the dialog from elsewhere — the detail view does. */
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
 }) {
   const submit = useSubmitTemplate(integrationId);
+  const edit = useEditTemplate(integrationId);
   const [open, setOpen] = useState(false);
+  const controlled = openProp !== undefined;
+  const dialogOpen = controlled ? openProp : open;
+  const pending = submit.isPending || edit.isPending;
 
-  const [name, setName] = useState("");
-  const [languageCode, setLanguageCode] = useState("en_US");
-  const [category, setCategory] = useState<TemplateDraftInput["category"]>("UTILITY");
-  const [body, setBody] = useState("");
-  const [footer, setFooter] = useState("");
-  const [examples, setExamples] = useState<string[]>([]);
+  const [name, setName] = useState(editing?.name ?? "");
+  const [languageCode, setLanguageCode] = useState(editing?.languageCode ?? "en_US");
+  const [category, setCategory] = useState<TemplateDraftInput["category"]>(
+    editing?.category ?? "UTILITY",
+  );
+  const [body, setBody] = useState(editing?.body ?? "");
+  const [footer, setFooter] = useState(editing?.footer ?? "");
+  const [examples, setExamples] = useState<string[]>(editing?.examples ?? []);
 
   /*
    * A picture above the message, and/or a row of product cards.
@@ -127,7 +167,9 @@ export function TemplateComposer({
    * went somewhere" impossible rather than merely unlikely.
    */
   type HeaderType = "NONE" | "TEXT" | "IMAGE";
-  const [headerType, setHeaderTypeState] = useState<HeaderType>("NONE");
+  const [headerType, setHeaderTypeState] = useState<HeaderType>(
+    editing?.headerFormat === "IMAGE" ? "IMAGE" : editing?.header ? "TEXT" : "NONE",
+  );
   const [isCarousel, setIsCarousel] = useState(false);
   const bodyRef = useRef<HTMLTextAreaElement>(null);
 
@@ -151,7 +193,7 @@ export function TemplateComposer({
       el?.setSelectionRange(at + next.length, at + next.length);
     });
   };
-  const [header, setHeader] = useState("");
+  const [header, setHeader] = useState(editing?.header ?? "");
   const [headerImage, setHeaderImage] = useState<{ handle: string; previewUrl: string } | null>(null);
   const [cards, setCards] = useState<TemplateCardInput[]>([]);
   /*
@@ -160,12 +202,10 @@ export function TemplateComposer({
    * a "Give feedback" button, and WhatsApp renders the button as a control.
    * A carousel carries its buttons per card, so these are hidden there.
    */
-  const [buttons, setButtons] = useState<TemplateButtonInput[]>([]);
+  const [buttons, setButtons] = useState<TemplateButtonInput[]>(editing?.buttons ?? []);
   const headerFileRef = useRef<HTMLInputElement>(null);
   const cardFileRef = useRef<HTMLInputElement>(null);
   const upload = useUploadTemplateImage(integrationId);
-
-
 
   /** Changing the header type clears whatever the other types were holding. */
   const setHeaderType = (next: HeaderType) => {
@@ -279,7 +319,11 @@ export function TemplateComposer({
                   ? "A link button needs a link."
                   : null
     : headerType === "IMAGE" && !headerImage
-      ? "Upload the picture that goes above the message."
+      ? editing
+        ? // Meta reviews the picture as part of the edit and takes it as an
+          // upload handle, not as the URL of the one it already approved.
+          "Attach the picture again — an edit has to send Meta the image, not a link to it."
+        : "Upload the picture that goes above the message."
       : null;
 
   const problem =
@@ -318,7 +362,7 @@ export function TemplateComposer({
   const send = async () => {
     if (problem) return;
     try {
-      const result = await submit.mutateAsync({
+      const draft: TemplateDraftInput = {
         name: name.trim().toLowerCase(),
         languageCode,
         category,
@@ -346,39 +390,61 @@ export function TemplateComposer({
             : header.trim()
               ? { header: header.trim() }
               : {}),
-      });
-      // Never "created" or "approved". It is in a queue at Meta, and saying
-      // otherwise is how somebody builds a campaign on a template that is
-      // still under review.
-      toast.success(`"${result.name}" submitted to Meta`, {
-        description: "Under review. It becomes sendable once Meta approves it, usually within a day.",
-      });
+      };
+
+      // Never "created" or "approved" in either case. It is in a queue at
+      // Meta, and saying otherwise is how somebody builds a campaign on a
+      // template that is still under review.
+      if (editing) {
+        const result = await edit.mutateAsync({ assetId: editing.assetId, ...draft });
+        toast.success(`"${result.name}" sent back to Meta`, {
+          description:
+            "Meta reviews an edited template again, so it cannot be sent until that comes back approved.",
+        });
+      } else {
+        const result = await submit.mutateAsync(draft);
+        toast.success(`"${result.name}" submitted to Meta`, {
+          description: "Under review. It becomes sendable once Meta approves it, usually within a day.",
+        });
+      }
       reset();
       setOpen(false);
+      onOpenChange?.(false);
     } catch (e) {
-      toast.error(apiErrorMessage(e, "Could not submit that template."));
+      toast.error(
+        apiErrorMessage(e, editing ? "Could not save that edit." : "Could not submit that template."),
+      );
     }
   };
 
   return (
     <Dialog
-      open={open}
+      open={dialogOpen}
       onOpenChange={(next) => {
         setOpen(next);
+        onOpenChange?.(next);
         if (!next) reset();
       }}
     >
-      <DialogTrigger asChild>
-        <Button size="sm" disabled={disabled}>
-          <Plus className="size-4" />
-          New template
-        </Button>
-      </DialogTrigger>
+      {/* No trigger when the dialog is driven from elsewhere — the detail
+          view opens this from its own Edit button. */}
+      {controlled ? null : (
+        <DialogTrigger asChild>
+          <Button size="sm" disabled={disabled}>
+            <Plus className="size-4" />
+            New template
+          </Button>
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>New WhatsApp template</DialogTitle>
+          <DialogTitle>
+            {editing ? `Edit ${editing.name}` : "New WhatsApp template"}
+          </DialogTitle>
           <DialogDescription>
-            Meta reviews every template before it can be sent. Usually under a day.
+            {editing
+              ? "Meta reviews an edited template again. It stops being sendable until that comes back approved."
+              : "Meta reviews every template before it can be sent. Usually under a day."}
           </DialogDescription>
         </DialogHeader>
 
@@ -392,6 +458,10 @@ export function TemplateComposer({
                 id="tpl-name"
                 value={name}
                 placeholder="appointment_reminder"
+                // The name and the language are what identify a template at
+                // Meta, so an edit cannot change either. Locked here rather
+                // than refused on save.
+                disabled={Boolean(editing)}
                 // Meta's own constraint. Enforced as you type rather than
                 // reported back, because the name cannot be changed later.
                 onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, "_"))}
@@ -402,7 +472,11 @@ export function TemplateComposer({
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Language</Label>
-              <Select value={languageCode} onValueChange={setLanguageCode}>
+              <Select
+                value={languageCode}
+                onValueChange={setLanguageCode}
+                disabled={Boolean(editing)}
+              >
                 <SelectTrigger>
                   <SelectValue />
                 </SelectTrigger>
@@ -921,11 +995,20 @@ export function TemplateComposer({
 
         <DialogFooter className="flex-col items-stretch gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-[11px] text-muted-foreground">
-            {problem ?? "Ready to submit. Meta decides; nothing is sendable until it approves."}
+            {problem ??
+              (editing
+                ? "Ready to send back. Meta reviews it again; it cannot be sent until it approves."
+                : "Ready to submit. Meta decides; nothing is sendable until it approves.")}
           </p>
-          <Button onClick={send} disabled={!!problem || submit.isPending} size="sm">
+          <Button onClick={send} disabled={!!problem || pending} size="sm">
             <Send className="size-4" />
-            {submit.isPending ? "Submitting…" : "Submit for review"}
+            {pending
+              ? editing
+                ? "Saving…"
+                : "Submitting…"
+              : editing
+                ? "Save and send for review"
+                : "Submit for review"}
           </Button>
         </DialogFooter>
       </DialogContent>

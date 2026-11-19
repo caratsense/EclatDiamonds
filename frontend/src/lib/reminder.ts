@@ -24,3 +24,61 @@ export function reminderLabel(r: ReminderView | null | undefined): string | null
   if (!r) return null;
   return `${r.state === "sent" ? "Reminded" : "Reminder"} ${formatLocalReminder(r.local)}`;
 }
+
+/**
+ * What happens to the REST of the schedule when a follow-up is marked done.
+ *
+ * Three separate answers, because the client asked for three (Nov): the
+ * remaining reminders stand, or they stop because everything is sorted, or the
+ * customer asked to be called next month instead. Completing a follow-up is
+ * never on its own a reason to stop the next one, so "keep" is the default.
+ */
+export type FollowUpNextStep = "keep" | "stop" | "reschedule";
+
+export interface FollowUpDoneDraft {
+  remark: string;
+  next: FollowUpNextStep;
+  /** yyyy-mm-dd; read only when `next` is "reschedule". */
+  nextDueDate: string;
+}
+
+/** The body of PATCH /leads/reminders/:id when a follow-up is marked done. */
+export interface FollowUpDoneBody {
+  done: true;
+  note: string;
+  stopReminders?: true;
+  nextDueDate?: string;
+}
+
+/**
+ * At least one letter or digit, in any script — remarks are written in Hindi as
+ * often as in English, and "Paid 20000" is a remark while "..." is not. Mirrors
+ * the backend's `hasMeaningfulRemark`, which refuses the save either way; this
+ * is only so the counter is told before pressing the button.
+ */
+const MEANINGFUL = /[\p{L}\p{N}]/u;
+
+/** The field to put right before this follow-up can be saved, and why. */
+export interface FollowUpDoneProblem {
+  field: "remark" | "nextDueDate";
+  message: string;
+}
+
+/** What stops this follow-up being saved, or null when nothing does. */
+export function followUpDoneProblem(draft: FollowUpDoneDraft): FollowUpDoneProblem | null {
+  if (!MEANINGFUL.test(draft.remark)) {
+    return { field: "remark", message: "Add a remark — what happened on this follow-up?" };
+  }
+  if (draft.next === "reschedule" && !draft.nextDueDate) {
+    return { field: "nextDueDate", message: "Pick the date of the next follow-up." };
+  }
+  return null;
+}
+
+/** The request that follow-up draft becomes. Call only once it has no problem. */
+export function followUpDoneBody(draft: FollowUpDoneDraft): FollowUpDoneBody {
+  const note = draft.remark.trim();
+  if (draft.next === "stop") return { done: true, note, stopReminders: true };
+  if (draft.next === "reschedule") return { done: true, note, nextDueDate: draft.nextDueDate };
+  return { done: true, note };
+}

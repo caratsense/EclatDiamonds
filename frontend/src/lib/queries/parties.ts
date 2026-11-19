@@ -23,6 +23,11 @@ export type PartyTypeName =
 export interface PartyRow {
   id: string;
   name: string;
+  /**
+   * The name this customer arrived with, kept the first time somebody renamed
+   * them. Null until then — most customers have never been renamed.
+   */
+  originalName: string | null;
   code: string | null;
   types: PartyTypeName[];
   phone: string | null;
@@ -41,6 +46,11 @@ export interface PartyRow {
   salesCount: number;
   /** The customer's tags — chips on the directory row (client, 10 Oct). */
   tags: { id: string; name: string; colour: string | null }[];
+  /**
+   * Came from Gati, which rewrites the name on every sync — so the rename is
+   * not offered here at all, rather than offered and then undone overnight.
+   */
+  isSynced: boolean;
   createdAt: string | null;
   /** Set only on the archived list — who took them out of the directory, and why. */
   archivedAt: string | null;
@@ -98,6 +108,59 @@ export function useCreateParty() {
   });
 }
 
+
+/**
+ * Rename a customer.
+ *
+ * The client's ask (19 Nov): the customers Meta identified are called things
+ * like "♥♥♥" and nobody can tell who they are. The reply carries the whole row
+ * back, including `originalName`, so the screen can keep showing what they were
+ * called on WhatsApp without a refetch.
+ */
+export function useRenameParty() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, name }: { id: string; name: string }) => {
+      const { data } = await api.patch<PartyRow>(`/parties/${id}`, { name });
+      return data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["parties"] });
+      // The name is what search and Customer 360 show too.
+      void qc.invalidateQueries({ queryKey: ["search"] });
+      void qc.invalidateQueries({ queryKey: ["crm", "customer360"] });
+    },
+  });
+}
+
+/** One customer's outcome in a bulk delete — deleted, or skipped with a reason. */
+export interface BulkDeleteResult {
+  requested: number;
+  deleted: { id: string; name: string }[];
+  skipped: { id: string; name: string | null; reason: string }[];
+}
+
+/**
+ * Delete the ticked customers.
+ *
+ * The server applies the single-delete rules one customer at a time, so a
+ * selection that includes Gati-synced customers or customers with history comes
+ * back PART done: the reply names who went and who did not, and the screen
+ * reports that instead of a success toast. Head office only.
+ */
+export function useBulkDeleteParties() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (ids: string[]) => {
+      const { data } = await api.post<BulkDeleteResult>("/parties/bulk-delete", { ids });
+      return data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["parties"] });
+      void qc.invalidateQueries({ queryKey: ["search"] });
+    },
+  });
+}
 
 /**
  * Archive a contact.
