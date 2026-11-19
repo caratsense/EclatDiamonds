@@ -522,6 +522,22 @@ export class CampaignsService implements OnModuleInit {
       throw new ConflictException('Only a draft can be sent for approval.');
     }
     this.assertSendable(row);
+
+    /*
+     * AN APPROVER DOES NOT QUEUE FOR THEMSELVES.
+     *
+     * Approval exists so a broadcast to thousands of customers is seen by
+     * somebody senior to whoever wrote it. When the author IS that person it
+     * stops being a check and becomes a second button — head office writing a
+     * campaign, sending it to themselves, and approving it a moment later.
+     * The client asked for exactly this: "head office should definitely not
+     * require that".
+     *
+     * The record still says both things happened and who did them, because
+     * removing the ceremony is not the same as removing the trail.
+     */
+    if (isApprover(user)) return this.approveDraft(user, row, true);
+
     const updated = await this.prisma.messagingCampaign.update({
       where: { id: row.id },
       data: { status: 'awaiting_approval' },
@@ -549,6 +565,15 @@ export class CampaignsService implements OnModuleInit {
     if (row.status !== 'awaiting_approval') {
       throw new ConflictException('Only a campaign awaiting approval can be approved.');
     }
+    return this.approveDraft(user, row, false);
+  }
+
+  /** The approval itself, shared by the two ways of reaching it. */
+  private async approveDraft(
+    user: AuthUser,
+    row: Awaited<ReturnType<CampaignsService['loadCampaign']>>,
+    ownWork: boolean,
+  ) {
     this.assertSendable(row);
 
     const definition = await this.resolveDefinition(user, {
@@ -588,7 +613,11 @@ export class CampaignsService implements OnModuleInit {
       action: 'campaign.approved',
       entityType: 'MessagingCampaign',
       entityId: row.id,
-      summary: `Approved the campaign "${row.name}".`,
+      // Says which of the two routes this was. "Approved their own" is the
+      // fact an auditor would want and the one the shortcut could hide.
+      summary: ownWork
+        ? `Approved their own campaign "${row.name}" and released it.`
+        : `Approved the campaign "${row.name}".`,
     });
 
     await this.jobs.enqueue({
@@ -1121,8 +1150,7 @@ export class CampaignsService implements OnModuleInit {
    * campaign for their branch; releasing it to customers is a head-office act.
    */
   private assertApprover(user: AuthUser) {
-    const allowed: Role[] = ['head_office', 'area_manager'];
-    if (!allowed.includes(user.role)) {
+    if (!isApprover(user)) {
       throw new BadRequestException(
         'Only head office or an area manager can approve a campaign.',
       );
@@ -1137,6 +1165,17 @@ export class CampaignsService implements OnModuleInit {
  * Prisma, so clearing a mapping by passing null would silently keep the old one
  * — and a campaign would send values its author believed they had removed.
  */
+/**
+ * May this person release a broadcast to customers?
+ *
+ * Head office and an area manager. A store manager may draft one for their
+ * branch; letting it reach customers is somebody else's signature.
+ */
+function isApprover(user: AuthUser): boolean {
+  const allowed: Role[] = ['head_office', 'area_manager'];
+  return allowed.includes(user.role);
+}
+
 function toJsonOrNull(value: unknown): Prisma.InputJsonValue | typeof Prisma.JsonNull {
   return value === undefined || value === null
     ? Prisma.JsonNull

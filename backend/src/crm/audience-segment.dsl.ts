@@ -1,5 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { LeadSource, LeadStage, PartyType, Prisma } from '@prisma/client';
 
 /**
  * The audience condition language.
@@ -104,6 +104,16 @@ export interface SegmentDefinition {
   conditions: SegmentCondition[];
 }
 
+/*
+ * The database's own vocabularies, so a rule can only ask for a value that
+ * exists. Typed from the Prisma enums rather than copied: adding a lead source
+ * and forgetting this list is how a new channel becomes unselectable, and
+ * copying it wrong is how a selectable value becomes a 500.
+ */
+export const PARTY_TYPES = Object.values(PartyType);
+export const LEAD_STAGES = Object.values(LeadStage);
+export const LEAD_SOURCES = Object.values(LeadSource);
+
 /** Bounded so a pathological rule tree cannot become a pathological query. */
 export const MAX_CONDITIONS = 25;
 
@@ -122,6 +132,32 @@ function asStringArray(value: unknown, field: string): string[] {
     }
     return v.trim();
   });
+}
+
+/**
+ * The values a database enum column will actually accept.
+ *
+ * Without this the list went to Prisma as written and Postgres refused it, so
+ * "Enquiry stage is one of customer" — a plausible thing to type, and what the
+ * generic value box's own placeholder suggested — came back as "Something went
+ * wrong. The team has been notified." A rule that matches nobody should say
+ * zero; only a rule the system cannot evaluate should be an error, and then it
+ * should say which word was wrong and what the choices are.
+ */
+function asEnumArray<T extends string>(
+  value: unknown,
+  field: string,
+  allowed: readonly T[],
+): T[] {
+  const values = asStringArray(value, field);
+  const unknown = values.filter((v) => !allowed.includes(v as T));
+  if (unknown.length) {
+    throw new BadRequestException(
+      `"${field}" does not have ${unknown.map((v) => `"${v}"`).join(', ')}. ` +
+        `Choose from: ${allowed.join(', ')}.`,
+    );
+  }
+  return values as T[];
 }
 
 function asNumber(value: unknown, field: string): number {
@@ -247,9 +283,9 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
   switch (c.field) {
     // ------------------------------------------------------------ party
     case 'party.type': {
-      const values = asStringArray(c.value, c.field);
+      const values = asEnumArray(c.value, c.field, PARTY_TYPES);
       return {
-        where: { types: { hasSome: values as never } },
+        where: { types: { hasSome: values } },
         reason: `is a ${values.join(' or ')}`,
       };
     }
@@ -324,9 +360,9 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
 
     // ------------------------------------------------------------- lead
     case 'lead.stage': {
-      const values = asStringArray(c.value, c.field);
+      const values = asEnumArray(c.value, c.field, LEAD_STAGES);
       return {
-        where: { leads: { some: { stage: { in: values as never } } } },
+        where: { leads: { some: { stage: { in: values } } } },
         reason: `has a lead at stage ${values.join(' or ')}`,
       };
     }
@@ -378,9 +414,9 @@ function compileCondition(c: SegmentCondition, now: Date): { where: Prisma.Party
       return { where: has, reason: `is tagged ${values.length} selected tag(s)` };
     }
     case 'lead.source': {
-      const values = asStringArray(c.value, c.field);
+      const values = asEnumArray(c.value, c.field, LEAD_SOURCES);
       return {
-        where: { leads: { some: { source: { in: values as never } } } },
+        where: { leads: { some: { source: { in: values } } } },
         reason: `came in through ${values.join(' or ')}`,
       };
     }

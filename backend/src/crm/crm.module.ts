@@ -61,6 +61,7 @@ import {
   CrmPipelinesController,
 } from './crm.controller';
 import { CrmQualificationController, CrmAttributionController } from './crm-ai.controller';
+import { ProvenanceTagsService } from './provenance-tags.service';
 
 /**
  * The CRM spine (CaratOS Phase A3). Every service is exported: other modules
@@ -119,7 +120,7 @@ import { CrmQualificationController, CrmAttributionController } from './crm-ai.c
     ResponseSlaController,
     FollowUpRemindersController,
   ],
-  providers: [
+  providers: [ProvenanceTagsService, 
     BotScriptService,
     IdentityService,
     ActivityService,

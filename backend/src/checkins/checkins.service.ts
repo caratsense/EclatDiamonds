@@ -18,6 +18,7 @@ import { FollowUpRemindersService, reminderView } from '../crm/follow-up-reminde
 import { VisitFeedbackService } from '../crm/visit-feedback.service';
 import { AuditService } from '../common/audit.service';
 import { updateOrgSettings } from '../config/org-settings';
+import { ProvenanceTagsService } from '../crm/provenance-tags.service';
 
 const PURPOSE_LABEL: Record<string, string> = {
   bridal: 'Bridal',
@@ -118,6 +119,7 @@ export class CheckinsService {
     private readonly reminders: FollowUpRemindersService,
     private readonly visitFeedback: VisitFeedbackService,
     private readonly audit: AuditService,
+    private readonly provenanceTags: ProvenanceTagsService,
   ) {}
 
   /** PUT /checkins/settings — head office only (controller). Audited. */
@@ -607,7 +609,15 @@ export class CheckinsService {
         ownerId: user.id,
         lastActivity: new Date(),
       },
-      select: { id: true },
+      select: { id: true, partyId: true, source: true },
+    });
+    // The walk-in tag, on the lead and on the customer, the moment the lead
+    // exists rather than in a later backfill.
+    await this.provenanceTags.tagNewLead({
+      organisationId: user.organisationId,
+      leadId: lead.id,
+      partyId: lead.partyId,
+      source: lead.source,
     });
     return lead.id;
   }

@@ -148,6 +148,8 @@ function serviceFor(rows: Row[]) {
       resolveReminderAt: async ({ dueDay }: { dueDay: Date }) =>
         new Date(dueDay.getTime() + 10 * 3_600_000),
     } as unknown as FollowUpRemindersService,
+    // Tagging belongs to lead CREATION; nothing on this path reaches it.
+    unused,
   );
   return { service, prisma };
 }

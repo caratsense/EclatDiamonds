@@ -2,7 +2,18 @@
 
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Check, Plus, RefreshCw, ShieldCheck, Tag, Trash2, Users } from "lucide-react";
+import {
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ChevronDown,
+  Plus,
+  RefreshCw,
+  ShieldCheck,
+  Tag,
+  Trash2,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { SectionHeader } from "@/components/section/section-header";
@@ -76,6 +87,16 @@ const NULLARY_OPS = new Set(["is_set", "is_not_set"]);
 export default function NewCampaignPage() {
   const router = useRouter();
   const stores = useSession((s) => s.stores);
+  /*
+   * Head office and an area manager release broadcasts themselves.
+   *
+   * Approval exists so a message to thousands is seen by somebody senior to
+   * whoever wrote it; when the author IS that person it is a second button,
+   * not a check. The server decides this too — this only stops the screen
+   * promising a queue nobody is waiting in.
+   */
+  const baseRole = useSession((s) => s.baseRole);
+  const approvesOwnWork = baseRole === "head_office" || baseRole === "area_manager";
   const realStores = useMemo(() => stores.filter((s) => !s.isAggregate), [stores]);
 
   const [step, setStep] = useState<Step>("Details");
@@ -171,7 +192,11 @@ export default function NewCampaignPage() {
             { id: campaign.id },
             {
               onSuccess: () => {
-                toast.success(`"${campaign.name}" is waiting for approval.`);
+                toast.success(
+                  approvesOwnWork
+                    ? `"${campaign.name}" is approved and queued.`
+                    : `"${campaign.name}" is waiting for approval.`,
+                );
                 router.push(`/campaigns/${campaign.id}`);
               },
               onError: (e) => {
@@ -333,6 +358,20 @@ export default function NewCampaignPage() {
                           value={Array.isArray(c.value) ? (c.value as string[]) : []}
                           exclude={c.op === "not_in"}
                           onChange={(tagIds) => updateCondition(i, { value: tagIds })}
+                        />
+                      ) : meta?.options ? (
+                        /*
+                          A field with a fixed vocabulary is picked from, never
+                          typed into. Typing "customer" on Enquiry stage sent
+                          that word to Postgres as an enum value, which refused
+                          it — so a plausible rule came back as "Something went
+                          wrong" rather than matching nobody.
+                        */
+                        <ChoiceValuePicker
+                          label={meta.label}
+                          options={meta.options}
+                          value={Array.isArray(c.value) ? (c.value as string[]) : []}
+                          onChange={(picked) => updateCondition(i, { value: picked })}
                         />
                       ) : (
                         <Input
@@ -623,7 +662,11 @@ export default function NewCampaignPage() {
               }
             />
             <div className="pt-2">
-              <Badge variant="outline">Needs approval before anything is sent</Badge>
+              <Badge variant="outline">
+                {approvesOwnWork
+                  ? "You can release this yourself"
+                  : "Needs approval before anything is sent"}
+              </Badge>
             </div>
           </CardContent>
         </Card>
@@ -641,7 +684,7 @@ export default function NewCampaignPage() {
             ) : (
               <Check className="mr-2 h-4 w-4" />
             )}
-            Send for approval
+            {approvesOwnWork ? "Approve and send" : "Send for approval"}
           </Button>
         ) : (
           <Button onClick={() => go(1)}>
@@ -757,6 +800,61 @@ function TagValuePicker({
             <DropdownMenuItem onSelect={() => onChange([])}>Clear tags</DropdownMenuItem>
           </>
         ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * One of a fixed set of values — a record type, an enquiry stage, a source.
+ *
+ * Built like the tag picker beside it rather than reusing it: the tag list is
+ * the tenant's own and arrives over the network, these are the database's own
+ * vocabulary and ship with the release. What they share is that neither can be
+ * typed into, which is the whole point.
+ */
+function ChoiceValuePicker({
+  label,
+  options,
+  value,
+  onChange,
+}: {
+  label: string;
+  options: { value: string; label: string }[];
+  value: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const chosen = options.filter((o) => value.includes(o.value));
+  const toggle = (v: string) =>
+    onChange(value.includes(v) ? value.filter((x) => x !== v) : [...value, v]);
+
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="outline" className="justify-between font-normal">
+          <span className="truncate">
+            {chosen.length ? chosen.map((o) => o.label).join(", ") : `Choose ${label.toLowerCase()}`}
+          </span>
+          <ChevronDown className="size-4 shrink-0 opacity-60" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="start" className="w-56">
+        <DropdownMenuLabel>{label}</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {options.map((o) => (
+          <DropdownMenuItem
+            key={o.value}
+            onSelect={(e) => {
+              // Keep the menu open: these rules are usually "one of several".
+              e.preventDefault();
+              toggle(o.value);
+            }}
+            className="justify-between"
+          >
+            {o.label}
+            {value.includes(o.value) ? <Check className="size-4" /> : null}
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

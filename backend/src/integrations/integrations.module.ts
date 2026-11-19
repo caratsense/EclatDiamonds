@@ -26,6 +26,7 @@ import { TelephonyOutboundAdapter } from './adapters/telephony-outbound.adapter'
 import { WhatsAppOutboundAdapter } from './adapters/whatsapp-outbound.adapter';
 import { MessagingRoutesController } from './messaging-routes.controller';
 import { MessagingRoutesService } from './messaging-routes.service';
+import { ProvenanceTagsService } from '../crm/provenance-tags.service';
 
 /**
  * External integrations (Phase 4): WhatsApp Business, Razorpay, gold-rate feed,
@@ -40,7 +41,7 @@ import { MessagingRoutesService } from './messaging-routes.service';
 @Module({
   imports: [WhatsAppBotModule, IntegrationModule],
   controllers: [IntegrationsController, MessagingRoutesController, AdaptersController],
-  providers: [
+  providers: [ProvenanceTagsService, 
     WhatsAppService,
     WhatsAppCredentialsService,
     WebhookIntakeService,

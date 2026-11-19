@@ -29,6 +29,7 @@ import {
   UpdateOutcomeDto,
 } from './dto/lead.dto';
 import { FOLLOW_UP_CADENCE_DAYS } from '../common/follow-up-cadence';
+import { ProvenanceTagsService } from '../crm/provenance-tags.service';
 
 // SOP follow-up cadence lives in common/follow-up-cadence.ts — one home, so
 // this path, lead intake and the QR path cannot drift apart.
@@ -224,6 +225,7 @@ export class LeadsService {
     private readonly activity: ActivityService,
     private readonly attribution: AttributionService,
     private readonly followUpReminders: FollowUpRemindersService,
+    private readonly provenanceTags: ProvenanceTagsService,
   ) {}
 
   /**
@@ -351,6 +353,16 @@ export class LeadsService {
         ownerId: dto.ownerId ?? user.id,
         lastActivity: new Date(),
       },
+    });
+
+    // A lead typed in by hand earns the same tag as one that arrived on its
+    // own: the audience the client builds on tags must not depend on how the
+    // record got here.
+    await this.provenanceTags.tagNewLead({
+      organisationId: user.organisationId,
+      leadId: lead.id,
+      partyId: lead.partyId,
+      source: lead.source,
     });
 
     // Auto follow-ups: SOP defaults +7d (seq 1) and +30d (seq 2) from create date.

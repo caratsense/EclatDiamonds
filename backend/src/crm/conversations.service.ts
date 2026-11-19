@@ -36,6 +36,7 @@ import { AdvancedCrmService } from './advanced-crm.service';
 import { LeadIntakeService } from './lead-intake.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { AdReferral } from '../integration/contracts/ad-referral';
+import { ProvenanceTagsService } from './provenance-tags.service';
 
 /**
  * ConversationsService — the unified inbox (Phase A3).
@@ -191,6 +192,7 @@ export class ConversationsService {
     private readonly omnichannel: OmnichannelService,
     private readonly storage: StorageService,
     private readonly notifications: NotificationsService,
+    private readonly provenanceTags: ProvenanceTagsService,
   ) {}
 
   private readonly logger = new Logger(ConversationsService.name);
@@ -838,9 +840,17 @@ export class ConversationsService {
                 interest: ref.headline ?? null,
                 originKey,
               },
-              select: { id: true },
+              select: { id: true, partyId: true, source: true },
             });
             leadId = created.id;
+            // Tagged where it came from as it is created, so a broadcast built
+            // on tags keeps seeing new enquiries without a backfill.
+            await this.provenanceTags.tagNewLead({
+              organisationId,
+              leadId: created.id,
+              partyId: created.partyId,
+              source: created.source,
+            });
           } catch (err) {
             // Lost the race. The other delivery created this lead; returning
             // theirs IS the correct outcome, not an error.
@@ -1115,9 +1125,15 @@ export class ConversationsService {
             source: this.leadSourceFor(convo.sourcePlatform),
             originKey,
           },
-          select: { id: true },
+          select: { id: true, partyId: true, source: true },
         });
         leadId = created.id;
+        await this.provenanceTags.tagNewLead({
+          organisationId,
+          leadId: created.id,
+          partyId: created.partyId,
+          source: created.source,
+        });
       } catch (err) {
         // A concurrent assignment, or the inbound path finally routing, won the
         // race. Returning theirs IS the correct outcome.
