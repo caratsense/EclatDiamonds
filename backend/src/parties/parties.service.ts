@@ -453,7 +453,8 @@ export class PartiesService {
         ...(isSalesScoped(user) ? { AND: [partyWorkedBy(user.id)] } : {}),
         archivedAt: null,
       },
-      orderBy: { name: 'asc' },
+      // The workbook reads in the same order as the screen it came from.
+      orderBy: [{ nameGroup: 'asc' }, { name: 'asc' }],
       take: 10000,
       select: {
         name: true, phone: true, email: true, city: true,
@@ -539,7 +540,17 @@ export class PartiesService {
       this.prisma.party.count({ where }),
       this.prisma.party.findMany({
         where,
-        orderBy: { name: 'asc' },
+        /*
+         * Symbol names last.
+         *
+         * A WhatsApp profile name is whatever the customer set it to, and a
+         * good number of them are a heart or a pair of folded hands. Postgres
+         * sorts those before every letter and digit, so page one of the
+         * directory was emoji. `nameGroup` is computed by the database (0 for
+         * a name starting with a letter or digit, 1 for the rest), which is
+         * what lets this stay one Prisma query over the dynamic filters above.
+         */
+        orderBy: [{ nameGroup: 'asc' }, { name: 'asc' }],
         skip: (page - 1) * pageSize,
         take: pageSize,
         select: PARTY_SELECT,

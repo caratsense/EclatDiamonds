@@ -19,6 +19,8 @@ import { CustomerBotService } from './customer-bot.service';
 import { MetaAdMetadataService } from '../integrations/meta-ad-metadata.service';
 import { extractMetaReferral } from '../integrations/meta-referral';
 import { ConversationAiGate } from '../crm/ai-responder';
+import { AdSetRulesService } from '../crm/adset-rules.service';
+import { chooseHandoffOwner, chooseHandoffStore } from './handoff-destination';
 import { NotificationsService } from '../notifications/notifications.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { isUnambiguousOptOut } from '../omnichannel/omnichannel-policy';
@@ -69,6 +71,7 @@ export class WhatsAppBotService {
     private readonly notifications: NotificationsService,
     private readonly adMetadata: MetaAdMetadataService,
     private readonly campaignBot: CampaignBotService,
+    private readonly adSetRules: AdSetRulesService,
   ) {}
 
   /**
@@ -954,18 +957,57 @@ export class WhatsAppBotService {
         storeId: true,
         partyId: true,
         assignedUserId: true,
+        matchedRuleId: true,
         party: { select: { name: true } },
       },
     });
     if (!conversation) return;
 
-    const managers = conversation.storeId
+    /*
+     * THE BRANCH THE AD NAMED.
+     *
+     * A bot script carries the branch its ad belongs to, and the thread picks
+     * that up when the rule matches at the first message. It does not when the
+     * rule was given its branch afterwards, or when the branch was added to a
+     * script somebody had already been talking to — and this is the moment it
+     * matters, because the script has finished and a person has to take over.
+     *
+     * Adopted, not guessed: the only branch considered is the one the script
+     * for THIS ad names. A thread whose ad matched no script still has no
+     * branch, and that is the honest answer rather than the nearest showroom.
+     */
+    let ruleStoreId: string | null = null;
+    let ruleOwnerId: string | null = null;
+    if (conversation.matchedRuleId) {
+      const rule = (await this.adSetRules.list(organisationId)).find(
+        (r) => r.id === conversation.matchedRuleId,
+      );
+      if (rule?.assignedUserId) ruleOwnerId = rule.assignedUserId;
+      if (!conversation.storeId && rule?.storeId) {
+        const physical = await this.prisma.store.findFirst({
+          where: {
+            id: rule.storeId,
+            organisationId,
+            isAggregate: false,
+            isHolding: false,
+            attendanceOnly: false,
+            status: { not: 'closed' },
+          },
+          select: { id: true },
+        });
+        if (physical) ruleStoreId = physical.id;
+      }
+    }
+
+    const storeId = chooseHandoffStore(conversation.storeId, ruleStoreId);
+
+    const managers = storeId
       ? await this.prisma.user.findMany({
           where: {
             organisationId,
             isActive: true,
             role: 'store_manager',
-            userStores: { some: { storeId: conversation.storeId } },
+            userStores: { some: { storeId } },
           },
           orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
@@ -983,14 +1025,33 @@ export class WhatsAppBotService {
         ? conversation.assignedUserId
         : null;
 
+    /*
+     * The person the script names, ahead of the branch's manager.
+     *
+     * A script can nominate who takes its conversations — "whoever they want
+     * to assign" — and that choice is more specific than "the first manager at
+     * that branch", so it wins. Checked the same way as everyone else: an
+     * owner who cannot open Conversations is nobody.
+     */
+    const named =
+      ruleOwnerId &&
+      (await canOpenById(this.prisma, organisationId, ruleOwnerId, 'conversations'))
+        ? ruleOwnerId
+        : null;
+
+    const owner = chooseHandoffOwner({ holder, named, manager: manager?.id ?? null });
+
     await this.prisma.conversation.update({
       where: { id: conversationId },
       data: {
         handling: 'human',
         handoffReason: reason,
+        // The branch the script named, written now so the thread stops reading
+        // as "no store yet" the moment a person owns it.
+        ...(storeId && storeId !== conversation.storeId ? { storeId } : {}),
         // Never steal a thread somebody has already taken: a manager who picked
         // this up by hand outranks the automatic choice.
-        ...(manager && !holder ? { assignedUserId: manager.id } : {}),
+        ...(owner && !holder ? { assignedUserId: owner } : {}),
       },
     });
 
@@ -1044,7 +1105,6 @@ export class WhatsAppBotService {
      *
      * Best-effort by contract, and emitted after the writes have committed.
      */
-    const owner = holder ?? manager?.id ?? null;
     if (owner) {
       const who = conversation.party?.name?.trim() || 'A customer';
       await this.notifications.emit([owner], {
@@ -1052,7 +1112,7 @@ export class WhatsAppBotService {
         title: `${who} is waiting for a person on WhatsApp`,
         body: reason,
         href: `/conversations?thread=${conversationId}`,
-        storeId: conversation.storeId,
+        storeId,
         entityType: 'Conversation',
         entityId: conversationId,
         priority: 'high',
@@ -1064,7 +1124,9 @@ export class WhatsAppBotService {
 
     this.logger.log(
       `  handed to a person on ${conversationId}` +
-        (manager ? ` → ${manager.name}` : ' (no branch yet — stays in the head-office queue)'),
+        (owner
+          ? ` → ${named === owner ? 'the script’s own owner' : (manager?.name ?? 'its existing owner')}`
+          : ' (the ad matched no script with a branch — stays in the head-office queue)'),
     );
   }
 
