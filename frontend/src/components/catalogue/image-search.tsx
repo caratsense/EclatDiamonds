@@ -14,6 +14,7 @@ import {
   SearchBusyError,
   prepareQueryImage,
   useSimilaritySearch,
+  useWakeVisualSearch,
   type SimilaritySearchResult,
 } from "@/lib/queries/jewelry-similarity";
 import { cn, apiErrorMessage } from "@/lib/utils";
@@ -72,6 +73,28 @@ export function ImageSearch() {
   const [busyUntil, setBusyUntil] = useState<number | null>(null);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
   const search = useSimilaritySearch();
+  const wake = useWakeVisualSearch();
+
+  /*
+   * Wake the models while they are still choosing a photograph.
+   *
+   * The service sleeps when idle and a cold start loads two vision models —
+   * longer than the search's own budget. The client waited the full
+   * forty-five seconds for "Visual search took too long" because her first
+   * search WAS the wake-up. Moving it here means the waiting happens before
+   * anyone is watching a spinner.
+   *
+   * Fire-and-forget on mount: a failure costs nothing, the search still works
+   * without it, and `mutate` (not `mutateAsync`) keeps an unhandled rejection
+   * out of the console on a page somebody opened and left.
+   */
+  const woken = useRef(false);
+  useEffect(() => {
+    if (woken.current) return;
+    woken.current = true;
+    wake.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount, never on re-render
+  }, []);
 
   function run(next: Shot[]) {
     if (!next.length || search.isPending) return;

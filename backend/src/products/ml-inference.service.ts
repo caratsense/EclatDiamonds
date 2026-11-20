@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { fetchJson } from '../integrations/integrations.util';
 import { parseEmbedding } from './image-embedding.service';
@@ -110,6 +111,61 @@ export class MlInferenceService {
       h['x-api-key'] = this.key;
     }
     return h;
+  }
+
+  /**
+   * Keep the inference service awake.
+   *
+   * It sleeps when nothing has called it, and waking it loads two vision
+   * models — far longer than a person waiting on a search screen will give it.
+   * The client photographed a ring, waited forty-five seconds and got "Visual
+   * search took too long": the first call hit a sleeping service, the retry
+   * had thirteen seconds of the budget left, and no cold start finishes in
+   * thirteen seconds.
+   *
+   * A health call every five minutes costs one request and keeps it resident.
+   * Deliberately not tied to a tenant or a job queue — it is about the process
+   * being alive, which is nobody's work item.
+   *
+   * Failures are logged at debug and never thrown: this is a convenience, and
+   * a sleeping service must not make the application look unhealthy.
+   */
+  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'inference.keep-warm' })
+  async keepWarm(): Promise<void> {
+    if (!this.available) return;
+    try {
+      await fetchJson(`${this.url}/health`, {
+        method: 'GET',
+        headers: this.headers(),
+        timeoutMs: 20_000,
+      });
+    } catch (err) {
+      this.logger.debug(
+        `inference keep-warm failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  /**
+   * Wake it because somebody is about to search.
+   *
+   * Called when the image-search panel is opened, so the cold start overlaps
+   * with the person choosing a photograph instead of running down their search
+   * budget. Returns whether it answered, so the screen can say "warming up"
+   * rather than letting them photograph into a timeout.
+   */
+  async wake(): Promise<{ ready: boolean }> {
+    if (!this.available) return { ready: false };
+    try {
+      await fetchJson(`${this.url}/health`, {
+        method: 'GET',
+        headers: this.headers(),
+        timeoutMs: 25_000,
+      });
+      return { ready: true };
+    } catch {
+      return { ready: false };
+    }
   }
 
   /**

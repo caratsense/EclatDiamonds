@@ -148,6 +148,14 @@ export interface Product {
   heroImageUrl?: string | null;
   heroThumbUrl?: string | null;
   heroSource?: ImageSource | null;
+  /**
+   * Which systems have written this design — Gati, the website, or both.
+   *
+   * Asked for on the catalogue itself: knowing where a design's data came from
+   * used to mean opening it, which is no help when you are scanning a grid for
+   * the ones the website has not described yet.
+   */
+  sources?: { gati: boolean; website: boolean } | null;
   onlinePrice?: (PriceRange & { indicative?: number | null }) | null;
   tagPrice?: PriceRange | null;
   /** Pieces on hand in the viewer's scope. */

@@ -106,6 +106,19 @@ export interface CardExtras {
   heroThumbUrl: string | null;
   /** gati_cad | website | manual | inventory | other, or null for a legacy imageUrl-only cover. */
   heroSource: string | null;
+  /**
+   * Which systems have written this design, for the badge on the card.
+   *
+   * The client asked to see it on the catalogue itself: "we should be able to
+   * identify which data is coming from where, Gati or website". It was only
+   * ever on the detail screen, which means knowing to open a design before you
+   * can tell where it came from — no use at all when scanning a grid for the
+   * ones the website has not described yet.
+   *
+   * Read from the per-source stamps the syncs already keep, so it says what
+   * HAS happened rather than what was configured.
+   */
+  sources: { gati: boolean; website: boolean };
   onlinePrice: { min: number | null; max: number | null; indicative: number | null } | null;
   tagPrice: { min: number; max: number } | null;
   onHand: number;
@@ -309,7 +322,13 @@ export class ProductsService {
    */
   private async cardExtras(
     organisationId: string,
-    rows: { id: string; name: string; imageUrl: string | null }[],
+    rows: {
+      id: string;
+      name: string;
+      imageUrl: string | null;
+      gatiSyncedAt?: Date | null;
+      websiteSyncedAt?: Date | null;
+    }[],
     presence: Map<string, StockPresence>,
   ): Promise<Map<string, CardExtras>> {
     const out = new Map<string, CardExtras>();
@@ -370,6 +389,7 @@ export class ProductsService {
         heroImageUrl: hero?.url ?? r.imageUrl ?? null,
         heroThumbUrl: hero?.thumbUrl ?? null,
         heroSource: hero?.source ?? null,
+        sources: { gati: !!r.gatiSyncedAt, website: !!r.websiteSyncedAt },
         onlinePrice:
           online.length || indicative
             ? {

@@ -22,6 +22,7 @@ import {
 import { ProductsService, parseProductFilters } from './products.service';
 import { AiImageSearchService } from './ai-image-search.service';
 import { JewelrySimilarityService } from './jewelry-similarity.service';
+import { MlInferenceService } from './ml-inference.service';
 import { CreateProductDto } from './dto/product.dto';
 import { SimilarityFeedbackDto, SimilaritySearchQueryDto } from './dto/jewelry-similarity.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
@@ -38,6 +39,7 @@ export class ProductsController {
     private readonly products: ProductsService,
     private readonly aiSearch: AiImageSearchService,
     private readonly jewelry: JewelrySimilarityService,
+    private readonly inference: MlInferenceService,
   ) {}
 
   /**
@@ -50,6 +52,20 @@ export class ProductsController {
    * guess at which two views happen to correspond. Both field names are
    * accepted so existing callers keep working unchanged.
    */
+  /**
+   * Wake the inference service because somebody is about to search.
+   *
+   * Called when the image-search panel opens. The models sleep when idle and
+   * waking them takes longer than anyone waiting on a search screen will give,
+   * so the cold start is moved to while they are choosing a photograph. Cheap,
+   * idempotent, and safe to call again.
+   */
+  @Permit('catalogue.read')
+  @Post('jewelry/visual-search/wake')
+  wakeVisualSearch() {
+    return this.inference.wake();
+  }
+
   @RateLimit('expensive')
   @Permit('catalogue.read')
   @Post('jewelry/similarity-search')
