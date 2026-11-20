@@ -424,6 +424,9 @@ const JEWELLERY: IndustryPack = {
       'requests',
       'settings/rates',
       'settings/targets',
+      // Head office's website catalogue connection, sync runs and receipts. It
+      // was reachable only from a link inside a design's detail (client, 20 Nov).
+      'catalogue/integration',
     ),
     aiCrmContext:
       'Jewellery retail enquiries, appointments, preferences, quotations and purchase follow-ups.',

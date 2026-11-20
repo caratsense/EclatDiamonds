@@ -368,6 +368,17 @@ export const NAV_ITEMS: NavItem[] = [
     rank: 30,
   },
   {
+    module: 5,
+    slug: "catalogue/integration",
+    title: "Catalogue Integration",
+    purpose: "Website catalogue connection, sync runs and designs that need checking.",
+    primaryAction: "",
+    icon: Globe,
+    group: "Showroom",
+    rank: 35,
+    roles: ["head_office"],
+  },
+  {
     module: 2,
     slug: "quotation",
     title: "Quotation & Orders",
