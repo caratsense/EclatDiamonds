@@ -9,6 +9,7 @@ import { sniffImageMime } from './image-fetch.util';
 import { MlInferenceService, DualEmbedding, View } from './ml-inference.service';
 import { CatalogueIndexService } from './catalogue-index.service';
 import { JewelryRankingService, MatchLevel, RankCandidate, RANKING_VERSION, unitOf } from './jewelry-ranking.service';
+import { StampedCache } from './stamped-cache';
 import sharp from 'sharp';
 
 /**
@@ -194,13 +195,36 @@ export class JewelrySimilarityService implements OnModuleInit {
   }
 
   async onModuleInit() {
-    if (this.config.get<string>('SEARCH_PGVECTOR') !== '1') return;
-    this.ann = await this.detectAnn();
-    this.logger.log(
-      this.ann
-        ? 'visual search retrieval: pgvector ANN'
-        : 'SEARCH_PGVECTOR=1 but pgvector / its ANN indexes are missing — using the exact ranker',
-    );
+    if (this.config.get<string>('SEARCH_PGVECTOR') === '1') {
+      this.ann = await this.detectAnn();
+      this.logger.log(
+        this.ann
+          ? 'visual search retrieval: pgvector ANN'
+          : 'SEARCH_PGVECTOR=1 but pgvector / its ANN indexes are missing — using the exact ranker',
+      );
+    }
+    // The exact ranker needs every vector in memory, and reading them takes
+    // ~30 s in production. Read them now, behind the boot, so the first search
+    // after a deploy does not wait for them. Not in tests, nor where search is
+    // off (staging has no inference URL).
+    if (!this.ann && this.inference.available && process.env.NODE_ENV !== 'test' && this.config.get<string>('SEARCH_WARM_INDEX') !== '0') {
+      void this.warmIndexes();
+    }
+  }
+
+  /** Every organisation's search vectors, read one organisation after another. */
+  private async warmIndexes(): Promise<void> {
+    const t = Date.now();
+    try {
+      const orgs = await this.prisma.productEmbedding.groupBy({
+        by: ['organisationId'],
+        where: { productImageId: { not: null } },
+      });
+      for (const o of orgs) await this.orgIndex(o.organisationId);
+      this.logger.log(`visual search index ready for ${orgs.length} organisation(s) in ${Date.now() - t} ms`);
+    } catch (err) {
+      this.logger.warn(`visual search index warm-up failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
   }
 
   /** The extension and both HNSW indexes from migration 20260918160000_pgvector_ann_768. */
@@ -244,11 +268,19 @@ export class JewelrySimilarityService implements OnModuleInit {
    * Each organisation's vectors, held in memory until its index changes.
    *
    * One row per photograph AND per piece detected in it. Packed as Float32 it
-   * is ~60MB for ~10k rows, loaded once; the stamp (row count + latest write)
-   * is one cheap aggregate, so a new photo is seen by the very next search on
-   * any instance. Only rows of a gallery picture are candidates.
+   * is ~60MB for ~10k rows; the stamp (row count + latest write) is one cheap
+   * aggregate. Reading every row took 28 s in production (16,108 rows, 20 Nov),
+   * and a search used to wait for it after every deploy and every newly indexed
+   * photo. Now only the very first read is waited for: when the index changes, a
+   * search ranks against the vectors already held while the new ones are read
+   * behind it, so a new photo joins the search a moment later. Only rows of a
+   * gallery picture are candidates; retired pictures are dropped per search.
    */
-  private readonly memIndex = new Map<string, { stamp: string; vectors: IndexedVector[] }>();
+  private readonly memIndex = new StampedCache<IndexedVector[]>((organisationId, err) =>
+    this.logger.warn(
+      `visual search index reload failed for ${organisationId}: ${err instanceof Error ? err.message : String(err)}`,
+    ),
+  );
 
   private async orgIndex(organisationId: string): Promise<IndexedVector[]> {
     const where: Prisma.ProductEmbeddingWhereInput = { organisationId, productImageId: { not: null } };
@@ -258,9 +290,12 @@ export class JewelrySimilarityService implements OnModuleInit {
       _max: { updatedAt: true },
     });
     const stamp = `${agg._count._all}:${agg._max.updatedAt?.getTime() ?? 0}`;
-    const cached = this.memIndex.get(organisationId);
-    if (cached?.stamp === stamp) return cached.vectors;
+    return this.memIndex.get(organisationId, stamp, () => this.readIndex(where));
+  }
 
+  /** Every vector the organisation has, page by page. */
+  private async readIndex(where: Prisma.ProductEmbeddingWhereInput): Promise<IndexedVector[]> {
+    const t = Date.now();
     const vectors: IndexedVector[] = [];
     let cursor: string | undefined;
     for (;;) {
@@ -296,7 +331,7 @@ export class JewelrySimilarityService implements OnModuleInit {
       if (page.length < INDEX_PAGE) break;
       cursor = page[page.length - 1].id;
     }
-    this.memIndex.set(organisationId, { stamp, vectors });
+    this.logger.log(`visual search index read: ${vectors.length} vectors in ${Date.now() - t} ms`);
     return vectors;
   }
 
