@@ -1,9 +1,9 @@
 import { NestFactory } from '@nestjs/core';
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { StorageService } from './storage/storage.service';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { json, urlencoded } from 'express';
-import { isAbsolute, join } from 'path';
 import { AppModule } from './app.module';
 import { listedAttendanceOnlyOrgs } from './auth/access';
 import { PrismaService } from './prisma/prisma.service';
@@ -41,12 +41,16 @@ async function bootstrap() {
 
   const config = app.get(ConfigService);
 
-  // Serve uploaded images/photos statically at /uploads (same dir StorageService
-  // writes to). Production can instead point imageUrl at R2/Cloudinary CDN URLs.
-  const configuredUploadDir = config.get<string>('UPLOAD_DIR');
-  const uploadDir = configuredUploadDir
-    ? (isAbsolute(configuredUploadDir) ? configuredUploadDir : join(process.cwd(), configuredUploadDir))
-    : join(process.cwd(), 'uploads');
+  /*
+   * Serve uploaded images/photos statically at /uploads.
+   *
+   * ASKED OF StorageService rather than recomputed from UPLOAD_DIR. The two
+   * read the same variable and fell back differently the moment the service
+   * learned to prefer the mounted volume — the service wrote to the volume's
+   * `public` while this still served the container's `uploads`, so every new
+   * image 404'd. One root, one owner, no second opinion.
+   */
+  const uploadDir = app.get(StorageService).baseDir;
   /*
    * People, not products.
    *
@@ -113,6 +117,24 @@ async function bootstrap() {
   }
   for (const id of attendanceOnly?.unknown ?? []) {
     startup.warn(`ATTENDANCE_ONLY_SALES_ORGS lists ${JSON.stringify(id)}, which is not an organisation here.`);
+  }
+
+  /*
+   * SAID OUT LOUD AT BOOT, because the failure is silent when it happens.
+   *
+   * A private attachment written to the container's own filesystem is stored,
+   * sent and shown on the thread exactly as a durable one would be. It only
+   * becomes visible as a loss after the next deploy, and then to the person
+   * the customer complains to rather than to anyone who could have prevented
+   * it. Three of a store manager's photographs went that way on 20 November.
+   */
+  const storage = app.get(StorageService);
+  if (storage.privateStorageIsEphemeral) {
+    startup.warn(
+      `Private attachments are being written to ${storage.privateDir}, on this container's own ` +
+        'filesystem — a deploy will destroy them. Mount a volume, or set PRIVATE_UPLOAD_DIR to a ' +
+        'path that survives one.',
+    );
   }
 
   // Validate + strip unknown fields at the edge (CLAUDE.md rule #3).

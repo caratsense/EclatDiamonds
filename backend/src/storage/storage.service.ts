@@ -59,10 +59,34 @@ export class StorageService {
 
   constructor(private readonly config: ConfigService) {}
 
-  /** Filesystem root for uploads (UPLOAD_DIR, else <cwd>/uploads). */
+  /**
+   * The persistent disk the platform mounted, when it mounted one.
+   *
+   * A container's own filesystem is wiped by every deploy. That is survivable
+   * for public media, which lives in R2, and was not survivable for private
+   * attachments: three photographs a store manager sent to a customer were
+   * written to the container layer in the morning and were gone by the
+   * afternoon, leaving "no longer stored" on a thread with a real customer
+   * reading it. Both roots are derived from the volume when there is one.
+   */
+  private get volumeRoot(): string | null {
+    const mount = this.config.get<string>('RAILWAY_VOLUME_MOUNT_PATH')?.trim();
+    return mount && isAbsolute(mount) ? mount : null;
+  }
+
+  /**
+   * Filesystem root for public uploads (UPLOAD_DIR, else the volume's `public`,
+   * else <cwd>/uploads).
+   *
+   * `public` rather than the volume root itself: the private root has to be a
+   * sibling that this one does not contain, or `privatePath` refuses it — see
+   * the reasoning there.
+   */
   get baseDir(): string {
     const configured = this.config.get<string>('UPLOAD_DIR');
     if (configured) return isAbsolute(configured) ? configured : join(process.cwd(), configured);
+    const volume = this.volumeRoot;
+    if (volume) return join(volume, 'public');
     return join(process.cwd(), 'uploads');
   }
 
@@ -597,7 +621,24 @@ export class StorageService {
   get privateDir(): string {
     const configured = this.config.get<string>('PRIVATE_UPLOAD_DIR');
     if (configured) return isAbsolute(configured) ? configured : join(process.cwd(), configured);
+    // The mounted volume, which survives a deploy. Everything below it is the
+    // same disk as `baseDir`'s `public`, and a sibling of it rather than a
+    // child, so neither root contains the other.
+    const volume = this.volumeRoot;
+    if (volume) return join(volume, 'private');
     return join(process.cwd(), 'uploads-private', 'documents');
+  }
+
+  /**
+   * True when a private document would be written somewhere a deploy destroys.
+   *
+   * Surfaced rather than inferred: the failure is silent at the moment it
+   * matters — the write succeeds, the message queues, the thread shows the
+   * photograph — and only becomes visible after the next deploy, to whoever
+   * the customer complains to. main.ts says so at boot.
+   */
+  get privateStorageIsEphemeral(): boolean {
+    return !this.config.get<string>('PRIVATE_UPLOAD_DIR')?.trim() && !this.volumeRoot;
   }
 
   /** Store a private document. Returns its key, never a URL. */

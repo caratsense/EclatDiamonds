@@ -105,6 +105,34 @@ function phraseQuestion(question: { text: string; options?: string[] }): string 
   return `${text.replace(/\?\s*$/, '')} — ${question.options.join(', ')}?`;
 }
 
+/**
+ * Has somebody actually configured this campaign's conversation?
+ *
+ * STRICTLY OPT-IN, but opted in by ANY of the editor's fields.
+ *
+ * This used to require `firstReply` alone, as the one field that exists only
+ * on campaigns saved through the new editor — a fair proxy for "configured
+ * deliberately", until somebody configured a campaign deliberately WITHOUT
+ * one.
+ *
+ * The client did exactly that, three times: three live bridal campaigns with
+ * no first reply, no questions, and a closing message written for them. Every
+ * one was read as unconfigured, so their customers fell through to the legacy
+ * button questionnaire — a script she had removed long before, asking "What
+ * are you looking for today?" with four options, to people who had already
+ * filled in a lead form. She found it on real threads with real customers.
+ *
+ * A rule that truly predates the editor carries none of the three fields and
+ * is still untouched, which is all the original narrow test was protecting.
+ */
+export function hasConfiguredConversation(rule: {
+  firstReply?: string | null;
+  questions?: unknown[] | null;
+  closingMessage?: string | null;
+}): boolean {
+  return !!(rule.firstReply?.trim() || rule.questions?.length || rule.closingMessage?.trim());
+}
+
 @Injectable()
 export class CampaignBotService {
   private readonly logger = new Logger(CampaignBotService.name);
@@ -139,12 +167,10 @@ export class CampaignBotService {
     const rules = await this.rules.list(organisationId);
     const scripted = (id: string | null | undefined) => {
       const rule = id ? rules.find((r) => r.id === id) : undefined;
-      // STRICTLY OPT-IN on the new field. `firstReply` exists only on campaigns
-      // saved through the new editor, so every rule configured before this
-      // feature — including ones whose old "AI prompt" box was filled when
-      // nothing executed it — keeps exactly its current behaviour until
-      // somebody deliberately writes the campaign's first reply.
-      return rule && rule.enabled && rule.handling === 'ai' && rule.firstReply ? rule : null;
+      // Any of the editor's fields counts as configured; see
+      // hasConfiguredConversation for the campaigns this was missing.
+      const configured = !!rule && hasConfiguredConversation(rule);
+      return rule && rule.enabled && rule.handling === 'ai' && configured ? rule : null;
     };
     // The advert the customer just tapped decides first. A returning customer
     // keeps the thread (and its branch) from their first visit, so the
@@ -218,7 +244,12 @@ export class CampaignBotService {
     });
     const settings = (org?.settings ?? {}) as Record<string, unknown>;
     const d = normaliseDefaultConversation(settings.customerBotDefault);
-    if (!d.enabled || !d.firstReply) return null;
+    // Configured by ANY of the editor's fields, for the same reason the
+    // campaign gate above is: a walk-in conversation with only a closing
+    // message is configured, and reading it as unconfigured drops the customer
+    // into the legacy questionnaire the tenant thought they had replaced.
+    if (!d.enabled) return null;
+    if (!d.firstReply && !d.questions?.length && !d.closingMessage?.trim()) return null;
     return {
       id: WALK_IN_ID,
       name: 'Walk-in',
