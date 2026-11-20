@@ -8,8 +8,7 @@
  * Why not "everything before this month"
  * --------------------------------------
  * Because it is wrong. The October conversations in this database include
- * Gargi Srivastava, namu1507, Jenil Doshi, Sadananda Mohanty and
- * divyangsosa11 -- real people, from real Instagram and Facebook ads, with
+ * real people, from real Instagram and Facebook ads, with
  * real phone numbers and real leads attached. A date rule deletes them along
  * with the seed data, and nothing brings them back.
  *

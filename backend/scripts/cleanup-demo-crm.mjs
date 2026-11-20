@@ -5,8 +5,7 @@
  *   node scripts/db-backup.mjs
  *
  * Scope is provenance, never a date. The client asked for "anything before
- * this month", which on this database would delete Gargi Srivastava,
- * namu1507, Jenil Doshi, Sadananda Mohanty and divyangsosa11 -- real people
+ * this month", which on this database would delete five real customers
  * from real Instagram and Facebook ads, with real phone numbers and real
  * leads. Those are October rows and they are not test data.
  *
