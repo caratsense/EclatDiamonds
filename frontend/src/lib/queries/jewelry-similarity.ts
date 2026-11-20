@@ -109,6 +109,33 @@ export function parseRetryAfter(value: unknown, now = Date.now()): number {
 }
 
 /**
+ * POST /products/jewelry/visual-search/wake — wake the models before anyone
+ * photographs anything.
+ *
+ * The inference service sleeps when idle, and waking it loads two vision
+ * models. The client photographed a ring, waited the full forty-five second
+ * budget and got "Visual search took too long" — the first call had hit a
+ * sleeping service and the retry had thirteen seconds left. Nothing cold
+ * starts in thirteen seconds.
+ *
+ * Fired when the panel opens, so the wake overlaps with choosing a photograph
+ * instead of eating the search's budget. Never surfaces an error: this is a
+ * head start, and a search still works without it.
+ */
+export function useWakeVisualSearch() {
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await api.post<{ ready: boolean }>(
+        "/products/jewelry/visual-search/wake",
+        undefined,
+        { timeout: 30_000 },
+      );
+      return data;
+    },
+  });
+}
+
+/**
  * POST /products/jewelry/similarity-search — photograph a piece, get visually
  * ranked catalogue matches (DINOv2 + SigLIP 2 embeddings, server-side).
  * Auth: salesperson and up. All 1–3 photos go in ONE multipart request as

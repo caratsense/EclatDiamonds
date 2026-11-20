@@ -482,7 +482,12 @@ export class JewelrySimilarityService implements OnModuleInit {
       return empty(
         'SEARCH_ERROR',
         /abort|timeout/i.test(failure)
-          ? 'Visual search took too long — please try again.'
+          ? // Almost always a cold start: the first search of the day wakes two
+            // vision models. Saying "try again" alone invites a second wait;
+            // saying WHY, and that the second is quick, is the difference
+            // between somebody retrying and somebody giving up on the feature.
+            'The image models were waking up, so this search ran out of time. ' +
+            'Try once more — it will be quick now.'
           : 'Visual search temporarily unavailable — inference service did not respond.',
       );
     }

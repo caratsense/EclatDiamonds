@@ -71,6 +71,38 @@ export function ProductCard({ product, onOpen, scoped = false }: ProductCardProp
             {imageSourceLabel(product.heroSource)}
           </span>
         ) : null}
+        {/*
+          WHERE THIS DESIGN'S DATA CAME FROM.
+
+          The badge above names the source of the PICTURE; this names the
+          source of the design itself, which is a different question and the
+          one the client asked: "we should be able to identify which data is
+          coming from where, Gati or website". A design Gati knows and the
+          website has never listed is a different job from one the website
+          describes and Gati has never stocked, and the grid is where you spot
+          either. Read from the per-source sync stamps, so it says what has
+          actually happened.
+        */}
+        {product.sources?.gati || product.sources?.website ? (
+          <span className="absolute bottom-1.5 left-1.5 flex gap-1">
+            {product.sources.gati ? (
+              <span
+                title="Gati has written this design"
+                className="rounded-full bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              >
+                Gati
+              </span>
+            ) : null}
+            {product.sources.website ? (
+              <span
+                title="The website has written this design"
+                className="rounded-full bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              >
+                Website
+              </span>
+            ) : null}
+          </span>
+        ) : null}
         {flags ? (
           <span className="absolute right-1.5 top-1.5 flex gap-1">
             {flags.noImage ? (
