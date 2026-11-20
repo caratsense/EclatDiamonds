@@ -163,6 +163,13 @@ const CORE_NAVIGATION = [
   'hrms/payroll',
   'settings/staff-digest',
   'settings/lead-tags',
+  /*
+   * Universal for the same reason the import framework is: any business whose
+   * records arrive from another system has codes in them that only its own
+   * people can read. Nothing here knows what a jewellery group is — it maps a
+   * code to a category this tenant already uses.
+   */
+  'settings/product-groups',
   'settings/messaging-routes',
   'settings/channels',
   'data/images',

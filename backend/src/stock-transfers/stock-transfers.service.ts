@@ -5,23 +5,27 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, StockStatus, StockTransferStatus } from '@prisma/client';
+import { Prisma, StockTransferStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuditService } from '../common/audit.service';
 import { SequenceService } from '../common/sequence.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { AuthUser } from '../common/auth-user';
+import { assertNotSelfApproval } from '../common/approval.util';
 import { ROLE_LABELS } from '../common/role.util';
-import { assertTransition } from './stock-transfer-status';
+import { assertTransition, submitTarget } from './stock-transfer-status';
+import {
+  pullableStockView,
+  pullableStockWhere,
+  TRANSFERABLE_STATUSES,
+} from './pullable-stock';
 import {
   CreateStockTransferDto,
   ListStockTransferDto,
+  PullableStockQueryDto,
   ReasonDto,
 } from './dto/stock-transfer.dto';
-
-/** Statuses from which a piece may be pulled into a transfer / reserved. */
-const AVAILABLE: StockStatus[] = ['in_stock', 'aging', 'dead_stock'];
 
 /**
  * Module 9 — inter-store Stock Transfer workflow.
@@ -44,6 +48,25 @@ const AVAILABLE: StockStatus[] = ['in_stock', 'aging', 'dead_stock'];
  *    run inside `$transaction` alongside the status CAS, so a piece that has been
  *    sold/melted/already-moved out from under the transfer aborts the whole
  *    stage rather than leaving a half-applied move.
+ *
+ * ## Push and pull are one workflow
+ *
+ * A PULL — a branch asking another branch for a piece a customer is standing in
+ * front of them wanting — is this same record with `initiatedBy =
+ * 'destination'`. It is a direction, not a second transfer system, and not a
+ * `SpecialRequest`: the thing being asked for is a set of physical pieces that
+ * then have to be reserved, dispatched, received and signed for, which is
+ * exactly what this workflow already is. The special-request ladder routes
+ * UPWARDS by role rank within one branch; a pull is sideways, to a peer manager
+ * at a branch the asker cannot even see, and bending the ladder into that shape
+ * would change how every other kind of request is routed and read.
+ *
+ * Direction changes three things and nothing else: which end must be the
+ * caller's own store (destination instead of source, at create/submit/cancel),
+ * one consent step in front of the ladder (`pending_source` — the holding
+ * branch accepts or declines before head office is asked), and the picker that
+ * lets the asker see what to ask for (see pullable-stock.ts). Approve,
+ * dispatch, receive and acknowledge run byte-for-byte the same for both.
  */
 @Injectable()
 export class StockTransfersService {
@@ -84,6 +107,51 @@ export class StockTransfersService {
         'Head office approves/rejects transfers; branch staff raise them',
       );
     }
+  }
+
+  /**
+   * The branch a pull may be addressed to.
+   *
+   * Narrower than the source of a push, on purpose. A push may drain the import
+   * holding pen or a branch that has closed, because somebody who runs that
+   * location is pushing the stock out. A pull has to be ANSWERED by a manager
+   * at the branch it names, and the holding pen, an attendance-only office and
+   * a closed branch have no such manager — the ask would sit there forever. So
+   * it must be a trading branch of the caller's own organisation, and not one
+   * of their own: their own stock is already on their own stock list, and a
+   * branch cannot ask itself.
+   */
+  private async assertAskableStore(user: AuthUser, storeId: string) {
+    if (user.storeIds.includes(storeId)) {
+      throw new BadRequestException(
+        'That branch is already yours — move its stock with an ordinary transfer.',
+      );
+    }
+    const store = await this.prisma.store.findUnique({
+      where: { id: storeId },
+      select: { id: true, name: true, code: true, isActive: true, isAggregate: true, organisationId: true },
+    });
+    if (!store) throw new BadRequestException('Branch not found');
+    // A pull can NEVER cross organisations: the store must be the caller's own
+    // tenant before anything of its stock is read.
+    this.scope.assertOrgAllowed(user, store.organisationId);
+    if (store.isAggregate) {
+      throw new BadRequestException('Choose a single branch to ask, not the all-stores view.');
+    }
+    if (!store.isActive) {
+      throw new BadRequestException(`${store.name} is not active.`);
+    }
+    await this.scope.assertTradingStore(storeId);
+    return store;
+  }
+
+  /**
+   * The store whose staff raised a transfer — the source on a push, the
+   * destination on a pull. Submitting and withdrawing belong to that end;
+   * everything else is keyed off the store that physically acts.
+   */
+  private initiatingStoreId(t: { initiatedBy: string; fromStoreId: string; toStoreId: string }): string {
+    return t.initiatedBy === 'destination' ? t.toStoreId : t.fromStoreId;
   }
 
   private async load(user: AuthUser, id: string) {
@@ -134,26 +202,7 @@ export class StockTransfersService {
       throw new BadRequestException('Destination store is not active');
     }
 
-    // Every piece must currently live at the source and be available.
-    const pieces = await this.prisma.stockItem.findMany({
-      where: { id: { in: dto.stockItemIds } },
-      select: { id: true, storeId: true, status: true, sku: true, name: true },
-    });
-    if (pieces.length !== dto.stockItemIds.length) {
-      throw new BadRequestException('One or more stock items do not exist');
-    }
-    for (const p of pieces) {
-      if (p.storeId !== dto.fromStoreId) {
-        throw new BadRequestException(
-          `Piece ${p.sku ?? p.id} is not at the source store`,
-        );
-      }
-      if (!AVAILABLE.includes(p.status)) {
-        throw new BadRequestException(
-          `Piece ${p.sku ?? p.id} is not available (status ${p.status})`,
-        );
-      }
-    }
+    const pieces = await this.loadTransferablePieces(dto.stockItemIds, dto.fromStoreId);
 
     const store = await this.prisma.store.findUnique({
       where: { id: dto.fromStoreId },
@@ -193,30 +242,176 @@ export class StockTransfersService {
     return this.view(transfer.id);
   }
 
+  /**
+   * Every piece must currently live at the source and be available.
+   *
+   * Shared by the push and the pull so the two can never disagree about what is
+   * movable: a pull is raised against pieces the asker read from the picker,
+   * which filters on exactly `TRANSFERABLE_STATUSES`, and this is the check
+   * that re-reads them at the moment the request is actually made.
+   */
+  private async loadTransferablePieces(stockItemIds: string[], fromStoreId: string) {
+    const pieces = await this.prisma.stockItem.findMany({
+      where: { id: { in: stockItemIds } },
+      select: { id: true, storeId: true, status: true, sku: true, name: true },
+    });
+    if (pieces.length !== stockItemIds.length) {
+      throw new BadRequestException('One or more stock items do not exist');
+    }
+    for (const p of pieces) {
+      if (p.storeId !== fromStoreId) {
+        throw new BadRequestException(
+          `Piece ${p.sku ?? p.id} is not at the source store`,
+        );
+      }
+      if (!TRANSFERABLE_STATUSES.includes(p.status)) {
+        throw new BadRequestException(
+          `Piece ${p.sku ?? p.id} is not available (status ${p.status})`,
+        );
+      }
+    }
+    return pieces;
+  }
+
   // ==========================================================================
-  // Transitions
+  // Pull — a branch asks another branch for a piece
   // ==========================================================================
 
-  /** draft → submitted (source-store staff — submitting is part of raising). */
-  async submit(user: AuthUser, id: string) {
+  /**
+   * GET /stock-transfers/pullable — one other branch's available pieces.
+   *
+   * The whole visibility change lives here and in `pullableStockWhere`, which
+   * states what is exposed and why. Guarded three ways: the caller must be
+   * branch staff (head office already sees every branch and has no branch to
+   * pull to), they must actually run a branch themselves (otherwise there is
+   * nowhere for the piece to go and no purpose to serve), and the branch they
+   * name must be an askable trading branch of their own organisation.
+   *
+   * Not audited. The picker refetches as somebody types, so a row per keystroke
+   * would bury the trail; what is worth recording is the ask, and `createPull`
+   * records that.
+   */
+  async pullableStock(user: AuthUser, query: PullableStockQueryDto) {
     this.assertBranchRequester(user);
-    const t = await this.load(user, id);
-    this.scope.assertStoreAllowed(user, t.fromStoreId);
+    if (user.storeIds.length === 0) {
+      throw new ForbiddenException('You have no branch to request stock for');
+    }
+    const store = await this.assertAskableStore(user, query.fromStoreId);
+
+    const rows = await this.prisma.stockItem.findMany({
+      where: pullableStockWhere(user.organisationId, store.id, query.q),
+      // `select`, not `include`: the price columns never leave the database at
+      // all, rather than being fetched and then dropped by the mapper.
+      select: {
+        id: true,
+        sku: true,
+        name: true,
+        styleNumber: true,
+        category: true,
+        metal: true,
+        karat: true,
+        grossWeight: true,
+        status: true,
+        storeId: true,
+        store: { select: { name: true } },
+        product: { select: { name: true, styleNumber: true } },
+      },
+      orderBy: { sku: 'asc' },
+      // A picker, not an export: enough to find the piece you came looking for,
+      // and not enough to walk another branch's shelf end to end.
+      take: 50,
+    });
+
+    return rows.map(pullableStockView);
+  }
+
+  /**
+   * POST /stock-transfers/pull — raise a DRAFT pull.
+   *
+   * The mirror of `create`: the end that must be the caller's own branch is the
+   * DESTINATION, the counter the customer is standing at. The source is
+   * deliberately outside their scope — not being able to see it is the problem
+   * this solves — so it is checked as an askable branch of the same
+   * organisation instead.
+   */
+  async createPull(user: AuthUser, dto: CreateStockTransferDto) {
+    this.assertBranchRequester(user);
+    this.scope.assertStoreAllowed(user, dto.toStoreId);
+    await this.scope.assertTradingStore(dto.toStoreId);
+    const source = await this.assertAskableStore(user, dto.fromStoreId);
+
+    const pieces = await this.loadTransferablePieces(dto.stockItemIds, source.id);
+
+    // The ref carries the branch that RAISED it, as it does for a push — there
+    // that happens to be the source; here it is the asker.
+    const asker = await this.prisma.store.findUnique({
+      where: { id: dto.toStoreId },
+      select: { code: true, name: true },
+    });
+    const ref = await this.sequence.nextRef('ST', asker?.code ?? 'GLOBAL');
+
+    const transfer = await this.prisma.stockTransfer.create({
+      data: {
+        organisationId: user.organisationId,
+        ref,
+        status: 'draft',
+        initiatedBy: 'destination',
+        fromStoreId: source.id,
+        toStoreId: dto.toStoreId,
+        reason: dto.note ?? null,
+        requestedById: user.id,
+        items: {
+          create: pieces.map((p) => ({
+            stockItemId: p.id,
+            sku: p.sku,
+            name: p.name,
+          })),
+        },
+      },
+      include: { items: true },
+    });
+
+    await this.audit.record(user, {
+      action: 'stock_transfer.create_pull',
+      entityType: 'StockTransfer',
+      entityId: transfer.id,
+      // Attributed to the asking branch: it is their request, and the holding
+      // branch has not agreed to anything yet.
+      storeId: dto.toStoreId,
+      summary: `Created pull ${ref} (${pieces.length} pcs) from ${source.name}`,
+      metadata: { fromStoreId: source.id, pieces: dto.stockItemIds },
+    });
+
+    return this.view(transfer.id);
+  }
+
+  /**
+   * pending_source → submitted (store_manager at the HOLDING branch).
+   *
+   * The holding branch agrees to give the pieces up; only then does the request
+   * join the ordinary ladder and go to head office. Nothing is reserved here —
+   * reservation still happens at HO approval, exactly as for a push, so an
+   * accepted pull does not lock a piece the branch may still sell if head
+   * office says no.
+   */
+  async acceptPull(user: AuthUser, id: string) {
+    const t = await this.loadPullForSource(user, id);
     assertTransition(t.status, 'submitted');
 
     const { count } = await this.prisma.stockTransfer.updateMany({
-      where: { id, status: 'draft' },
-      data: { status: 'submitted', submittedAt: new Date() },
+      where: { id, status: 'pending_source' },
+      data: { status: 'submitted', sourceDecidedById: user.id, sourceDecidedAt: new Date() },
     });
     if (count === 0) throw new ConflictException('Transfer already moved on');
 
     await this.audit.record(user, {
-      action: 'stock_transfer.submit',
+      action: 'stock_transfer.accept_pull',
       entityType: 'StockTransfer',
       entityId: id,
       storeId: t.fromStoreId,
-      summary: `Submitted transfer ${t.ref} for head-office approval`,
+      summary: `Accepted pull ${t.ref}; sent for head-office approval`,
     });
+    // Head office now sees it exactly as it sees a submitted push.
     await this.notifications
       .emitToApprovers(
         t.fromStoreId,
@@ -224,7 +419,163 @@ export class StockTransfersService {
         {
           kind: 'special_request',
           title: `Stock transfer ${t.ref} awaiting approval`,
-          body: `${t.items.length} piece(s) requested for transfer`,
+          body: `${t.items.length} piece(s) agreed by the holding branch`,
+          href: `/stock-transfers/${id}`,
+          storeId: t.fromStoreId,
+          entityType: 'StockTransfer',
+          entityId: id,
+        },
+        user.id,
+      )
+      .catch(() => undefined);
+    await this.notifications
+      .emit([t.requestedById], {
+        kind: 'special_request',
+        title: `${t.ref} accepted — awaiting head office`,
+        href: `/stock-transfers/${id}`,
+        storeId: t.toStoreId,
+        entityType: 'StockTransfer',
+        entityId: id,
+        actorId: user.id,
+        actorName: user.name,
+      })
+      .catch(() => undefined);
+
+    return this.view(id);
+  }
+
+  /**
+   * pending_source → declined (store_manager at the HOLDING branch).
+   *
+   * Saying no is a normal answer, not a failure: the piece may be promised to a
+   * customer there, or be the only one on the shelf. It costs the same single
+   * action as accepting, it is terminal (the asker raises a fresh pull if
+   * something changes), and nothing is reserved at this stage so there is no
+   * inventory effect to unwind.
+   */
+  async declinePull(user: AuthUser, id: string, dto: ReasonDto) {
+    const t = await this.loadPullForSource(user, id);
+    assertTransition(t.status, 'declined');
+
+    const { count } = await this.prisma.stockTransfer.updateMany({
+      where: { id, status: 'pending_source' },
+      data: {
+        status: 'declined',
+        reason: dto.reason ?? null,
+        sourceDecidedById: user.id,
+        sourceDecidedAt: new Date(),
+      },
+    });
+    if (count === 0) throw new ConflictException('Transfer already moved on');
+
+    await this.audit.record(user, {
+      action: 'stock_transfer.decline_pull',
+      entityType: 'StockTransfer',
+      entityId: id,
+      storeId: t.fromStoreId,
+      summary: `Declined pull ${t.ref}`,
+      metadata: { reason: dto.reason ?? null },
+    });
+    await this.notifications
+      .emit([t.requestedById], {
+        kind: 'special_request',
+        title: `${t.ref} declined by the holding branch`,
+        body: dto.reason ?? undefined,
+        href: `/stock-transfers/${id}`,
+        storeId: t.toStoreId,
+        entityType: 'StockTransfer',
+        entityId: id,
+        priority: 'high',
+        actorId: user.id,
+        actorName: user.name,
+      })
+      .catch(() => undefined);
+
+    return this.view(id);
+  }
+
+  /**
+   * Load a pull for the branch that holds the pieces, and check they may answer
+   * it: a manager at that branch, who is not the person who asked.
+   *
+   * The self-approval check is not theoretical. Five users in production run
+   * more than one branch, so the same person can be the staffer at the asking
+   * counter and the manager of the branch being asked — which would turn a pull
+   * into a way to move stock between your own two branches with nobody else
+   * involved.
+   */
+  private async loadPullForSource(user: AuthUser, id: string) {
+    this.assertStoreOperator(user);
+    const t = await this.load(user, id);
+    if (t.initiatedBy !== 'destination') {
+      throw new BadRequestException(
+        'Only a pull is answered by the holding branch; this transfer was sent by its source.',
+      );
+    }
+    this.scope.assertStoreAllowed(user, t.fromStoreId);
+    assertNotSelfApproval(user, t.requestedById, 'stock request');
+    return t;
+  }
+
+  // ==========================================================================
+  // Transitions
+  // ==========================================================================
+
+  /**
+   * draft → submitted (push) or draft → pending_source (pull), by the staff of
+   * the branch that RAISED it — submitting is part of raising.
+   *
+   * The one place direction changes where a transfer goes next: a push goes
+   * straight to head office, a pull stops at the branch holding the pieces
+   * until they agree. See `submitTarget`.
+   */
+  async submit(user: AuthUser, id: string) {
+    this.assertBranchRequester(user);
+    const t = await this.load(user, id);
+    this.scope.assertStoreAllowed(user, this.initiatingStoreId(t));
+    const next = submitTarget(t.initiatedBy);
+    assertTransition(t.status, next);
+
+    const { count } = await this.prisma.stockTransfer.updateMany({
+      where: { id, status: 'draft' },
+      data: { status: next, submittedAt: new Date() },
+    });
+    if (count === 0) throw new ConflictException('Transfer already moved on');
+
+    const pulling = next === 'pending_source';
+    // Named rather than left as "another branch": the manager being asked is
+    // deciding whether to give a piece to a specific shop, and the answer
+    // depends on which one.
+    const asker = pulling
+      ? await this.prisma.store.findUnique({
+          where: { id: t.toStoreId },
+          select: { name: true },
+        })
+      : null;
+    await this.audit.record(user, {
+      action: 'stock_transfer.submit',
+      entityType: 'StockTransfer',
+      entityId: id,
+      storeId: this.initiatingStoreId(t),
+      summary: pulling
+        ? `Sent pull ${t.ref} to the holding branch`
+        : `Submitted transfer ${t.ref} for head-office approval`,
+    });
+    // A pull is answered by the holding branch's manager; a push goes to head
+    // office. Both are approvers AT THE SOURCE store, which is where the pieces
+    // are and whose managers would have to let them go either way.
+    await this.notifications
+      .emitToApprovers(
+        t.fromStoreId,
+        pulling ? 'store_manager' : 'head_office',
+        {
+          kind: 'special_request',
+          title: pulling
+            ? `${asker?.name ?? 'Another branch'} is asking for ${t.items.length} piece(s)`
+            : `Stock transfer ${t.ref} awaiting approval`,
+          body: pulling
+            ? `${t.ref} — accept to send it for head-office approval, or decline`
+            : `${t.items.length} piece(s) requested for transfer`,
           href: `/stock-transfers/${id}`,
           storeId: t.fromStoreId,
           entityType: 'StockTransfer',
@@ -262,7 +613,7 @@ export class StockTransfersService {
           where: {
             id: item.stockItemId,
             storeId: t.fromStoreId,
-            status: { in: AVAILABLE },
+            status: { in: TRANSFERABLE_STATUSES },
           },
           data: { status: 'reserved' },
         });
@@ -469,14 +820,19 @@ export class StockTransfersService {
   }
 
   /**
-   * draft | submitted | ho_approved → cancelled (source store_manager). Only
-   * before dispatch — once goods are in transit the transfer must be received.
-   * A cancel from ho_approved releases the reservation the approval placed.
+   * draft | pending_source | submitted | ho_approved → cancelled (store_manager
+   * at the branch that RAISED it). Only before dispatch — once goods are in
+   * transit the transfer must be received. A cancel from ho_approved releases
+   * the reservation the approval placed.
+   *
+   * Withdrawing belongs to whoever asked, which on a pull is the destination:
+   * the customer who wanted the piece has left, so the asking branch takes its
+   * own request back rather than needing the holding branch to decline it.
    */
   async cancel(user: AuthUser, id: string, dto: ReasonDto) {
     this.assertStoreOperator(user);
     const t = await this.load(user, id);
-    this.scope.assertStoreAllowed(user, t.fromStoreId);
+    this.scope.assertStoreAllowed(user, this.initiatingStoreId(t));
     assertTransition(t.status, 'cancelled');
 
     const from = t.status;
@@ -502,7 +858,7 @@ export class StockTransfersService {
       action: 'stock_transfer.cancel',
       entityType: 'StockTransfer',
       entityId: id,
-      storeId: t.fromStoreId,
+      storeId: this.initiatingStoreId(t),
       summary: `Cancelled transfer ${t.ref}`,
       metadata: { from, reason: dto.reason ?? null },
     });
@@ -580,7 +936,10 @@ export class StockTransfersService {
   private async decorate(rows: any[]) {
     const userIds = new Set<string>();
     for (const r of rows) {
-      for (const k of ['requestedById', 'approvedById', 'dispatchedById', 'receivedById', 'acknowledgedById']) {
+      for (const k of [
+        'requestedById', 'sourceDecidedById', 'approvedById', 'dispatchedById',
+        'receivedById', 'acknowledgedById',
+      ]) {
         if (r[k]) userIds.add(r[k]);
       }
     }
@@ -602,6 +961,10 @@ export class StockTransfersService {
       ref: r.ref,
       status: r.status,
       reason: r.reason,
+      /// `source` = this branch is sending stock away; `destination` = this
+      /// branch asked another one for it. The screen reads very differently
+      /// either way, so it is told rather than inferred from who requested it.
+      initiatedBy: r.initiatedBy,
       fromStoreId: r.fromStoreId,
       fromStoreName: r.fromStore?.name,
       toStoreId: r.toStoreId,
@@ -615,11 +978,13 @@ export class StockTransfersService {
         currentStoreId: it.stockItem?.storeId ?? null,
       })),
       requestedBy: actor(r.requestedById),
+      sourceDecidedBy: actor(r.sourceDecidedById),
       approvedBy: actor(r.approvedById),
       dispatchedBy: actor(r.dispatchedById),
       receivedBy: actor(r.receivedById),
       acknowledgedBy: actor(r.acknowledgedById),
       submittedAt: r.submittedAt,
+      sourceDecidedAt: r.sourceDecidedAt,
       approvedAt: r.approvedAt,
       dispatchedAt: r.dispatchedAt,
       receivedAt: r.receivedAt,

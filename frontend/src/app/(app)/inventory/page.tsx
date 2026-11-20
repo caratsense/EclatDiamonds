@@ -183,6 +183,21 @@ export default function InventoryPage() {
   // Aging chart metric toggle.
   const [agingMetric, setAgingMetric] = useState<"items" | "value">("items");
 
+  /*
+   * Which tab is open, so a link can name one. The low-stock notification sends
+   * people to /inventory#reorder, and without this it would land them on the
+   * Stock tab with no sign of the shortfall it just told them about.
+   *
+   * Read from the hash on mount rather than from useSearchParams: this page is
+   * prerendered, and a search-param read would have to be wrapped in a Suspense
+   * boundary to build at all.
+   */
+  const [tab, setTab] = useState("stock");
+  useEffect(() => {
+    const wanted = window.location.hash.replace("#", "");
+    if (["stock", "rotation", "melt", "reorder"].includes(wanted)) setTab(wanted);
+  }, []);
+
   // Debounce the search box so we don't fire a request per keystroke.
   useEffect(() => {
     const t = setTimeout(() => {
@@ -474,7 +489,7 @@ export default function InventoryPage() {
         </Card>
       ) : null}
 
-      <Tabs id="stock-list" className="scroll-mt-20" defaultValue="stock">
+      <Tabs id="stock-list" className="scroll-mt-20" value={tab} onValueChange={setTab}>
         <TabsList>
           <TabsTrigger value="stock">Stock</TabsTrigger>
           <TabsTrigger value="rotation">Rotation</TabsTrigger>

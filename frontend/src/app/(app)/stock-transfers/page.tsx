@@ -5,6 +5,7 @@ import { ArrowLeftRight, ArrowRight } from "lucide-react";
 
 import { SectionHeader } from "@/components/section/section-header";
 import { CreateTransferDialog } from "@/components/inventory/create-transfer-dialog";
+import { RequestPieceDialog } from "@/components/inventory/request-piece-dialog";
 import { TransferDetailDialog } from "@/components/inventory/transfer-detail-dialog";
 import { EmptyState } from "@/components/ui/empty-state";
 import { Badge } from "@/components/ui/badge";
@@ -56,11 +57,13 @@ function fmtDate(s: string | null | undefined): string {
 const STATUS_OPTIONS: (TransferStatus | "all")[] = [
   "all",
   "draft",
+  "pending_source",
   "submitted",
   "ho_approved",
   "dispatched",
   "received",
   "acknowledged",
+  "declined",
   "rejected",
   "cancelled",
 ];
@@ -77,6 +80,7 @@ export default function StockTransfersPage() {
   const [status, setStatus] = React.useState<TransferStatus | "all">("all");
   const [direction, setDirection] = React.useState<TransferDirection>("all");
   const [createOpen, setCreateOpen] = React.useState(false);
+  const [requestOpen, setRequestOpen] = React.useState(false);
   const [detailId, setDetailId] = React.useState<string | null>(null);
 
   const { data: rows = [], isLoading, isError, refetch } = useStockTransfers({
@@ -89,6 +93,15 @@ export default function StockTransfersPage() {
       <SectionHeader
         title={nav?.title ?? "Stock Transfers"}
         purpose={nav?.purpose ?? ""}
+        /* Asking sits beside sending, not inside it: they start from opposite
+           ends — your own shelf, or somebody else's. */
+        actions={
+          canCreate ? (
+            <Button variant="outline" onClick={() => setRequestOpen(true)}>
+              Ask another branch
+            </Button>
+          ) : undefined
+        }
         primaryAction={canCreate ? "New Transfer" : undefined}
         onPrimaryAction={canCreate ? () => setCreateOpen(true) : undefined}
       />
@@ -164,7 +177,7 @@ export default function StockTransfersPage() {
               title="No transfers"
               description={
                 canCreate
-                  ? "Move pieces to another branch — create a transfer, then submit it for Head-Office approval."
+                  ? "Move pieces to another branch, or ask another branch for a piece a customer wants."
                   : "Inter-store transfers will appear here once raised."
               }
               actionLabel={canCreate ? "New Transfer" : undefined}
@@ -232,7 +245,10 @@ export default function StockTransfersPage() {
       </Card>
 
       {canCreate ? (
-        <CreateTransferDialog open={createOpen} onOpenChange={setCreateOpen} />
+        <>
+          <CreateTransferDialog open={createOpen} onOpenChange={setCreateOpen} />
+          <RequestPieceDialog open={requestOpen} onOpenChange={setRequestOpen} />
+        </>
       ) : null}
 
       <TransferDetailDialog

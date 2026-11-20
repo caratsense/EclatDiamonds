@@ -55,6 +55,11 @@ export function bool(v: unknown): boolean {
  * Gati encodes the product group as a 2-letter code at the end of the leading
  * token of the design/piece code: `10880RG` -> RG, `SDNK01033` -> NK,
  * `12037ARG` -> RG (design 12037, variant A, group RG).
+ *
+ * These are the codes somebody worked out, and they are the FALLBACK only.
+ * Gati's MainProductGroup master is not synced, so the rest of the list comes
+ * from head office through `Organisation.settings` — see product-group-codes.ts
+ * for why it lives there and how the two are merged.
  */
 export const CODE_GROUP: Record<string, string> = {
   RG: 'ring',
@@ -74,14 +79,29 @@ export const CODE_GROUP: Record<string, string> = {
  * The data migration 20261117090000_reclassify_stock_category repairs rows
  * stored under the old reading and mirrors this table in SQL; the two must
  * agree, which is why the table has one home rather than a copy per caller.
+ *
+ * `codes` is the tenant's merged map when the caller has one. It is optional so
+ * that the reading stays available to callers with no organisation in hand
+ * (tests, the migration's mirror); those get the built-in codes only.
  */
-export function groupFromToken(raw: unknown): string | null {
+export function groupFromToken(raw: unknown, codes: Record<string, string> = CODE_GROUP): string | null {
+  const two = tokenCode(raw);
+  return codes[two] ?? null;
+}
+
+/**
+ * The two letters a design/piece code carries, or '' when it carries none.
+ *
+ * Split out because the screen that asks head office "what is CR?" has to tally
+ * codes the map does NOT know, which `groupFromToken` can only answer as null.
+ */
+export function tokenCode(raw: unknown): string {
   const two = String(raw ?? '')
     .split('-')[0]
     .replace(/[^A-Za-z]/g, '')
     .slice(-2)
     .toUpperCase();
-  return CODE_GROUP[two] ?? null;
+  return two.length === 2 ? two : '';
 }
 
 export function karatFromRow(r: any): number | null {

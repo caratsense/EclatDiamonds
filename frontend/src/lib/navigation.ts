@@ -738,6 +738,26 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ["head_office"],
   },
   {
+    /*
+     * What the two letters in a design code mean.
+     *
+     * Not hidden, unlike the other code-level setup screens: 11% of this
+     * client's catalogue is filed under Other because nobody has told us what
+     * its codes mean, and a screen that only opens from a typed address does
+     * not get that answered.
+     */
+    module: 11,
+    slug: "settings/product-groups",
+    title: "Product Groups",
+    purpose:
+      "What the letters in a supplier's design number mean, so designs file themselves correctly.",
+    primaryAction: "",
+    icon: Boxes,
+    group: "Setup",
+    rank: 55,
+    roles: ["head_office"],
+  },
+  {
     module: 2,
     slug: "settings/rates",
     title: "Gold Rate",
@@ -1067,6 +1087,7 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "settings/configuration",
   "settings/staff-digest",
   "settings/lead-tags",
+  "settings/product-groups",
   "settings/messaging-routes",
   "settings/channels",
   "data",
