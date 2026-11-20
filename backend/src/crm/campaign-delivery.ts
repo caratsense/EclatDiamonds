@@ -140,3 +140,23 @@ export function campaignOutcome(counts: RecipientCounts): {
   // the "125 of 126 sent" screen needed.
   return { settled: true, status: reached === 0 ? 'failed' : 'partially_failed' };
 }
+
+/**
+ * The idempotency key one send to one person gets.
+ *
+ * The ATTEMPT is in it, and that is the whole point. The key's job is to stop
+ * a job that died mid-chunk from messaging the same person twice when it runs
+ * again — a job inside one attempt. It was never meant to stop a deliberate
+ * retry, but a key built from the campaign and the recipient alone does
+ * exactly that: the second send finds the key spent, is handed back the
+ * message the provider refused the first time, and records that stale refusal
+ * as this attempt's outcome. The nails-event broadcast was re-sent three times
+ * after its cause was fixed and reached nobody, with no new message row and
+ * nothing in the logs to show a send had even been tried.
+ *
+ * `attempts` comes from the row's own counter, incremented by the claim and
+ * never reset, so it is unique per real attempt and fixed within one.
+ */
+export function recipientSendKey(campaignId: string, recipientId: string, attempt: number) {
+  return `campaign:${campaignId}:${recipientId}:${attempt}`;
+}
