@@ -14,6 +14,16 @@ describe("catalogueListParams", () => {
     expect(catalogueListParams(url(""), { ...base, store: "s_bandra" }).storeId).toBe("s_bandra");
   });
 
+  it("keeps only a store's designs when that store is picked, not for the session's own store", () => {
+    expect(catalogueListParams(url("store=s_bandra"), { ...base, store: "s_bandra" })).toMatchObject({
+      storeId: "s_bandra",
+      storeOnly: true,
+    });
+    // Nothing picked: the session's store only says where "here" is.
+    expect(catalogueListParams(url(""), { ...base, store: "s_bandra" }).storeOnly).toBeUndefined();
+    expect(catalogueListParams(url("store=all"), base).storeOnly).toBeUndefined();
+  });
+
   it("sends every filter the URL holds, under the API's names", () => {
     const p = catalogueListParams(
       url("q=SK-1&category=ring&metal=gold_14k&availability=in_stock&subCategory=engagement&size=12&karat=14&colour=rose&priceMin=1000&priceMax=200000.5&source=website&coverage=no_cad"),

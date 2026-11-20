@@ -239,6 +239,11 @@ export interface ProductFilters {
   priceMin?: number;
   priceMax?: number;
   storeId?: string;
+  /**
+   * The store was PICKED in the filter, not merely the one the viewer stands
+   * at: keep only that store's designs (on its shelf, or its own).
+   */
+  storeOnly?: boolean;
   /** in_stock: pieces on the shelf where the viewer stands (or in any store they may see). */
   availability?: Availability;
   source?: ProductSource;
@@ -291,6 +296,7 @@ export function parseProductFilters(raw: Record<string, unknown>): ProductFilter
     priceMin,
     priceMax,
     storeId: str('storeId'),
+    storeOnly: oneOf('storeOnly', ['true', 'false'] as const) === 'true',
     availability: oneOf('availability', Object.values(Availability)),
     source: oneOf('source', SOURCES),
     imageCoverage: oneOf('imageCoverage', COVERAGES),
@@ -518,15 +524,22 @@ export class ProductsService {
   ): Promise<Prisma.ProductWhereInput[]> {
     const and: Prisma.ProductWhereInput[] = [];
     const ci = (v: string) => ({ equals: v, mode: 'insensitive' as const });
+    // Pieces on the shelf where the viewer stands, or in any store they may
+    // see — counted exactly as the card's "on hand".
+    const onHand: Prisma.StockItemWhereInput = {
+      status: { in: ON_HAND },
+      ...stockClassWhere('standard'),
+      ...(viewerStore ? { storeId: viewerStore } : visible ? { storeId: { in: visible } } : {}),
+    };
+    if (f.storeOnly && viewerStore) {
+      // A store picked in the filter means that store's designs: the ones on
+      // its shelf, and the ones that belong to it. Gati and website designs
+      // belong to every store (storeId null), so for them the shelf decides.
+      and.push({ OR: [{ storeId: viewerStore }, { stockItems: { some: onHand } }] });
+    }
     if (f.availability) {
-      // Pieces on the shelf where the viewer stands, or in any store they may
-      // see — counted exactly as the card's "on hand". Not Product.availability:
-      // that flag is set once when a design is created and never updated.
-      const onHand: Prisma.StockItemWhereInput = {
-        status: { in: ON_HAND },
-        ...stockClassWhere('standard'),
-        ...(viewerStore ? { storeId: viewerStore } : visible ? { storeId: { in: visible } } : {}),
-      };
+      // Not Product.availability: that flag is set once when a design is
+      // created and never updated.
       and.push({ stockItems: f.availability === 'in_stock' ? { some: onHand } : { none: onHand } });
     }
     // A salesperson with a customer asking about "SK-010225-A" types the code.

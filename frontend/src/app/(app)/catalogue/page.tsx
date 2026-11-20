@@ -164,7 +164,7 @@ function CatalogueView() {
   const canAddProduct = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const anyFilter = FILTER_KEYS.some((k) => get(k));
   // Besides the search text, is anything else narrowing the list?
-  const narrowed = advancedCount > 0 || !!params.category || !!params.availability;
+  const narrowed = advancedCount > 0 || !!params.category || !!params.availability || !!params.storeOnly;
   const rejected = isError && (httpStatus(error) ?? 500) < 500;
 
   return (
@@ -213,7 +213,9 @@ function CatalogueView() {
         ) : null}
         <UrlSelect
           label="Store"
-          value={store}
+          // What narrows the grid: a picked store, else All stores. The
+          // session's store still sets "here" on the cards when none is picked.
+          value={get("store") || "all"}
           onChange={(v) => setParams({ store: v || "all" })}
           options={selectStores.map((s) => [s.id, s.name])}
           allLabel="All stores"
