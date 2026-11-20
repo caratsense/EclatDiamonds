@@ -1,4 +1,4 @@
-import type { Availability, Metal, ProductCategory, ProductSource } from "@/lib/mock/catalogue";
+import type { Metal, ProductCategory, ProductSource } from "@/lib/mock/catalogue";
 import type { ImageCoverage, ProductListParams } from "@/lib/queries/products";
 
 /** The params behind "More filters": counted on the button so none hides silently. */
@@ -16,6 +16,11 @@ function amount(v: string): number | undefined {
  * list is sent:
  * - "All stores" goes as `storeId: "all"`, so the store in the top bar (sent as
  *   a header on every request) cannot quietly narrow it to one branch;
+ * - a store PICKED in the filter also sends `storeOnly`, so the grid keeps only
+ *   that store's designs; the session's own store, used when none is picked,
+ *   only says where "here" is;
+ * - availability is not sent: the owner removed that filter (20 Nov), and an
+ *   old link that still carries it must not narrow the grid invisibly;
  * - an unreadable number ("-5", "18K") is dropped, not turned into a 400;
  * - the jewellery filters are not sent while the tenant hides the metal field,
  *   since their controls are hidden too.
@@ -27,14 +32,15 @@ export function catalogueListParams(
   const jewellery = opts.showsMetalFilters;
   const text = (k: string) => get(k).trim() || undefined;
   const karat = amount(get("karat"));
+  const picked = get("store");
   return {
     page: opts.page,
     pageSize: opts.pageSize,
     q: text("q"),
     category: jewellery ? (text("category") as ProductCategory | undefined) : undefined,
     metal: jewellery ? (text("metal") as Metal | undefined) : undefined,
-    availability: text("availability") as Availability | undefined,
     storeId: opts.store,
+    storeOnly: picked && picked !== "all" ? true : undefined,
     subCategory: text("subCategory"),
     size: text("size"),
     karat: jewellery && karat != null && Number.isInteger(karat) ? karat : undefined,

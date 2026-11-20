@@ -60,6 +60,11 @@ export interface ProductListParams {
    * header (the top-bar store) narrows the list to that branch.
    */
   storeId?: string;
+  /**
+   * The store was picked in the filter: only that store's designs (on its
+   * shelf, or its own). Without it `storeId` only sets where "here" is.
+   */
+  storeOnly?: boolean;
   /** Words from a website sub-category or category, any case, e.g. "engagement". */
   subCategory?: string;
   /** A size; "12", "IND12" and "IND 12" are the same. */

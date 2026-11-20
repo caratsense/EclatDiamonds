@@ -269,7 +269,6 @@ function Actions({
   verified: boolean;
 }) {
   const sync = useStartWebsiteSync();
-  const reindex = useStartReindex();
   const retryDead = useStartReindex();
   const running = lastRun?.status === "running";
   const canResume = lastRun?.status === "partial" || lastRun?.status === "failed";
@@ -286,7 +285,7 @@ function Actions({
     <Card>
       <CardContent className="space-y-3 p-4">
         <h3 className="text-sm font-semibold">Run</h3>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4">
           <Button variant="outline" className="h-11" disabled={sync.isPending || running || !verified} onClick={() => start("full", true)}>
             <TestTube2 className="h-4 w-4" /> Dry run
           </Button>
@@ -301,22 +300,10 @@ function Actions({
           >
             <RotateCcw className="h-4 w-4" /> Resume
           </Button>
-          <Button
-            variant="outline"
-            className="h-11"
-            disabled={reindex.isPending}
-            onClick={() =>
-              reindex.mutate(
-                { force: true },
-                {
-                  onSuccess: (r) => toast.success(`${formatNumber(r.queued ?? 0)} pictures queued to re-embed`),
-                  onError: (err) => toast.error(apiErrorMessage(err, "Could not start the rebuild.")),
-                },
-              )
-            }
-          >
-            <ScanSearch className="h-4 w-4" /> Re-embed everything
-          </Button>
+          {/* No "Re-embed everything" here: one click queued all 4,452 pictures
+              (about 5 hours of the AI service, and every card showed "not
+              searchable") when nothing needed it. New pictures are indexed on
+              their own; a model change is a deliberate, scripted job. */}
           <Button
             variant="outline"
             className="h-11"

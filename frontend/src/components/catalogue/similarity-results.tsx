@@ -155,8 +155,9 @@ function ResultCard({
   onOpen: () => void;
   enableFeedback: boolean;
 }) {
-  // The design's own photo that matched — the reason it is on this list.
-  const src = assetUrl(hit.matchedImageUrl || hit.imageUrl || hit.heroImageUrl);
+  // The design's own photo that matched — the reason it is on this list. Its
+  // small copy first: ten full-size photos kept the results loading for seconds.
+  const src = assetUrl(hit.matchedThumbUrl || hit.matchedImageUrl || hit.imageUrl || hit.heroImageUrl);
   const name = hit.productName || "Unnamed piece";
   // The source has its own tag on the picture; this strip says what it shows.
   const matchedMeta = [hit.matchedColour, hit.matchedAngle].filter(Boolean);
@@ -183,6 +184,7 @@ function ResultCard({
               src={src}
               alt=""
               loading="lazy"
+              decoding="async"
               className="h-full w-full object-contain"
             />
           ) : (

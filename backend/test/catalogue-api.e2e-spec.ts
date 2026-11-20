@@ -392,6 +392,23 @@ describe('Catalogue product API (e2e)', () => {
     expect(res.body.items.find((i: { id: string }) => i.id === P5).stock).toMatchObject({ hereCount: 0, totalCount: 1 });
   });
 
+  it('a store picked in the filter keeps only its designs: on its shelf, or its own', async () => {
+    const at = (store: string, more = '') => ids('catapi_ho', `&storeId=${store}&storeOnly=true${more}`);
+    // P5's store-1 piece was sold, so only P1 is on store 1's shelf.
+    expect(await at(A.s1)).toEqual([P1]);
+    // Store 2: P1 and P5 on the shelf, and P3 belongs to it.
+    expect(await at(A.s2)).toEqual([P1, P3, P5].sort());
+    // With availability chosen too: the store's designs, split by its shelf.
+    expect(await at(A.s2, '&availability=in_stock')).toEqual([P1, P5].sort());
+    expect(await at(A.s2, '&availability=lead_time')).toEqual([P3]);
+    // The owner's report: a category and a store, availability left at All.
+    expect(await at(A.s1, '&category=necklace')).toEqual([]);
+    expect(await ids('catapi_ho', `&storeId=${A.s1}&category=necklace`)).toEqual([P6]);
+    // "All stores" picked, or no store at all, narrows nothing.
+    expect(await ids('catapi_ho', '&storeId=all&storeOnly=true')).toEqual([...MINE].sort());
+    await list('catapi_ho', '&storeOnly=yes').expect(400);
+  });
+
   it('"All stores" means all stores, whichever store the top bar sends', async () => {
     const withHeader = async (qs: string) => {
       const res = await request(server()).get(`/products?page=1&pageSize=100&q=catapi${qs}`).set(as('catapi_ho')).set('X-Store-Id', A.s1).expect(200);

@@ -84,3 +84,25 @@ heavy new dependency with no evidence behind them. If latency matters, the bigge
 detector. Grounding DINO's processor resizes to an 800px short edge, so shrinking it or batching
 detection across images is worth benchmarking first, and every such change needs this recall
 bench re-run.
+
+## Detector size (2026-11-20)
+
+`python bench/bench.py recall --gallery 60 --queries 20 --query-edges 800,640,512`, on the
+same laptop (Ryzen 5 5600H, shared with other work). The gallery is detected at 800, as the
+live index was. The same 60 queries (20 images x crop, rotate, small) are then detected at
+each size. `s/query` is detect + both embeddings for one query photo.
+
+| query detector edge | s/query | detect r@1 / r@5 | crop r@1 | rotate r@1 | small r@1 / r@5 |
+|---|---|---|---|---|---|
+| 800 (model default) | 7.17 | 1.000 / 1.000 | 1.000 | 1.000 | 1.000 / 1.000 |
+| 640 | 5.31 | 0.983 / 1.000 | 1.000 | 1.000 | 0.950 / 1.000 |
+| **512** | **4.08** | **1.000 / 1.000** | 1.000 | 1.000 | 1.000 / 1.000 |
+
+Whole image only scored r@1 0.667 in the same run, so the detector still earns its place.
+
+**Decision: `DETECT_EDGE` defaults to 512** (`app/detection.py`; the env var overrides it).
+It is 43% less time per query photo with the same recall on this sample, where 800 was about
+3.6 s of detection per photo on Railway (production log, 20 Nov). The live index keeps its
+800-detected views. New pictures are detected at 512 from now on, and a re-index is not
+needed. One gallery file, a 1 x 1 picture, fails Grounding DINO's channel guess at any size,
+and the detector falls back to the whole image for it, as designed.

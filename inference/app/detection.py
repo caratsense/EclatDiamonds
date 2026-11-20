@@ -35,6 +35,11 @@ BOX_THRESHOLD = float(os.getenv("DETECT_BOX_THRESHOLD", "0.25"))
 TEXT_THRESHOLD = float(os.getenv("DETECT_TEXT_THRESHOLD", "0.2"))
 # Detection needs the layout, not the pixels: work on a copy this size.
 DETECT_SIDE = 1024
+# What the detector itself sees, and so what it costs: its processor brings the
+# short side to this many pixels. The model's own default, 800, was about 3.6 s per
+# photo on Railway's CPU; 512 cut a query by 43% with the same recall (BENCHMARK.md,
+# "Detector size"). Cost goes with the pixel count.
+DETECT_EDGE = int(os.getenv("DETECT_EDGE", "512"))
 # A box smaller than this share of the picture's long side is a stone or a
 # speck, not a view worth describing.
 MIN_SIDE_FRAC = 0.03
@@ -133,9 +138,15 @@ class JewelryDetector:
     def load(self) -> None:
         self.processor = AutoProcessor.from_pretrained(self.model_id, **self._kw)
         self.model = AutoModelForZeroShotObjectDetection.from_pretrained(self.model_id, **self._kw).eval()
+        self.set_edge(DETECT_EDGE)
         self._detect(Image.new("RGB", (64, 64), (255, 255, 255)))  # probe the forward path
         self.loaded = True
-        log.info("loaded detector %s", self.model_id)
+        log.info("loaded detector %s at %dpx", self.model_id, self.edge)
+
+    def set_edge(self, edge: int) -> None:
+        """Have the detector see `edge` px on the short side (the model's 800:1333 shape kept)."""
+        self.processor.image_processor.size = {"shortest_edge": edge, "longest_edge": round(edge * 1333 / 800)}
+        self.edge = edge
 
     def _detect(self, img: Image.Image) -> list[Box]:
         work = img.copy()

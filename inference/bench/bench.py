@@ -205,8 +205,6 @@ def recall(args):
     print(f"gallery rows: {len(gd)} ({int((gview > 0).sum())} views); auto would detect "
           f"{int(gneed.sum())}/{len(gneed)} gallery images", flush=True)
 
-    rng = np.random.default_rng(11)
-    picks = rng.choice(len(gallery), size=min(args.queries, len(gallery)), replace=False)
     # Gallery row masks per indexing policy.
     whole_rows = gview == 0
     auto_rows = whole_rows | gneed[gidx]
@@ -216,37 +214,49 @@ def recall(args):
         "auto (query only; index=detect)": (np.ones_like(whole_rows), lambda need: need),
         "auto (query + index)": (auto_rows, lambda need: need),
     }
-    hits = {m: {} for m in modes}
-    qneed = {}
-    t = time.perf_counter()
-    for qi, gi in enumerate(picks):
-        for vname, vimg in variants(Image.open(gallery[gi]), rng).items():
-            k = f"q:{gallery[gi].relative_to(UPLOADS)}:{vname}"
-            if k not in cache:
-                cache[k] = pipe.run(jpeg(vimg))
-                cpath.write_bytes(pickle.dumps(cache))
-            qd, qs, need = cache[k]
-            qneed.setdefault(vname, []).append(need)
-            sim = (0.5 * qd @ gd.T + 0.4 * qs @ gs.T) / 0.9  # (q rows, gallery rows)
-            for m, (rows, use_views) in modes.items():
-                q = sim if use_views(need) else sim[:1]
-                s = np.where(rows, q.max(axis=0), -9)
-                best = np.full(len(gallery), -9.0)
-                np.maximum.at(best, gidx, s)
-                rank = int((best > best[gi]).sum())  # 0 = top-1
-                hits[m].setdefault(vname, []).append(rank)
-        if qi % 25 == 0:
-            print(f"  query {qi}/{len(picks)} {time.perf_counter() - t:.0f}s", flush=True)
+    # --query-edges: the gallery stays as built above (as the live index does), and
+    # the same queries are run again with the detector at each size.
+    edges = [int(e) for e in args.query_edges.split(",")] if args.query_edges else [pipe.det.edge]
+    for edge in edges:
+        pipe.det.set_edge(edge)
+        rng = np.random.default_rng(11)  # the same picks and variants at every size
+        picks = rng.choice(len(gallery), size=min(args.queries, len(gallery)), replace=False)
+        hits = {m: {} for m in modes}
+        qneed = {}
+        secs = []
+        t = time.perf_counter()
+        for qi, gi in enumerate(picks):
+            for vname, vimg in variants(Image.open(gallery[gi]), rng).items():
+                k = f"q:{gallery[gi].relative_to(UPLOADS)}:{vname}" + ("" if edge == 800 else f":e{edge}")
+                if k not in cache:
+                    t0 = time.perf_counter()
+                    cache[k] = pipe.run(jpeg(vimg))
+                    secs.append(time.perf_counter() - t0)
+                    cpath.write_bytes(pickle.dumps(cache))
+                qd, qs, need = cache[k]
+                qneed.setdefault(vname, []).append(need)
+                sim = (0.5 * qd @ gd.T + 0.4 * qs @ gs.T) / 0.9  # (q rows, gallery rows)
+                for m, (rows, use_views) in modes.items():
+                    q = sim if use_views(need) else sim[:1]
+                    s = np.where(rows, q.max(axis=0), -9)
+                    best = np.full(len(gallery), -9.0)
+                    np.maximum.at(best, gidx, s)
+                    rank = int((best > best[gi]).sum())  # 0 = top-1
+                    hits[m].setdefault(vname, []).append(rank)
+            if qi % 25 == 0:
+                print(f"  edge {edge}: query {qi}/{len(picks)} {time.perf_counter() - t:.0f}s", flush=True)
 
-    out = {"gallery_images": len(gallery), "gallery_rows": int(len(gd)), "queries_per_variant": len(picks),
-           "auto_detects": {v: f"{sum(n)}/{len(n)}" for v, n in qneed.items()}, "recall": {}}
-    for m, per in hits.items():
-        allr = [r for rs in per.values() for r in rs]
-        row = {v: {"r@1": round(np.mean([r < 1 for r in rs]), 3), "r@5": round(np.mean([r < 5 for r in rs]), 3)}
-               for v, rs in per.items()}
-        row["all"] = {"r@1": round(np.mean([r < 1 for r in allr]), 3), "r@5": round(np.mean([r < 5 for r in allr]), 3)}
-        out["recall"][m] = row
-    print(json.dumps(out, indent=1))
+        out = {"query_edge": edge, "gallery_images": len(gallery), "gallery_rows": int(len(gd)),
+               "queries_per_variant": len(picks),
+               "sec_per_query_run": round(float(np.mean(secs)), 2) if secs else "cached",
+               "auto_detects": {v: f"{sum(n)}/{len(n)}" for v, n in qneed.items()}, "recall": {}}
+        for m, per in hits.items():
+            allr = [r for rs in per.values() for r in rs]
+            row = {v: {"r@1": round(np.mean([r < 1 for r in rs]), 3), "r@5": round(np.mean([r < 5 for r in rs]), 3)}
+                   for v, rs in per.items()}
+            row["all"] = {"r@1": round(np.mean([r < 1 for r in allr]), 3), "r@5": round(np.mean([r < 5 for r in allr]), 3)}
+            out["recall"][m] = row
+        print(json.dumps(out, indent=1), flush=True)
 
 
 if __name__ == "__main__":
@@ -257,6 +267,7 @@ if __name__ == "__main__":
     ap.add_argument("--runs", type=int, default=20)
     ap.add_argument("--queries", type=int, default=150)
     ap.add_argument("--gallery", type=int, default=0, help="seeded subset of the gallery (0 = all)")
+    ap.add_argument("--query-edges", default="", help="recall: re-run the queries with the detector at these sizes, e.g. 800,640,512")
     a = ap.parse_args()
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     (latency if a.what == "latency" else recall)(a)

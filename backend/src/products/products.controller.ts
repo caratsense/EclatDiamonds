@@ -149,7 +149,8 @@ export class ProductsController {
    * (legacy shape); with either param returns { items, total, page, pageSize }.
    * Filters (all optional, validated in parseProductFilters): q, category,
    * subCategory, size, karat, colour, metal, priceMin, priceMax, storeId,
-   * availability, source, imageCoverage.
+   * storeOnly (true: only the designs of the store in storeId), availability,
+   * source, imageCoverage.
    */
   @Permit('catalogue.read')
   @Get()
