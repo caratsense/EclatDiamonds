@@ -46,7 +46,8 @@ const STATUS_TONE: Record<CampaignStatus, "success" | "warning" | "destructive" 
   queued: "secondary",
   sending: "secondary",
   completed: "success",
-  partially_failed: "warning",
+  // Green. It sent. See CAMPAIGN_STATUS_LABELS for why this is not amber.
+  partially_failed: "success",
   cancelled: "outline",
   failed: "destructive",
 };

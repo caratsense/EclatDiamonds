@@ -946,6 +946,10 @@ export class CampaignsService implements OnModuleInit {
         const message = await this.omnichannel.queueToContact(actor, {
           to: recipient.contactValue,
           purpose: 'marketing',
+          // The campaign chose this person BY their customer record; handing
+          // over only their number made the send re-derive who they were, and
+          // lose them when no ContactPoint row existed.
+          ...(recipient.partyId ? { partyId: recipient.partyId } : {}),
           templateName: campaign.templateName,
           languageCode: campaign.templateLanguage,
           // Undefined when the template takes no values: Meta refuses an empty
