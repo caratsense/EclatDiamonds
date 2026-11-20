@@ -34,7 +34,7 @@ export const MODULES = [
   // Showroom floor
   'instore', 'checkins',
   // Commerce & Orders
-  'catalogue', 'quotation', 'payments', 'discounts', 'returns', 'loyalty', 'loyalty/programme',
+  'catalogue', 'catalogue/integration', 'quotation', 'payments', 'discounts', 'returns', 'loyalty', 'loyalty/programme',
   // Inventory & Supply
   'inventory', 'stock-transfers', 'inventory/dead-stock', 'inventory/by-store',
   // Marketing & Inbound
@@ -154,6 +154,9 @@ export const HEAD_OFFICE_ONLY: ModuleSlug[] = [
    */
   'bot-script/edit',
   'settings/messaging-routes', 'settings/access',
+  // The website catalogue connection and its sync runs: every route behind it
+  // is @Roles('head_office') (catalogue-sync.controller.ts).
+  'catalogue/integration',
 ];
 
 /**
