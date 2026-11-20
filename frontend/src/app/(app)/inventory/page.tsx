@@ -195,6 +195,8 @@ export default function InventoryPage() {
   const [tab, setTab] = useState("stock");
   useEffect(() => {
     const wanted = window.location.hash.replace("#", "");
+    // The hash exists only in the browser, after hydration (as in theme-toggle.tsx).
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (["stock", "rotation", "melt", "reorder"].includes(wanted)) setTab(wanted);
   }, []);
 
