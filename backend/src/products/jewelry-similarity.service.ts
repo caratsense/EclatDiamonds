@@ -688,6 +688,7 @@ export class JewelrySimilarityService implements OnModuleInit {
           select: {
             id: true,
             url: true,
+            thumbUrl: true,
             source: true,
             sourceUrl: true,
             createdAt: true,
@@ -729,6 +730,9 @@ export class JewelrySimilarityService implements OnModuleInit {
             matchLevel: h.matchLevel,
             matchedImageId: m?.id ?? null,
             matchedImageUrl: m?.url ?? null,
+            // The small copy for the results grid: ten full photos (some several
+            // MB) were what kept the matches loading after the search answered.
+            matchedThumbUrl: m?.thumbUrl ?? null,
             matchedImageSource: m?.source ?? null,
             matchedImageSourceUrl: m?.sourceUrl ?? null,
             matchedImageAddedAt: m?.createdAt ?? null,

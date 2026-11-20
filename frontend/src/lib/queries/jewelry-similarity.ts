@@ -44,6 +44,8 @@ export interface SimilarityHit {
   /** The design's own photo that matched best — the detail opens on it. */
   matchedImageId?: string | null;
   matchedImageUrl?: string | null;
+  /** The small copy of that picture, for the results grid. */
+  matchedThumbUrl?: string | null;
   matchedImageSource?: ImageSource | null;
   /** Where that picture was taken from, and when it reached CaratSpace (for its source tag). */
   matchedImageSourceUrl?: string | null;
