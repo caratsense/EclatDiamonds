@@ -90,10 +90,10 @@ matched image selected; the hero stays marked "Primary".
   was wrong.
 - `WebsiteCatalogueClient`: GET `{productsEndpoint}?page&limit`, endpoint from the
   stored integration config, host must equal the allow-listed
-  `apis.eclatdiamonds.in` (config `WEBSITE_CATALOGUE_ALLOWED_HOSTS`), bearer =
+  `apis.nibhana.in` (config `WEBSITE_CATALOGUE_ALLOWED_HOSTS`), bearer =
   encrypted `IntegrationCredential` kind `service_token` (reuse
   `framework/credential-crypto.ts`) — optional: the Eclat product feed
-  (`https://apis.eclatdiamonds.in/v1/api/products`) is public, so a connection
+  (`https://apis.nibhana.in/v1/api/products`) is public, so a connection
   is just the saved address and no Authorization header is sent without a
   token (verified 2026-09-18: 331 products, 993 variants, 3,196 image
   placements); timeouts, retry with backoff, page size 100,

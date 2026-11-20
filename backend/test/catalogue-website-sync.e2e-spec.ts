@@ -29,7 +29,7 @@ jest.setTimeout(240_000);
 
 const PASSWORD = 'password123';
 const TOKEN = 'svc-website-token-DO-NOT-LEAK-7f3a91';
-const BASE = 'https://apis.eclatdiamonds.in/api';
+const BASE = 'https://apis.nibhana.in/api';
 const A = { org: 'org_catweb_a', slug: 'catweb-a', store: 'store_catweb_a', ho: 'ho@catweb-a.local', mgr: 'mgr@catweb-a.local' };
 const B = { org: 'org_catweb_b', slug: 'catweb-b', store: 'store_catweb_b', ho: 'ho@catweb-b.local' };
 const CAD_URL = 'https://r2.example.com/cad/11871RG.jpg';
@@ -86,7 +86,7 @@ describe('Website catalogue sync (e2e, stubbed website)', () => {
     const u = new URL(url);
     site.requests.push(url);
     site.auth.push((init.headers as Record<string, string>).Authorization);
-    if (u.hostname !== 'apis.eclatdiamonds.in') throw new Error('test attempted a non-stub host');
+    if (u.hostname !== 'apis.nibhana.in') throw new Error('test attempted a non-stub host');
     const page = Number(u.searchParams.get('page'));
     const limit = Number(u.searchParams.get('limit'));
     if (page === site.failPage) return new Response('upstream down', { status: 503 });
@@ -246,7 +246,7 @@ describe('Website catalogue sync (e2e, stubbed website)', () => {
 
       const health = await request(server()).get('/catalogue-integration/health').set(auth(hoA)).expect(200);
       expect(health.body.website.configured).toBe(true);
-      expect(health.body.website.host).toBe('apis.eclatdiamonds.in');
+      expect(health.body.website.host).toBe('apis.nibhana.in');
       expect(JSON.stringify(health.body)).not.toContain(TOKEN);
     });
   });

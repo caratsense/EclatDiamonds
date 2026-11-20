@@ -348,7 +348,7 @@ function Actions({
 }
 
 /** Write-only: the stored token is never fetched, shown or echoed. */
-const DEFAULT_BASE_URL = "https://apis.eclatdiamonds.in/v1/api";
+const DEFAULT_BASE_URL = "https://apis.nibhana.in/v1/api";
 
 function CredentialForm({
   state,

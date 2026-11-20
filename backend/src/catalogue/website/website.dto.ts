@@ -25,7 +25,7 @@ export class SetWebsiteCredentialDto {
   token?: string;
 
   /**
-   * The API base (https://apis.eclatdiamonds.in/v1/api) or the exact products
+   * The API base (https://apis.nibhana.in/v1/api) or the exact products
    * endpoint (…/v1/api/products) — both become the same products endpoint.
    * Must be https on the allow-listed host; it is saved only after a probe passes.
    */
