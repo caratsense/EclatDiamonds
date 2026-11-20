@@ -148,10 +148,17 @@ export class MlInferenceService {
   async keepWarm(): Promise<void> {
     if (!this.available) return;
     try {
+      /*
+       * A long timeout on purpose. Nobody is waiting on this one — it is a
+       * background tick whose entire job is to absorb the wake-up so a person
+       * never has to. Twenty seconds was not enough: the first ticks after a
+       * deploy aborted mid-wake, so the service stayed asleep and the next
+       * tick repeated the same too-short attempt.
+       */
       await fetchJson(`${this.url}/health`, {
         method: 'GET',
         headers: this.headers(),
-        timeoutMs: 20_000,
+        timeoutMs: 90_000,
       });
     } catch (err) {
       this.logger.debug(
@@ -171,10 +178,12 @@ export class MlInferenceService {
   async wake(): Promise<{ ready: boolean }> {
     if (!this.available) return { ready: false };
     try {
+      // Generous for the same reason: this runs while somebody is choosing a
+      // photograph, which is the one moment a slow wake costs nothing.
       await fetchJson(`${this.url}/health`, {
         method: 'GET',
         headers: this.headers(),
-        timeoutMs: 25_000,
+        timeoutMs: 60_000,
       });
       return { ready: true };
     } catch {
@@ -199,7 +208,13 @@ export class MlInferenceService {
     if (!this.available) return {};
     if (this.versionsCache && Date.now() - this.versionsCache.at < 30_000) return this.versionsCache.v;
     try {
-      const data = await fetchJson(`${this.url}/health`, { method: 'GET', headers: this.headers(), timeoutMs: 10_000 });
+      /*
+       * Ten seconds was a warm-service figure. An indexing job that asks a
+       * sleeping service for its versions aborts, fails as "inference health
+       * unavailable", and retries into the same wall — forty-odd image jobs
+       * failed that way after one deploy. A worker can wait.
+       */
+      const data = await fetchJson(`${this.url}/health`, { method: 'GET', headers: this.headers(), timeoutMs: 45_000 });
       const v: InferenceVersions = {
         // Both health shapes seen in the wild: the service's own `models.*.id`
         // and the documented `model_versions`.
