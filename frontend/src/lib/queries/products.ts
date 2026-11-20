@@ -149,25 +149,6 @@ export function useProductPieces(productId: string | null) {
   });
 }
 
-/**
- * POST /products/:id/image — upload/replace a product photo (manager+).
- * Sends multipart form-data; refreshes the catalogue on success.
- */
-export function useUploadProductImage() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async ({ id, file }: { id: string; file: File }) => {
-      const form = new FormData();
-      form.append("file", file);
-      const { data } = await api.post<Product>(`/products/${id}/image`, form, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-      return data;
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["products"] }),
-  });
-}
-
 /** Every mutation below returns the design’s full gallery, so they share this. */
 function useGalleryMutation<V>(
   call: (vars: V) => Promise<ProductImage[]>,

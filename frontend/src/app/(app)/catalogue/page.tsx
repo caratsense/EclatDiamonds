@@ -47,11 +47,12 @@ import {
 } from "@/lib/mock/catalogue";
 import {
   httpStatus,
+  useAddProductImages,
   useCreateProduct,
   useProducts,
-  useUploadProductImage,
   type ImageCoverage,
 } from "@/lib/queries/products";
+import { prepareQueryImage } from "@/lib/queries/jewelry-similarity";
 import { advancedFilterCount, catalogueListParams } from "@/lib/catalogue-filters";
 import { useDebouncedValue } from "@/lib/queries/search";
 import { ROLE_RANK } from "@/lib/types";
@@ -476,7 +477,7 @@ function AddProductDialog({
   const { targetStoreId, storeLabel, pickedStoreId, setPickedStoreId } =
     useStoreScope();
   const createProduct = useCreateProduct();
-  const uploadImage = useUploadProductImage();
+  const addImages = useAddProductImages();
   const photoRef = useRef<HTMLInputElement>(null);
   /*
    * What this tenant's industry says a product HAS.
@@ -597,19 +598,25 @@ function AddProductDialog({
       },
       {
         onSuccess: (created) => {
-          // Photo picked up-front → upload it against the new product's id.
-          if (photo && created?.id) {
-            uploadImage.mutate(
-              { id: created.id, file: photo },
-              {
-                onError: (err) =>
-                  toast.error(apiErrorMessage(err, "Product added, but the photo upload failed.")),
-              },
-            );
-          }
           toast.success("Product added");
           reset();
           onOpenChange(false);
+          // Photo picked up-front → added the way the gallery adds one: shrunk
+          // to a ≤1600 px JPEG, on the route with the 12 MB limit and the long
+          // timeout. Sent raw to the single-photo route, a 9 MB phone photo was
+          // refused after "Product added", leaving the design without it.
+          if (photo && created?.id) {
+            const id = created.id;
+            void prepareQueryImage(photo).then((file) =>
+              addImages.mutate(
+                { id, files: [file] },
+                {
+                  onError: (err) =>
+                    toast.error(apiErrorMessage(err, "Product added, but the photo upload failed.")),
+                },
+              ),
+            );
+          }
         },
         onError: (err) => toast.error(apiErrorMessage(err, "Could not add product.")),
       },
