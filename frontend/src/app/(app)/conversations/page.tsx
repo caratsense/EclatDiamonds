@@ -81,8 +81,10 @@ import {
   useSendReply,
   useUpdateConversation,
 } from "@/lib/queries/crm";
+import { sendFailureReason } from "./message-status";
+import { useRetryMessage } from "@/lib/queries/meta-admin";
 import { AssignConversationDialog } from "@/components/crm/assign-conversation-dialog";
-import { AuthedImage } from "@/components/ui/authed-image";
+import { AuthedAttachment, attachmentLabel } from "@/components/ui/authed-image";
 import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
@@ -1092,6 +1094,7 @@ function ThreadView({
   const send = useSendReply(id);
   const attach = useAttachPhoto(id);
   const update = useUpdateConversation(id);
+  const retry = useRetryMessage();
 
   /*
    * The photo waiting to go with the next message. Uploaded the moment it is
@@ -1178,6 +1181,10 @@ function ThreadView({
 
   const role = useSession((s) => s.role);
   const canReassign = ROLE_RANK[role] >= ROLE_RANK.store_manager;
+  // `POST /omnichannel/outbox/:id/retry` is @Roles('store_manager'), so a
+  // salesperson is shown the refusal and its reason without a button that
+  // would come back 403 in their hands.
+  const canRetrySend = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   if (isLoading) {
     return (
@@ -1602,29 +1609,38 @@ function ThreadView({
                         </div>
                       )}
 
-                      {/* An attachment the customer sent. Rendered through
-                          AuthedImage because the bytes are served from an
-                          authenticated route — a plain <img src> cannot carry
-                          the Authorization header, and these are the customer's
-                          own photographs rather than public files. */}
-                      {m.mediaUrl && (m.mediaType ?? "").startsWith("image/") && (
+                      {/* THE ATTACHMENT ITSELF, WHICHEVER WAY IT WENT.
+                          Written for the customer's photographs, and the
+                          outbound half matters just as much: a manager who has
+                          just sent a ring needs the thread to show WHICH ring,
+                          and anybody checking afterwards needs to see what the
+                          customer actually got. Served through the
+                          authenticated route because the bytes are private —
+                          a plain <img src> cannot carry the Authorization
+                          header the rest of the app sends. */}
+                      {m.mediaUrl ? (
                         <div className="mb-1.5 overflow-hidden rounded-lg">
-                          <AuthedImage
+                          <AuthedAttachment
                             src={`/crm/conversations/${id}/media/${m.id}`}
-                            alt={m.body ?? "Photo sent by the customer"}
+                            mediaType={m.mediaType}
+                            alt={
+                              isInbound
+                                ? "Attachment the customer sent"
+                                : "Attachment sent to the customer"
+                            }
                             className="max-h-64 w-auto max-w-full object-cover"
                           />
                         </div>
-                      )}
-
-                      {/* Non-image attachments have nothing to show inline, so
-                          the label written at ingest is the message. */}
-                      {m.mediaUrl && !(m.mediaType ?? "").startsWith("image/") && (
+                      ) : m.mediaType ? (
+                        /* An attachment we hold no bytes for: the quote PDF is
+                           uploaded straight to the provider at delivery and
+                           never stored against the message. Its kind is all
+                           this can honestly claim. */
                         <span className="mb-1 flex items-center gap-1.5 text-[12px] opacity-80">
                           <Paperclip className="h-3.5 w-3.5" />
-                          <span>{m.mediaType ?? "Attachment"}</span>
+                          <span>{attachmentLabel(m.mediaType)}</span>
                         </span>
-                      )}
+                      ) : null}
 
                       {m.body ? (
                         <p className="whitespace-pre-wrap select-text">
@@ -1634,7 +1650,7 @@ function ThreadView({
                               : m.body,
                           )}
                         </p>
-                      ) : !m.mediaUrl ? (
+                      ) : !m.mediaUrl && !m.mediaType ? (
                         <p className="whitespace-pre-wrap select-text opacity-70">(attachment)</p>
                       ) : null}
 
@@ -1662,7 +1678,7 @@ function ThreadView({
                                 <AlertCircle className="h-3 w-3 text-red-500" />
                               </span>
                             ) : (
-                              <span title="Queued">
+                              <span title="Waiting to send">
                                 <Clock className="h-3 w-3 text-amber-500" />
                               </span>
                             )}
@@ -1670,6 +1686,49 @@ function ThreadView({
                         )}
                       </div>
                     </div>
+
+                    {/* A FAILED MESSAGE HAS TO LOOK FAILED.
+                        The status was a 12-pixel icon with the reason hidden in
+                        a tooltip, which on a tablet on a shop floor is no
+                        reason at all. A store manager watched three
+                        photographs sit under a timer and sent the same one
+                        three times. The refusal is now a sentence, and the
+                        retry is here rather than in an administrator's outbox
+                        screen, because the person who pressed send is the
+                        person standing in front of the customer. */}
+                    {!isInbound && m.status === "failed" && (
+                      <div className="mt-1 flex max-w-[85%] flex-col items-start gap-1.5 rounded-lg border border-red-500/30 bg-red-500/[0.06] px-2.5 py-1.5 text-[11.5px] text-red-700 dark:text-red-300 sm:max-w-[75%]">
+                        <span className="flex items-start gap-1.5">
+                          <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                          <span>
+                            <span className="font-semibold">Not sent.</span>{" "}
+                            {sendFailureReason(m.error)}
+                          </span>
+                        </span>
+                        {canRetrySend && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-6 gap-1 px-2 text-[11px]"
+                            disabled={retry.isPending}
+                            onClick={async () => {
+                              try {
+                                await retry.mutateAsync(m.id);
+                                // Back to queued; the thread's own poll takes
+                                // it from here and shows how it ended.
+                                await refetch();
+                                toast.success("Trying again");
+                              } catch (e) {
+                                toast.error(apiErrorMessage(e, "Could not try again."));
+                              }
+                            }}
+                          >
+                            <RotateCcw className="h-3 w-3" />
+                            Try again
+                          </Button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })

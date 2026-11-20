@@ -258,6 +258,56 @@ export function evaluateDeliveryPolicy(input: DeliveryPolicyInput): DeliveryPoli
 
 
 /* -------------------------------------------------------------------------
+ * What a queued message actually has to send
+ * ---------------------------------------------------------------------- */
+
+export type SendableContent =
+  | { sendable: true }
+  | { sendable: false; code: 'content_missing' | 'attachment_missing'; reason: string };
+
+/**
+ * Has this queued row anything to put in front of the customer?
+ *
+ * A store manager sent a customer three photographs of the same ring in under a
+ * minute and none of them left the building: the deliverer asked for text and a
+ * photograph has none. A picture with no caption is an ordinary WhatsApp
+ * message — it is most of what a jeweller sends — so an attachment counts as
+ * content here, and only a row with no text, no template and no attachment is
+ * refused.
+ *
+ * The attachment claim is checked FIRST because the two refusals mean different
+ * things to the person reading them. "This message has an attachment that was
+ * never stored" tells them to attach the photograph again; "nothing to send"
+ * would send them looking for words they never meant to type.
+ */
+export function evaluateSendableContent(input: {
+  hasApprovedTemplate: boolean;
+  body: string | null | undefined;
+  /** True when the delivery instruction names bytes in our own storage. */
+  hasAttachmentInstruction: boolean;
+  /** True when the row claims an attachment at all — `mediaUrl` or `mediaType`. */
+  claimsAttachment: boolean;
+}): SendableContent {
+  if (input.claimsAttachment && !input.hasAttachmentInstruction) {
+    return {
+      sendable: false,
+      code: 'attachment_missing',
+      reason:
+        'This message has an attachment that was never stored, so it was not sent. Attach it again.',
+    };
+  }
+  if (!input.hasApprovedTemplate && !input.hasAttachmentInstruction && !input.body?.trim()) {
+    return {
+      sendable: false,
+      code: 'content_missing',
+      reason: 'The queued message has neither text nor an attachment to send.',
+    };
+  }
+  return { sendable: true };
+}
+
+
+/* -------------------------------------------------------------------------
  * Template sendability (INT-08)
  * ---------------------------------------------------------------------- */
 

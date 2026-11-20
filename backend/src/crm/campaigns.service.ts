@@ -38,6 +38,7 @@ import {
   previewAudienceWhere,
   visibleStores,
 } from './campaign-audience';
+import { campaignOutcome, nextRecipientStatus } from './campaign-delivery';
 
 export const CAMPAIGN_EXPAND_JOB = 'campaign.expand';
 export const CAMPAIGN_SEND_JOB = 'campaign.send';
@@ -73,6 +74,18 @@ const CANCELLABLE: MessagingCampaignStatus[] = [
   'expanding',
   'queued',
   'sending',
+];
+
+/**
+ * Statuses whose verdict a late delivery receipt may still correct. A cancelled
+ * campaign is absent on purpose: somebody stopped it, and a receipt for a
+ * message that had already left must not quietly reopen it.
+ */
+const SETTLEABLE: MessagingCampaignStatus[] = [
+  'sending',
+  'completed',
+  'partially_failed',
+  'failed',
 ];
 
 @Injectable()
@@ -694,7 +707,10 @@ export class CampaignsService implements OnModuleInit {
     const row = await this.loadCampaign(user, id);
     const reset = await this.prisma.campaignRecipient.updateMany({
       where: { organisationId: user.organisationId, campaignId: row.id, status: 'failed' },
-      data: { status: 'pending', lastError: null },
+      // The old message is let go of too. It is refused and finished, and
+      // leaving it linked would have this attempt's outcome read off the
+      // previous attempt's failure.
+      data: { status: 'pending', lastError: null, messageId: null },
     });
     if (reset.count) {
       await this.prisma.messagingCampaign.update({
@@ -943,7 +959,7 @@ export class CampaignsService implements OnModuleInit {
       if (!claimed.count) continue;
 
       try {
-        const message = await this.omnichannel.queueToContact(actor, {
+        const queued = await this.omnichannel.queueToContact(actor, {
           to: recipient.contactValue,
           purpose: 'marketing',
           // The campaign chose this person BY their customer record; handing
@@ -959,14 +975,31 @@ export class CampaignsService implements OnModuleInit {
           ),
           idempotencyKey: `campaign:${campaign.id}:${recipient.id}`,
         });
+        /*
+         * STILL QUEUED. `queueToContact` returns `{ message, job, ... }` — an
+         * outbox row and the job that will call the provider, nothing more.
+         *
+         * This used to write 'sent' here, with the id read as
+         * `(message as { id?: string }).id`, which is undefined on that shape.
+         * So a broadcast of 126 reported "125 sent" while Meta had refused all
+         * 125, and not one recipient carried a message id to ever find out.
+         * Storing the id is what lets the outcome come back; the status is the
+         * outbox's to give, below.
+         */
         await this.prisma.campaignRecipient.update({
           where: { id: recipient.id },
-          data: {
-            status: 'sent',
-            sentAt: new Date(),
-            messageId: (message as { id?: string })?.id ?? null,
-            lastError: null,
-          },
+          data: { messageId: queued.message.id, lastError: null },
+        });
+        /*
+         * Read the outbox once, now. The delivery job can run and settle this
+         * message while the row above is still being written — and a receipt
+         * that arrives in that window finds no recipient to land on, leaving
+         * somebody queued forever. It also covers the idempotent re-send, where
+         * `queueToContact` hands back a message that was decided long ago.
+         */
+        await this.applyMessageOutcome({
+          organisationId: ctx.organisationId,
+          messageId: queued.message.id,
         });
       } catch (error) {
         const reason = error instanceof Error ? error.message : 'Unknown error';
@@ -989,6 +1022,81 @@ export class CampaignsService implements OnModuleInit {
     return { processed: batch.length };
   }
 
+  /**
+   * What the outbox made of one campaign message, reaching the recipient row
+   * that asked for it.
+   *
+   * Called by OmnichannelService when the provider accepts or refuses a message
+   * and again for every delivery receipt the webhook verifies, so nothing here
+   * polls. A message belonging to no campaign is the ordinary case and costs one
+   * indexed lookup.
+   *
+   * `status` is given by the receipt paths, which know more than the stored row
+   * does at that instant; the send loop omits it and the outbox row is read.
+   */
+  async applyMessageOutcome(input: {
+    organisationId: string;
+    messageId: string;
+    status?: string;
+    error?: string | null;
+    occurredAt?: Date;
+  }) {
+    const recipient = await this.prisma.campaignRecipient.findFirst({
+      where: { organisationId: input.organisationId, messageId: input.messageId },
+      select: { id: true, campaignId: true, status: true, attempts: true, sentAt: true },
+    });
+    if (!recipient) return { matched: false, updated: false };
+
+    let { status, error } = input;
+    if (!status) {
+      const message = await this.prisma.message.findFirst({
+        where: { id: input.messageId, organisationId: input.organisationId },
+        select: { status: true, error: true },
+      });
+      if (!message) return { matched: true, updated: false };
+      status = message.status;
+      error = message.error;
+    }
+
+    const next = nextRecipientStatus({
+      current: recipient.status,
+      attempts: recipient.attempts,
+      messageStatus: status,
+    });
+    if (!next) return { matched: true, updated: false, status: recipient.status };
+
+    const failed = next === 'failed' || next === 'dead';
+    await this.prisma.campaignRecipient.update({
+      where: { id: recipient.id },
+      data: {
+        status: next,
+        // When it actually left, stamped once. A delivered or read receipt is
+        // later proof of the same send, not a second one — and it is the only
+        // proof there is when the 'sent' callback never arrived.
+        ...(!failed && !recipient.sentAt ? { sentAt: input.occurredAt ?? new Date() } : {}),
+        lastError: failed ? (error ?? 'The provider refused this message.').slice(0, 500) : null,
+      },
+    });
+    // The refusals arrive after the last row was handed over, so the campaign's
+    // own verdict is recomputed here rather than only at the end of the loop.
+    await this.finish(input.organisationId, recipient.campaignId);
+    return { matched: true, updated: true, status: next };
+  }
+
+  /**
+   * Write the campaign's own status from what actually happened to its
+   * recipients.
+   *
+   * Called when the send loop runs out of rows to hand over AND again on every
+   * outcome the outbox reports. Those are not the same moment: handing 126
+   * messages to the outbox takes a minute and Meta's verdict on them takes
+   * longer, so the first call finds every recipient still queued and must leave
+   * the campaign 'sending' — which is what `campaignOutcome` decides. Finishing
+   * there, as this once did, is how a broadcast that reached nobody was written
+   * 'completed' and stamped with a finish time.
+   *
+   * A cancelled campaign is never reopened by a late receipt.
+   */
   private async finish(organisationId: string, campaignId: string) {
     const grouped = await this.prisma.campaignRecipient.groupBy({
       by: ['status'],
@@ -997,13 +1105,24 @@ export class CampaignsService implements OnModuleInit {
     });
     const counts: CampaignCounts = {};
     for (const g of grouped) counts[g.status] = g._count._all;
-    const bad = (counts.failed ?? 0) + (counts.dead ?? 0);
-    const good = (counts.sent ?? 0) + (counts.delivered ?? 0) + (counts.read ?? 0);
-    const status: MessagingCampaignStatus =
-      bad === 0 ? 'completed' : good === 0 ? 'failed' : 'partially_failed';
+    const outcome = campaignOutcome(counts);
+    if (!outcome.settled) return { status: outcome.status, counts };
+
+    const campaign = await this.prisma.messagingCampaign.findFirst({
+      where: { id: campaignId, organisationId },
+      select: { status: true, finishedAt: true },
+    });
+    if (!campaign || !SETTLEABLE.includes(campaign.status)) {
+      return { status: campaign?.status ?? outcome.status, counts };
+    }
+    const status = outcome.status as MessagingCampaignStatus;
+    if (campaign.status === status && campaign.finishedAt) return { status, counts };
     await this.prisma.messagingCampaign.update({
       where: { id: campaignId },
-      data: { status, finishedAt: new Date() },
+      // When it finished, not when the verdict was last corrected: a receipt
+      // that turns 'completed' into 'partially_failed' two minutes later did
+      // not move the send.
+      data: { status, finishedAt: campaign.finishedAt ?? new Date() },
     });
     return { status, counts };
   }
