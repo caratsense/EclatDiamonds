@@ -1,4 +1,6 @@
+import sharp from 'sharp';
 import { rankCandidates, type RankCandidate, type RankOptions } from './jewelry-ranking.service';
+import { explainNoMatch, photoIssues } from './jewelry-similarity.service';
 
 /**
  * Why a photograph of a real piece used to find nothing.
@@ -55,18 +57,26 @@ describe('a photograph with look-alike candidates', () => {
     expect(typeof out.ambiguous).toBe('boolean');
   });
 
-  it('still refuses when nothing is genuinely close', () => {
-    // The absolute floor is the real no-match rule and it stays.
+  it('says no close match, but still shows the nearest designs, each marked not close', () => {
+    // The absolute floor is the real no-match rule and it stays. What changed:
+    // a photo of a ring on a hand used to come back to an empty screen.
     const unrelated = [candidate('necklace', 40), candidate('bangle', 80)];
     const out = rankCandidates(vec(1), vec(1.01), unrelated, OPTS);
     expect(out.closenessScore).toBeLessThan(OPTS.thresholds.weak);
     expect(out.status).toBe('NO_CLOSE_MATCH');
-    expect(out.results).toEqual([]);
+    expect(out.results.map((r) => r.productId).sort()).toEqual(['bangle', 'necklace']);
+    expect(out.results.every((r) => r.matchLevel === 'NO_CLOSE_MATCH')).toBe(true);
+  });
+
+  it('a real match hides the not-close tail', () => {
+    const out = rankCandidates(q, vec(1.01), [candidate('exact', 1), candidate('bangle', 80)], OPTS);
+    expect(out.results.map((r) => r.productId)).toEqual(['exact']);
   });
 
   it('still returns nothing when there are no candidates at all', () => {
     const out = rankCandidates(vec(1), vec(1), [], OPTS);
     expect(out.status).toBe('NO_CLOSE_MATCH');
+    expect(out.results).toEqual([]);
   });
 
   it('a near-identical image still ranks first', () => {
@@ -75,5 +85,48 @@ describe('a photograph with look-alike candidates', () => {
     const out = rankCandidates(q, vec(1.01), [...lookalikes, candidate('exact', 1)], OPTS);
     expect(out.results[0]?.productId).toBe('exact');
     expect(out.matchLevel).toBe('VERY_CLOSE');
+  });
+});
+
+describe('saying why nothing matched closely', () => {
+  const photo = (create: object, svg?: string) =>
+    sharp({ create: { width: 800, height: 800, channels: 3, ...create } as any })
+      .composite(svg ? [{ input: Buffer.from(svg) }] : [])
+      .jpeg()
+      .toBuffer();
+  const sharpPhoto = () => photo({ background: '#808080', noise: { type: 'gaussian', mean: 128, sigma: 60 } });
+
+  it('a sharp, well-lit photo has no issues', async () => {
+    expect(await photoIssues(await sharpPhoto())).toEqual([]);
+  });
+
+  it('names a tiny, a dark and a blurred photo', async () => {
+    const tiny = await sharp(await sharpPhoto()).resize(300).toBuffer();
+    expect(await photoIssues(tiny)).toContain('the photo is very small (low resolution)');
+    expect(await photoIssues(await photo({ background: '#141414' }))).toContain('the photo is too dark');
+    const blurred = await sharp(await sharpPhoto()).blur(8).toBuffer();
+    expect(await photoIssues(blurred)).toContain('the photo is blurred or out of focus');
+  });
+
+  it('gold on black velvet is not "too dark"', async () => {
+    const velvet = await photo(
+      { background: '#0f0f0f' },
+      '<svg width="800" height="800"><circle cx="400" cy="400" r="120" fill="#f0c850"/></svg>',
+    );
+    expect(await photoIssues(velvet)).not.toContain('the photo is too dark');
+  });
+
+  it('an unreadable buffer is not an issue list, it is no list', async () => {
+    expect(await photoIssues(Buffer.from('not an image'))).toEqual([]);
+  });
+
+  it('only says the piece was not found when the detector ran', () => {
+    const base = { photos: 1, read: 1, issues: [] };
+    expect(explainNoMatch({ ...base, pieceFound: false })).toMatch(/no ring, pendant or other piece/);
+    expect(explainNoMatch({ ...base, pieceFound: true })).toMatch(/picked out of the photo clearly/);
+    expect(explainNoMatch({ ...base, pieceFound: null })).not.toMatch(/picked out/);
+    expect(explainNoMatch({ ...base, photos: 2, issues: ['the photo is too dark'], pieceFound: null })).toMatch(
+      /^Likely cause: 1 of 2 photos could not be read; the photo is too dark\./,
+    );
   });
 });

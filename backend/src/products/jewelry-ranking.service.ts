@@ -170,7 +170,8 @@ export function levelFor(closeness: number, t: MatchThresholds): MatchLevel {
 /**
  * The full ranking pipeline as a pure function. `candidates` are the store-scoped
  * embeddings; everything else is config. Returns an explicit NO_CLOSE_MATCH
- * outcome (empty results) that is distinct from an upstream SEARCH_ERROR.
+ * outcome (the nearest designs, each labelled NO_CLOSE_MATCH; empty only when
+ * there are no candidates) that is distinct from an upstream SEARCH_ERROR.
  */
 export function rankCandidates(
   queryDino: ArrayLike<number>,
@@ -258,19 +259,14 @@ export function rankCandidates(
    * them apart; returning nothing denies them that.
    */
   const ambiguous = margin < t.minMargin;
-  if (best.closeness < t.weak) {
-    return {
-      status: 'NO_CLOSE_MATCH',
-      matchLevel: 'NO_CLOSE_MATCH',
-      closenessScore: best.closeness,
-      results: [],
-      ambiguous,
-    };
-  }
-
-  // Only return actual matches (>= WEAK floor); a closeness-0 tail is not a "match".
+  // Below the floor nothing is a match, but the nearest designs still come
+  // back, each labelled NO_CLOSE_MATCH. An empty screen after a photo of a
+  // ring on a hand read as "broken"; the nearest pieces in stock, marked as
+  // not close, are what the salesperson can actually show the customer.
+  const noMatch = best.closeness < t.weak;
+  // When something does clear the floor, only the matches are shown.
   const results: RankedHit[] = byDesign
-    .filter((s) => s.closeness >= t.weak)
+    .filter((s) => noMatch || s.closeness >= t.weak)
     .slice(0, opts.limit)
     .map((s, i) => ({
       productId: s.productId,
@@ -281,7 +277,7 @@ export function rankCandidates(
     }));
 
   return {
-    status: 'MATCHES_FOUND',
+    status: noMatch ? 'NO_CLOSE_MATCH' : 'MATCHES_FOUND',
     matchLevel: results[0].matchLevel,
     closenessScore: results[0].closenessScore,
     results,

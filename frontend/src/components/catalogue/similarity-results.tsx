@@ -27,7 +27,8 @@ const FEEDBACK_OPTIONS: { value: SimilarityFeedbackValue; label: string }[] = [
 /**
  * THE single AI visual-search result surface (Module 5). Given one
  * SimilaritySearchResult (DINOv2 + SigLIP 2), it renders one flat,
- * closest-first list of the genuine matches — plus the honest empty /
+ * closest-first list of the genuine matches, or of the nearest designs marked
+ * "No Close Match" with the server's reason why, plus the honest empty /
  * unavailable / error / index-building states. No fabricated fallback.
  */
 export function SimilarityResults({
@@ -92,30 +93,48 @@ export function SimilarityResults({
     );
   }
 
-  if (result.status === "NO_CLOSE_MATCH" || hits.length === 0) {
+  if (hits.length === 0) {
     return (
       <EmptyState
         icon={<Sparkles className="h-8 w-8 text-muted-foreground" />}
         title="No close matches found"
-        body="We compared this image against the indexed catalogue, but nothing was visually similar enough."
+        body={
+          result.reason ??
+          "We compared this image against the indexed catalogue, but nothing was visually similar enough."
+        }
       />
     );
   }
 
   // Already ordered closest → least close by the server; never re-sorted here.
   return (
-    <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" aria-label="Closest designs">
-      {hits.map((hit, i) => (
-        <li key={hit.productId} className="flex">
-          <ResultCard
-            queryId={result.queryId ?? ""}
-            hit={hit}
-            onOpen={() => onOpen(i)}
-            enableFeedback={enableFeedback && !!result.queryId}
-          />
-        </li>
-      ))}
-    </ul>
+    <div className="space-y-3">
+      {/* Nothing cleared the bar: these are the nearest pieces, and the server says why. */}
+      {result.status === "NO_CLOSE_MATCH" ? (
+        <div
+          role="status"
+          data-testid="no-close-match"
+          className="rounded-lg border border-[color-mix(in_srgb,var(--warning)_40%,transparent)] bg-[color-mix(in_srgb,var(--warning)_8%,transparent)] p-3"
+        >
+          <p className="text-sm font-semibold">No close match in the catalogue</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {result.reason ?? "These are the nearest designs we have, but none of them is a close match."}
+          </p>
+        </div>
+      ) : null}
+      <ul className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5" aria-label="Closest designs">
+        {hits.map((hit, i) => (
+          <li key={hit.productId} className="flex">
+            <ResultCard
+              queryId={result.queryId ?? ""}
+              hit={hit}
+              onOpen={() => onOpen(i)}
+              enableFeedback={enableFeedback && !!result.queryId}
+            />
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 

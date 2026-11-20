@@ -404,3 +404,10 @@ Owner, 26 Oct: "eclat was brand name which name has changed to nibhana we are cr
 - **The product name stays CaratSpace** (`PRODUCT_NAME`, backend and frontend). PR #52 had set it to Nibhana on the belief that CaratSpace had moved to its own repository; it has not. Nibhana, formerly Éclat Diamonds, is the client and stays in `TENANT_NAME`.
 - **The app wears the client's colours**: emerald and champagne gold from PR #52 are kept, with the CaratSpace wordmark in gold. Supersedes the 10 Oct line "Product name CaratSpace; the shop's name Nibhana" only in that the shop's colours now dress the app.
 - **Everything else in PR #52 is merged as written**: the Figma DSR and CRM screens, the app a size smaller, broadcasts beside customers, and three audit fixes (a replaced DSR keeps its old figures in the trail, a locked payroll month is not redrafted, an auto-approved discount is audited), now each with a test.
+
+# 2026-11-20 — photo search always shows the nearest pieces, and says why none is close
+
+Client, 20 Nov: photos of rings on fingers and on a palm found nothing, with no reason given.
+
+- **No close match no longer means an empty screen.** When nothing reaches the WEAK floor, the nearest designs come back, each marked "No Close Match". Supersedes OP-29's "NO_CLOSE_MATCH (empty)"; the list is empty only when the store has no searchable photos.
+- **The search says why**, from what it can actually check: a photo that could not be read, a very small, dark or blurred photo, no piece picked out of the photo (claimed only when the jewellery detector ran), or the piece was found but nothing in the catalogue looks like it. The photo checks run only on this path and are conservative; their thresholds are not fitted to a labelled jewellery set.

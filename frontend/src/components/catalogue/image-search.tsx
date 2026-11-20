@@ -324,8 +324,8 @@ export function ImageSearch() {
             </div>
             {result.status === "NO_CLOSE_MATCH" && shots.length < MAX_QUERY_IMAGES ? (
               <p className="text-xs text-muted-foreground">
-                Nothing matched closely. A second view — held at an angle rather
-                than flat on — often finds a design the first one misses.
+                A second view — held at an angle rather than flat on — often
+                finds a design the first one misses.
               </p>
             ) : null}
             <SimilarityResults

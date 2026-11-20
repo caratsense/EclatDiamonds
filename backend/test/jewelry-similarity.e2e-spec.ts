@@ -189,18 +189,21 @@ describe('rankCandidates — no-match is a real outcome (not an error)', () => {
     expect(out.results).toEqual([]);
   });
 
-  it('best below the absolute floor → NO_CLOSE_MATCH', () => {
+  it('best below the absolute floor → NO_CLOSE_MATCH, the nearest designs marked not close', () => {
     const cands: RankCandidate[] = [
       { productId: 'A', dino: [0, 1, 0], siglip: [0, 1, 0] },
       { productId: 'B', dino: [0, 0, 1], siglip: [0, 0, 1] },
     ];
     const out = rankCandidates([1, 0, 0], [1, 0, 0], cands, opts());
     expect(out.status).toBe('NO_CLOSE_MATCH');
-    expect(out.results).toEqual([]);
+    expect(out.results).toHaveLength(2);
+    expect(out.results.every((r) => r.matchLevel === 'NO_CLOSE_MATCH')).toBe(true);
   });
 
-  it('moderate but ambiguous (below CLOSE AND low margin) → NO_CLOSE_MATCH', () => {
+  it('moderate but ambiguous (below CLOSE AND low margin) → shown, flagged ambiguous', () => {
     // Two near-identical moderate matches: closeness in (WEAK, CLOSE), margin < 5.
+    // The old ambiguity gate discarded these; it was removed because it hid
+    // real phone photos (see jewelry-ambiguity.spec.ts).
     const cands: RankCandidate[] = [
       { productId: 'A', dino: [0.6, 0.6, 0], siglip: [0.6, 0.6, 0] },
       { productId: 'B', dino: [0.61, 0.6, 0], siglip: [0.6, 0.61, 0] },
@@ -208,7 +211,8 @@ describe('rankCandidates — no-match is a real outcome (not an error)', () => {
     const out = rankCandidates([1, 0, 0], [1, 0, 0], cands, opts());
     expect(out.closenessScore).toBeGreaterThan(T.weak);
     expect(out.closenessScore).toBeLessThan(T.close);
-    expect(out.status).toBe('NO_CLOSE_MATCH');
+    expect(out.status).toBe('MATCHES_FOUND');
+    expect(out.ambiguous).toBe(true);
   });
 });
 
@@ -437,6 +441,10 @@ describe('Jewelry similarity search (e2e)', () => {
     mockInference.embedResult = { dino: [0, 0, 1], siglip: [0, 0, 1] };
     const whole = await search();
     expect(whole.body.status).toBe('NO_CLOSE_MATCH');
+    // Not an empty screen: the nearest designs, marked not close, and why.
+    expect(whole.body.results.length).toBeGreaterThan(0);
+    expect(whole.body.results.every((r: any) => r.matchLevel === 'NO_CLOSE_MATCH')).toBe(true);
+    expect(whole.body.reason).toMatch(/nearest designs/);
   });
 
   it('inference unavailable → available:false (never fabricates)', async () => {
