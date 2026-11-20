@@ -363,6 +363,26 @@ export interface MessageRow {
     platform: string | null;
     thumbnailUrl: string | null;
   } | null;
+  /**
+   * What an approved template showed the customer, for a bubble with nothing
+   * of its own to show.
+   *
+   * A template send names a shape the provider holds; the words and the header
+   * picture never pass through our message row, so `body` and `mediaUrl` are
+   * both null and the bubble was empty. Resolved on read from the template the
+   * send named, with this recipient's own values substituted — null on an
+   * ordinary typed message.
+   */
+  template: {
+    name: string | null;
+    /** 'IMAGE' | 'VIDEO' | 'DOCUMENT' | 'TEXT', or null for no header. */
+    headerFormat: string | null;
+    headerText: string | null;
+    /** Meta's own CDN address for the approved file. Expires; best-effort. */
+    headerImageUrl: string | null;
+    body: string | null;
+    footerText: string | null;
+  } | null;
 }
 
 export function useConversations(params: {

@@ -28,6 +28,18 @@ const arg = (name) => {
 const APPLY = process.argv.includes('--apply');
 const TARGET = arg('campaign');
 const ACTOR = arg('actor');
+/*
+ * Re-send to N people rather than all of them.
+ *
+ * A re-send to the whole audience is the only way to prove a delivery fix
+ * works, and also the most expensive way to discover it doesn't — the nails
+ * event failed 126 at a time, three times over. One recipient first costs one
+ * message and answers the same question.
+ */
+const LIMIT = arg('limit') ? Number(arg('limit')) : null;
+if (LIMIT !== null && (!Number.isInteger(LIMIT) || LIMIT < 1)) {
+  throw new Error(`--limit must be a whole number of people, not "${arg('limit')}".`);
+}
 const SEND_JOB = 'campaign.send';
 
 if (!TARGET) throw new Error('--campaign "<name or id>" is required.');
@@ -63,7 +75,8 @@ const failed =
 const alreadySent = (counts.find((c) => c.status === 'sent')?._count._all ?? 0)
   + (counts.find((c) => c.status === 'delivered')?._count._all ?? 0)
   + (counts.find((c) => c.status === 'read')?._count._all ?? 0);
-console.log(`\n  would re-send to : ${failed}`);
+console.log(`
+  would re-send to : ${LIMIT === null ? failed : `${Math.min(LIMIT, failed)} of ${failed} (--limit)`}`);
 console.log(`  left alone       : ${alreadySent} already received it, ` +
   `${counts.find((c) => c.status === 'excluded')?._count._all ?? 0} have no number we can message`);
 
@@ -109,11 +122,27 @@ if (!failed) {
 
   // The old message is let go of as well: leaving it linked would have this
   // attempt's outcome read off the previous attempt's refusal.
+  // Oldest first, so a --limit run re-sends the people who have been waiting
+  // longest rather than an arbitrary slice.
+  const picked = LIMIT === null
+    ? null
+    : await prisma.campaignRecipient.findMany({
+        where: {
+          organisationId: campaign.organisationId,
+          campaignId: campaign.id,
+          status: { in: ['failed', 'dead'] },
+        },
+        orderBy: { createdAt: 'asc' },
+        take: LIMIT,
+        select: { id: true },
+      });
+
   const reset = await prisma.campaignRecipient.updateMany({
     where: {
       organisationId: campaign.organisationId,
       campaignId: campaign.id,
       status: { in: ['failed', 'dead'] },
+      ...(picked ? { id: { in: picked.map((r) => r.id) } } : {}),
     },
     /*
      * `attempts` IS DELIBERATELY LEFT ALONE. It is the generation number in
