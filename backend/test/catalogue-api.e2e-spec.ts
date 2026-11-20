@@ -369,7 +369,7 @@ describe('Catalogue product API (e2e)', () => {
   it('lists only the pieces on hand: not one that was sold, nor one head office has sent to a shop', async () => {
     // Gati keeps a piece's row after it is sold. Head office also keeps its own
     // row for a piece it has issued to a shop; that row names no branch, so it
-    // sits in the holding store. The dialog shows this list as "Pieces on hand".
+    // sits in the holding store. The dialog lists these under "Stock".
     await prisma.store.create({
       data: { id: 'store_catapi_hold', name: 'Unassigned', city: '', organisationId: A.org, status: 'pending', isActive: false, isHolding: true },
     });

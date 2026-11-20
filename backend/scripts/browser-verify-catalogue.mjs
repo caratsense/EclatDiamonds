@@ -277,7 +277,7 @@ try {
     await selected.waitFor({ timeout: 15_000 });
     check(vp.name, 'detail shows the design', (await dialog.getByRole('heading').first().innerText()).includes(hit.productName.slice(0, 12)), hit.productName);
     const missing = [];
-    for (const text of ['Pieces on hand', 'SKU', 'Available at']) {
+    for (const text of ['Stock', 'Design code']) {
       const seen = await dialog.getByText(text, { exact: true }).first().waitFor({ timeout: 10_000 }).then(() => true, () => false);
       if (!seen) missing.push(text);
     }

@@ -93,6 +93,9 @@ export function ProductGallery({
   const photos = images.filter((i) => i.source !== "gati_cad");
   const have = new Set(images.map((i) => i.angle).filter(Boolean) as string[]);
   const missing = photos.length < 3 ? SEARCH_ANGLES.filter((a) => !have.has(a)) : [];
+  // Name the source on each thumbnail only when the set is mixed: seven
+  // "Website" strips in a row tell nobody anything.
+  const mixedSources = new Set(images.map((i) => i.source ?? "")).size > 1;
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const chosen = Array.from(e.target.files ?? []);
@@ -202,7 +205,7 @@ export function ProductGallery({
                 loading="lazy"
                 className="h-full w-full object-contain"
               />
-              {img.source ? (
+              {img.source && mixedSources ? (
                 <span className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-0.5 text-center text-[9px] font-medium text-white">
                   {imageSourceLabel(img.source)}
                 </span>

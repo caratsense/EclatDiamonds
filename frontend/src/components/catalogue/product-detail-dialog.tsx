@@ -1,18 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { toast } from "sonner";
 import { useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  FileText,
   Gem,
+  Globe,
+  Hash,
   History,
+  Layers,
   Loader2,
   RefreshCw,
+  Ruler,
   SearchX,
   Store,
-  Tag,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -38,11 +43,22 @@ import {
 import { ImageLightbox } from "@/components/catalogue/image-lightbox";
 import { ProductGallery, imageCaption } from "@/components/catalogue/product-gallery";
 import {
+  bomColumns,
+  countryName,
+  groupCodes,
+  groupConflicts,
+  historyRows,
+  humanize,
+  priceOptions,
+  sortSizes,
+  specLines,
+  variantName,
+} from "@/components/catalogue/product-detail-format";
+import {
   isNotFound,
   useProductFull,
   type BomLine,
   type ProductFull,
-  type ProductPriceView,
   type StockPieceFull,
 } from "@/lib/queries/products";
 import { ROLE_RANK } from "@/lib/types";
@@ -69,9 +85,13 @@ interface ProductDetailDialogProps {
 
 /**
  * Everything about one design, loaded lazily from GET /products/:id/full when
- * it opens. Sections render only for what the response carries — cost columns
- * (rates, amounts, margins) arrive only for roles allowed to see them, so the
- * UI shows a column exactly when the API sent it.
+ * it opens. It reads top to bottom the way a person at the counter asks:
+ * what it costs and whether we have it, which options exist, what the website
+ * says about it, what it is made of, and only then the technical record (the
+ * website listing, codes and sync history), folded away by default.
+ *
+ * Cost columns (rates, amounts, margins) arrive only for roles allowed to see
+ * them, so every table shows a column exactly when the API sent it.
  */
 export function ProductDetailDialog({
   productId,
@@ -179,11 +199,6 @@ function DetailBody({
   refreshing: boolean;
 }) {
   const { role } = useSession();
-  const { data: config } = useConfigBootstrap();
-  const fieldVisible = useFieldVisible(config);
-  const showsMetal = fieldVisible("product", "metal");
-  const showsKarat = fieldVisible("product", "purity");
-  const showsWeight = fieldVisible("product", "grossWeight");
 
   const p = data;
   const name = productDisplayName(p);
@@ -201,46 +216,24 @@ function DetailBody({
     null;
   const [viewing, setViewing] = useState<number | null>(null);
 
-  const pieces = data.pieces ?? [];
-  const conflicts = (data.conflicts ?? []).filter((c) => !c.status || c.status === "open");
-  const listing = data.listing;
   const canEdit = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const seesAmounts = canEdit;
   const styleNo = p.styleNumber || p.sku;
+  // Source-data problems are a data-stewardship concern: shown once here for
+  // managers and on Catalogue → Integration, never on the sales-facing grid or
+  // to salespeople (client, 9 Oct).
+  const checks = canEdit ? groupConflicts(data.conflicts) : [];
 
   return (
     <div className="space-y-4">
       {data.legacy ? (
         <p className="rounded-md bg-muted/50 px-3 py-2 text-xs text-muted-foreground">
-          Showing the basic record. Variants, website listing and full provenance
-          appear once the server is updated.
+          Showing the basic record. Options, the website listing and the full
+          history appear once the server is updated.
         </p>
       ) : null}
 
-      {/* Source-data conflicts are a data-stewardship concern: shown once here
-          for managers and on Catalogue → Integration, never on the sales-facing
-          grid or to salespeople (client, 9 Oct). */}
-      {canEdit && conflicts.length ? (
-        <div
-          role="alert"
-          className="space-y-1 rounded-lg border border-[color-mix(in_srgb,var(--warning)_45%,transparent)] bg-[color-mix(in_srgb,var(--warning)_8%,transparent)] p-3"
-        >
-          <p className="flex items-center gap-2 text-sm font-semibold">
-            <AlertTriangle className="h-4 w-4 text-warning" />
-            {conflicts.length === 1 ? "1 thing to check" : `${conflicts.length} things to check`}
-          </p>
-          <ul className="list-disc space-y-0.5 pl-6 text-xs">
-            {conflicts.map((c) => (
-              <li key={c.id}>
-                {c.summary} <span className="text-muted-foreground">({humanize(c.kind)})</span>
-              </li>
-            ))}
-          </ul>
-          <p className="text-[11px] text-muted-foreground">
-            Values are shown as the source sent them — nothing has been corrected.
-          </p>
-        </div>
-      ) : null}
+      {checks.length ? <ToCheck checks={checks} /> : null}
 
       <ProductGallery
         productId={p.id}
@@ -261,98 +254,24 @@ function DetailBody({
         title={name === styleNo ? styleNo : `${name} · ${styleNo}`}
       />
 
-      <PriceSummary data={data} />
+      <AtAGlance data={data} />
 
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
-        {showsMetal ? (
-          <Spec label="Metal">{METAL_LABELS[p.metal] ?? p.metal}</Spec>
-        ) : p.materialLabel ? (
-          <Spec label="Material">{p.materialLabel}</Spec>
-        ) : null}
-        {showsKarat && p.karat > 0 ? (
-          <Spec label="Purity">
-            <span className="num">{formatPurity(p.karat)}</span>
-          </Spec>
-        ) : null}
-        {showsWeight && p.weightGrams > 0 ? (
-          <Spec label="Gross weight">
-            <span className="num">{formatGrams(p.weightGrams)}</span>
-          </Spec>
-        ) : null}
-        {showsWeight && p.caratWeight > 0 ? (
-          <Spec label="Stones">
-            <span className="num">{formatCarats(p.caratWeight)}</span>
-          </Spec>
-        ) : null}
-        <Spec label="Category">{p.categoryLabel || CATEGORY_LABELS[p.category]}</Spec>
-        {p.unitOfMeasure ? <Spec label="Sold in">{p.unitOfMeasure}</Spec> : null}
-      </dl>
+      <Options data={data} />
 
-      <Identifiers data={data} />
+      <AboutDesign data={data} flagged={checks.some((c) => c.kind === "spec_mismatch" || c.kind === "unit_mismatch")} />
 
-      <Availability data={data} />
+      <Sizes sizes={data.sizes} guide={data.listing?.sizeGuide} />
 
-      {listing ? (
-        <Section title="Website listing" icon={<Gem className="h-4 w-4" />}>
-          <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
-            {listing.marketingName ? <Spec label="Marketing name">{listing.marketingName}</Spec> : null}
-            <Spec label="State">
-              {listing.isDeleted ? (
-                <Badge variant="destructive">Deleted on the website</Badge>
-              ) : listing.isActive === false ? (
-                <Badge variant="warning">Inactive on the website</Badge>
-              ) : (
-                <Badge variant="success">Live on the website</Badge>
-              )}
-            </Spec>
-            <ListSpec label="Categories" values={listing.categories} />
-            <ListSpec label="Sub-categories" values={listing.subCategories} />
-            <ListSpec label="Features" values={listing.features} />
-            <ListSpec label="Tags" values={listing.tags} />
-            <ListSpec label="Countries" values={listing.countries} />
-            {listing.slug ? (
-              <Spec label="Slug">
-                <span className="break-all font-mono text-xs">{listing.slug}</span>
-              </Spec>
-            ) : null}
-          </dl>
-          {listing.description ? (
-            <p className="mt-2 whitespace-pre-line text-sm text-muted-foreground">{listing.description}</p>
-          ) : null}
-        </Section>
-      ) : null}
+      <MadeOf data={data} seesAmounts={seesAmounts} />
 
-      <Sizes sizes={data.sizes} />
+      <StockSection data={data} />
 
-      <Variants data={data} />
-
-      <Bom data={data} seesAmounts={seesAmounts} />
-
-      {data.specifications?.text ? (
-        <Section title="Specifications" icon={<Tag className="h-4 w-4" />}>
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm">{data.specifications.text}</pre>
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            As published on the {data.specifications.source === "gati" ? "Gati record" : "website"}
-            {data.specifications.syncedAt ? `, as of ${when(data.specifications.syncedAt)}` : ""}. Shown
-            verbatim; anything that disagrees with the bill of material is listed above.
-          </p>
-        </Section>
-      ) : null}
-      {listing?.sizeGuide ? (
-        <Section title="Size guide">
-          <pre className="whitespace-pre-wrap break-words font-sans text-sm">{listing.sizeGuide}</pre>
-        </Section>
-      ) : null}
-
-      <Composition product={p} seesAmounts={seesAmounts} />
-
-      <Pieces pieces={pieces} />
-
-      <CustomAttributeList entity="product" values={p.attributes} />
-
-      {p.description ? <p className="text-sm text-muted-foreground">{p.description}</p> : null}
-
-      <Provenance data={data} />
+      {/* The technical record: folded away, opened by whoever needs it. */}
+      <div className="space-y-2">
+        <WebsiteListing data={data} />
+        <Codes data={data} />
+        <HistoryFold data={data} />
+      </div>
 
       {refreshing ? (
         <p className="flex items-center gap-1 text-[11px] text-muted-foreground">
@@ -365,70 +284,192 @@ function DetailBody({
 
 // --------------------------------------------------------------- sections
 
-/** What the kinds of ProductPrice mean, when the server sends no label. */
-const PRICE_KIND_LABELS: Record<string, string> = {
-  indicative: "Indicative online price",
-  min_variant: "Lowest variant price (website)",
-  natural_diamond: "Natural diamond price (website)",
-  variant: "Variant price (website)",
-  variant_with_margin: "Variant price with margin (website)",
-  gati_tag: "Tag price (Gati)",
-  gati_tag_min: "Lowest tag price (Gati)",
-  gati_tag_max: "Highest tag price (Gati)",
-};
+function ToCheck({ checks }: { checks: ReturnType<typeof groupConflicts> }) {
+  return (
+    <div
+      role="alert"
+      data-testid="detail-checks"
+      className="space-y-2 rounded-lg border border-[color-mix(in_srgb,var(--warning)_45%,transparent)] bg-[color-mix(in_srgb,var(--warning)_8%,transparent)] p-3"
+    >
+      <p className="flex items-center gap-2 text-sm font-semibold">
+        <AlertTriangle className="h-4 w-4 text-warning" />
+        {checks.length === 1 ? "1 detail to check" : `${checks.length} details to check`}
+      </p>
+      <ul className="space-y-1.5 text-sm">
+        {checks.map((c) => (
+          <li key={`${c.kind}-${c.summary}`}>
+            <span className="font-medium">{c.label}</span>
+            {c.count > 1 ? <span className="text-muted-foreground"> (seen on {c.count} options)</span> : null}
+            <span className="block text-xs text-muted-foreground">{c.summary}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="text-[11px] text-muted-foreground">
+        These come from the website or Gati exactly as they were sent — nothing here
+        has been changed. Correct them at the source.{" "}
+        <Link href="/catalogue/integration" className="font-medium text-foreground underline underline-offset-2">
+          See all designs that need checking
+        </Link>
+      </p>
+    </div>
+  );
+}
 
-function priceLabel(pr: ProductPriceView): string {
-  return pr.label || PRICE_KIND_LABELS[pr.kind] || humanize(pr.kind);
+function AtAGlance({ data }: { data: ProductFull }) {
+  const { data: config } = useConfigBootstrap();
+  const fieldVisible = useFieldVisible(config);
+  const showsMetal = fieldVisible("product", "metal");
+  const showsKarat = fieldVisible("product", "purity");
+  const showsWeight = fieldVisible("product", "grossWeight");
+  const p = data;
+
+  // A website design comes in several purities; say so rather than naming one.
+  const karats = [...new Set((data.variants ?? []).map((v) => v.karat).filter((k): k is number => !!k))].sort((a, b) => a - b);
+  const metalWord = (data.variants ?? []).find((v) => v.metalType)?.metalType ?? "Gold";
+  const metalLabel = METAL_LABELS[p.metal] ?? p.metal;
+  const metal =
+    karats.length > 1 ? `${karats.map((k) => `${k}K`).join(", ")} ${metalWord.toLowerCase()}` : metalLabel;
+  const purityInMetal = karats.length > 1 || (p.karat > 0 && String(metalLabel).includes(`${p.karat}K`));
+  const stock = stockCount(data);
+
+  return (
+    <section className="space-y-3 rounded-lg border p-3" data-testid="detail-glance">
+      <PriceBlock data={data} />
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
+        <Spec label="Design code">
+          <span className="break-all font-mono text-xs">{p.styleNumber || p.sku}</span>
+        </Spec>
+        {showsMetal ? (
+          <Spec label={karats.length > 1 ? "Metal options" : "Metal"}>{metal}</Spec>
+        ) : p.materialLabel ? (
+          <Spec label="Material">{p.materialLabel}</Spec>
+        ) : null}
+        {showsKarat && p.karat > 0 && !purityInMetal ? (
+          <Spec label="Purity">
+            <span className="num">{formatPurity(p.karat)}</span>
+          </Spec>
+        ) : null}
+        {showsWeight && p.caratWeight > 0 ? (
+          <Spec label="Diamonds / stones">
+            <span className="num">{formatCarats(p.caratWeight)}</span>
+          </Spec>
+        ) : null}
+        {showsWeight && p.weightGrams > 0 ? (
+          <Spec label="Gross weight">
+            <span className="num">{formatGrams(p.weightGrams)}</span>
+          </Spec>
+        ) : null}
+        <Spec label="Category">{p.categoryLabel || CATEGORY_LABELS[p.category]}</Spec>
+        {p.unitOfMeasure ? <Spec label="Unit">{p.unitOfMeasure}</Spec> : null}
+        {stock != null ? (
+          <Spec label="Stock">
+            {stock > 0 ? (
+              <span className="text-emerald-700 dark:text-emerald-400">{stock} in stock</span>
+            ) : (
+              "Made to order"
+            )}
+          </Spec>
+        ) : null}
+        {p.source ? <Spec label="Comes from">{SOURCE_LABELS[p.source] ?? p.source}</Spec> : null}
+      </dl>
+      <CustomAttributeList entity="product" values={data.attributes} />
+    </section>
+  );
+}
+
+/** Pieces the viewer can see, from the per-store counts or the piece list; null when unknown. */
+function stockCount(data: ProductFull): number | null {
+  if (data.availabilityByStore) return data.availabilityByStore.reduce((n, r) => n + r.count, 0);
+  if (data.stock) return data.stock.hereCount + data.stock.elsewhere.reduce((n, r) => n + r.count, 0);
+  if (data.pieces) return data.pieces.length;
+  return null;
+}
+
+function PriceBlock({ data }: { data: ProductFull }) {
+  const p = data;
+  const options = priceOptions(data);
+  const pieceTags = (data.pieces ?? []).map((x) => x.tagPrice || x.mrp || 0).filter((v) => v > 0);
+  const tag =
+    (p.tagPrice ? range(p.tagPrice.min, p.tagPrice.max) : null) ??
+    (pieceTags.length ? range(Math.min(...pieceTags), Math.max(...pieceTags)) : null);
+  const fromWebsite = (data.prices ?? []).some((pr) => pr.source === "website");
+
+  if (!options.length) {
+    const online = p.onlinePrice ? range(p.onlinePrice.min, p.onlinePrice.max) : null;
+    return (
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
+        {online ? <Figure label="Online price" value={online} /> : null}
+        {tag ? <Figure label="Tag price" value={tag} /> : null}
+        {!online && !tag && p.price > 0 ? <Figure label="Indicative price" value={formatINR(p.price)} /> : null}
+        {!online && !tag && !(p.price > 0) ? <p className="text-sm text-muted-foreground">No price yet.</p> : null}
+      </div>
+    );
+  }
+
+  const amounts = options.map((o) => o.amount);
+  const low = Math.min(...amounts);
+  const high = Math.max(...amounts);
+  const shown = options.length > 8 ? options.slice(0, 6) : options;
+  const rest = options.length > 8 ? options.slice(6) : [];
+
+  return (
+    <div className="space-y-2" data-testid="detail-price">
+      <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
+        <div>
+          <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Price</p>
+          <p className="text-lg font-semibold leading-tight">
+            {low === high ? null : "From "}
+            <span className="num">{formatINR(low)}</span>
+          </p>
+          {low !== high ? (
+            <p className="text-xs text-muted-foreground">
+              up to <span className="num">{formatINR(high)}</span>, depending on the option
+            </p>
+          ) : null}
+        </div>
+        {tag ? <Figure label="Tag price (pieces in stock)" value={tag} /> : null}
+      </div>
+      {options.length > 1 ? (
+        <div>
+          <ul className="divide-y rounded-md border text-sm">
+            {shown.map((o) => (
+              <PriceRow key={o.key} label={o.label} amount={o.amount} />
+            ))}
+          </ul>
+          {rest.length ? (
+            <details className="mt-1 text-sm">
+              <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground">
+                {rest.length} more prices
+              </summary>
+              <ul className="mt-1 divide-y rounded-md border">
+                {rest.map((o) => (
+                  <PriceRow key={o.key} label={o.label} amount={o.amount} />
+                ))}
+              </ul>
+            </details>
+          ) : null}
+          {fromWebsite ? (
+            <p className="mt-1 text-[11px] text-muted-foreground">Prices as listed on the website.</p>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function PriceRow({ label, amount }: { label: string; amount: number }) {
+  return (
+    <li className="flex items-baseline justify-between gap-3 px-3 py-1.5">
+      <span>{label}</span>
+      <span className="num shrink-0 font-medium">{formatINR(amount)}</span>
+    </li>
+  );
 }
 
 function range(min?: number | null, max?: number | null): string | null {
   if (min == null && max == null) return null;
   if (min == null || max == null || min === max) return formatINR((min ?? max)!);
   return `${formatINR(min)} – ${formatINR(max)}`;
-}
-
-function PriceSummary({ data }: { data: ProductFull }) {
-  const p = data;
-  const pieces = data.pieces ?? [];
-  const pieceTags = pieces.map((x) => x.tagPrice || x.mrp || 0).filter((v) => v > 0);
-  const online = p.onlinePrice ? range(p.onlinePrice.min, p.onlinePrice.max) : null;
-  const tag =
-    (p.tagPrice ? range(p.tagPrice.min, p.tagPrice.max) : null) ??
-    (pieceTags.length ? range(Math.min(...pieceTags), Math.max(...pieceTags)) : null);
-  const variants = new Map((data.variants ?? []).map((v) => [v.id, v]));
-  const prices = (data.prices ?? []).filter((pr) => pr.amount != null);
-
-  return (
-    <div className="space-y-2">
-      <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
-        {online ? <Figure label="Online price" value={online} /> : null}
-        {tag ? <Figure label="Tag price" value={tag} /> : null}
-        {!online && !tag && p.price > 0 ? <Figure label="Indicative price" value={formatINR(p.price)} /> : null}
-      </div>
-      {prices.length ? (
-        <details className="rounded-lg border px-3 py-2 text-sm">
-          <summary className="cursor-pointer select-none text-xs font-medium text-muted-foreground">
-            All {prices.length} prices, labelled
-          </summary>
-          <ul className="mt-2 divide-y">
-            {prices.map((pr, i) => {
-              const v = pr.variantId ? variants.get(pr.variantId) : undefined;
-              const which = pr.variantLabel || (v ? variantName(v) : null);
-              return (
-                <li key={pr.id ?? `${pr.kind}-${pr.variantId}-${i}`} className="flex items-baseline justify-between gap-3 py-1.5">
-                  <span>
-                    {priceLabel(pr)}
-                    {which ? <span className="text-muted-foreground"> · {which}</span> : null}
-                  </span>
-                  <span className="num shrink-0 font-medium">{formatINR(pr.amount)}</span>
-                </li>
-              );
-            })}
-          </ul>
-        </details>
-      ) : null}
-    </div>
-  );
 }
 
 function Figure({ label, value }: { label: string; value: string }) {
@@ -440,112 +481,53 @@ function Figure({ label, value }: { label: string; value: string }) {
   );
 }
 
-const ID_LABELS: Record<string, string> = {
-  styleNumber: "Style no",
-  sku: "SKU",
-  gatiId: "Gati ID",
-  websiteCode: "Website code",
-  externalId: "Website ID",
-  websiteProductCode: "Website product code",
-  legacyId: "Legacy ID",
-  hsn: "HSN",
-};
-
-function Identifiers({ data: p }: { data: ProductFull }) {
-  const ids: Record<string, unknown> = {
-    styleNumber: p.styleNumber || p.sku,
-    sku: p.sku,
-    gatiId: p.gatiId,
-    websiteCode: p.websiteCode,
-    hsn: p.hsn,
-    ...(p.identifiers ?? {}),
-  };
-  const rows = Object.entries(ids).filter(([, v]) => v != null && v !== "");
-  return (
-    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 rounded-lg bg-muted/40 p-3 text-sm sm:grid-cols-3">
-      {rows.map(([k, v]) => (
-        <Spec key={k} label={ID_LABELS[k] ?? humanize(k)}>
-          <span className="break-all font-mono text-xs">{String(v)}</span>
-        </Spec>
-      ))}
-      {p.source ? <Spec label="Source">{SOURCE_LABELS[p.source] ?? p.source}</Spec> : null}
-    </dl>
-  );
-}
-
-function Availability({ data }: { data: ProductFull }) {
-  const stock = data.stock;
-  const rows =
-    data.availabilityByStore ??
-    (stock
-      ? [
-          ...(stock.hereCount ? [{ storeId: "here", storeName: "This store", count: stock.hereCount }] : []),
-          ...stock.elsewhere,
-        ]
-      : null);
-  if (!rows) return null;
-  return (
-    <Section title="Available at" icon={<Store className="h-4 w-4" />}>
-      {rows.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          Not in stock at any store you can see — made to order.
-        </p>
-      ) : (
-        <ul className="flex flex-wrap gap-2 text-sm">
-          {rows.map((r) => (
-            <li
-              key={r.storeId}
-              className={
-                "here" in r && r.here
-                  ? "rounded-md bg-emerald-500/10 px-2 py-1 font-medium text-emerald-700 dark:text-emerald-400"
-                  : "rounded-md bg-muted px-2 py-1"
-              }
-            >
-              {"here" in r && r.here ? "This store" : r.storeName} · <span className="num">{r.count}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Section>
-  );
-}
-
-function Sizes({ sizes }: { sizes?: ProductFull["sizes"] }) {
-  const values = (sizes ?? []).map((s) => (typeof s === "string" ? s : s.value)).filter(Boolean);
-  if (!values.length) return null;
-  return (
-    <Section title={`Sizes (${values.length})`}>
-      <ul className="flex flex-wrap gap-1.5">
-        {values.map((v) => (
-          <li key={v} className="rounded-full border px-2.5 py-0.5 text-xs">
-            {v}
-          </li>
-        ))}
-      </ul>
-    </Section>
-  );
-}
-
-function variantName(v: { label?: string | null; metalType?: string | null; karat?: number | null; colour?: string | null; diamondType?: string | null; sku?: string | null; sourceKey?: string }): string {
-  if (v.label) return v.label;
-  const parts = [v.karat ? `${v.karat}K` : null, v.colour, v.metalType, v.diamondType].filter(Boolean);
-  return parts.length ? parts.join(" ") : (v.sku ?? v.sourceKey ?? "Variant");
-}
-
-function Variants({ data }: { data: ProductFull }) {
+/** The choices a customer makes (purity, metal, diamond), with weights and price. */
+function Options({ data }: { data: ProductFull }) {
   const variants = data.variants ?? [];
   if (!variants.length) return null;
+  const any = (pick: (v: (typeof variants)[number]) => unknown) => variants.some((v) => pick(v) != null && pick(v) !== "");
+  // Each option's price is listed at the top, so this table carries the weights.
+  const head = [
+    { label: "Option", wrap: true },
+    ...(any((v) => v.goldWeight) ? [{ label: "Metal", num: true }] : []),
+    ...(any((v) => v.diamondWeight) ? [{ label: "Diamond", num: true }] : []),
+    ...(any((v) => v.stoneWeight) ? [{ label: "Stones", num: true }] : []),
+  ];
+  return (
+    <Section title={variants.length === 1 ? "Option" : `Options (${variants.length})`} icon={<Layers className="h-4 w-4" />}>
+      <Table
+        head={head}
+        rows={variants.map((v) => ({
+          key: v.id,
+          cells: [
+            variantName(v),
+            ...(any((x) => x.goldWeight) ? [formatGrams(v.goldWeight)] : []),
+            ...(any((x) => x.diamondWeight) ? [formatCarats(v.diamondWeight)] : []),
+            ...(any((x) => x.stoneWeight) ? [formatCarats(v.stoneWeight)] : []),
+          ],
+        }))}
+      />
+      <Fold title="All option details" hint="codes, totals, margins" className="mt-2">
+        <OptionTable data={data} />
+      </Fold>
+    </Section>
+  );
+}
+
+/** Every column the source sent for the options — the full record, folded away. */
+function OptionTable({ data }: { data: ProductFull }) {
+  const variants = data.variants ?? [];
   const has = (k: keyof (typeof variants)[number]) => variants.some((v) => v[k] != null && v[k] !== "");
   const cols: { key: keyof (typeof variants)[number]; label: string; render: (v: (typeof variants)[number]) => ReactNode; num?: boolean }[] = [
-    { key: "sku", label: "SKU", render: (v) => <span className="font-mono text-xs">{v.sku}</span> },
+    { key: "sku", label: "Code", render: (v) => <span className="font-mono text-xs">{v.sku}</span> },
     { key: "karat", label: "Purity", render: (v) => (v.karat ? `${v.karat}K` : "—"), num: true },
     { key: "metalType", label: "Metal", render: (v) => v.metalType },
     { key: "colour", label: "Colour", render: (v) => v.colour },
     { key: "diamondType", label: "Diamond", render: (v) => v.diamondType },
-    { key: "goldWeight", label: "Gold wt", render: (v) => formatGrams(v.goldWeight), num: true },
+    { key: "goldWeight", label: "Metal wt", render: (v) => formatGrams(v.goldWeight), num: true },
     { key: "diamondWeight", label: "Diamond wt", render: (v) => formatCarats(v.diamondWeight), num: true },
     { key: "stoneWeight", label: "Stone wt", render: (v) => formatCarats(v.stoneWeight), num: true },
-    { key: "totalWeight", label: "Total wt", render: (v) => formatGrams(v.totalWeight), num: true },
+    { key: "totalWeight", label: "Total wt (as sent)", render: (v) => formatNumber(v.totalWeight ?? 0, 3), num: true },
     { key: "price", label: "Price", render: (v) => (v.price != null ? formatINR(v.price) : "—"), num: true },
     { key: "priceWithMargin", label: "With margin", render: (v) => (v.priceWithMargin != null ? formatINR(v.priceWithMargin) : "—"), num: true },
     { key: "marginPercentage", label: "Margin", render: (v) => (v.marginPercentage != null ? `${v.marginPercentage}%` : "—"), num: true },
@@ -554,36 +536,139 @@ function Variants({ data }: { data: ProductFull }) {
   ];
   const shown = cols.filter((c) => has(c.key));
   return (
-    <Section title={`Variants (${variants.length})`}>
-      <Table
-        head={shown.map((c) => ({ label: c.label, num: c.num }))}
-        rows={variants.map((v) => ({ key: v.id, cells: shown.map((c) => c.render(v) ?? "—") }))}
-      />
+    <Table
+      head={shown.map((c) => ({ label: c.label, num: c.num }))}
+      rows={variants.map((v) => ({ key: v.id, cells: shown.map((c) => c.render(v) ?? "—") }))}
+    />
+  );
+}
+
+/** What the website (or Gati) says about the design, laid out as a list. */
+function AboutDesign({ data, flagged }: { data: ProductFull; flagged: boolean }) {
+  const spec = data.specifications;
+  const lines = spec?.text ? specLines(spec.text) : [];
+  const listingText = data.listing?.description;
+  if (!lines.length && !listingText && !data.description) return null;
+  const items = lines.filter((l) => l.kind === "item");
+  const texts = lines.filter((l) => l.kind === "text");
+  return (
+    <Section title="About this design" icon={<FileText className="h-4 w-4" />}>
+      <div className="space-y-2 text-sm">
+        {texts.map((t, i) => (t.kind === "text" ? <p key={`t${i}`} className="text-muted-foreground">{t.text}</p> : null))}
+        {items.length ? (
+          <dl className="divide-y rounded-md border">
+            {items.map((l, i) =>
+              l.kind === "item" ? (
+                <div key={`i${i}`} className="flex flex-wrap justify-between gap-x-4 gap-y-0.5 px-3 py-1.5">
+                  {l.key ? <dt className="text-muted-foreground">{l.key}</dt> : null}
+                  <dd className={l.key ? "font-medium sm:text-right" : "font-medium"}>{l.value}</dd>
+                </div>
+              ) : null,
+            )}
+          </dl>
+        ) : null}
+        {listingText ? <p className="whitespace-pre-line text-muted-foreground">{listingText}</p> : null}
+        {data.description ? <p className="text-muted-foreground">{data.description}</p> : null}
+      </div>
+      {spec?.text ? (
+        <p className="mt-2 text-[11px] text-muted-foreground">
+          Word for word from the {spec.source === "gati" ? "Gati record" : "website"}
+          {spec.syncedAt ? ` (as of ${when(spec.syncedAt)})` : ""}.
+          {flagged ? " Where it disagrees with the materials list, see “details to check” above." : ""}
+        </p>
+      ) : null}
     </Section>
   );
 }
 
-/** Keys never worth a column: ids of the source's own rows. */
-const BOM_SKIP = /^_?id$|^__v$/i;
-const MONEY_KEY = /amount|rate|total|price|value|charge|cost/i;
-
-function Bom({ data, seesAmounts }: { data: ProductFull; seesAmounts: boolean }) {
-  const variants = (data.variants ?? []).filter((v) => Array.isArray(v.bom) && v.bom.length);
-  if (!variants.length) return null;
+function Sizes({ sizes, guide }: { sizes?: ProductFull["sizes"]; guide?: string | null }) {
+  const values = sortSizes((sizes ?? []).map((s) => (typeof s === "string" ? s : s.value)).filter(Boolean));
+  if (!values.length && !guide) return null;
   return (
-    <Section title="Bill of material">
-      <div className="space-y-2">
-        {variants.map((v, i) => (
-          <details key={v.id} open={i === 0} className="rounded-md border px-3 py-2">
-            <summary className="cursor-pointer select-none text-sm font-medium">
-              {variantName(v)} <span className="text-xs text-muted-foreground">· {v.bom!.length} lines</span>
-            </summary>
-            <div className="mt-2">
-              <BomTable lines={v.bom!} />
-            </div>
-          </details>
-        ))}
-      </div>
+    <Section
+      title={values.length ? `Sizes available (${values.length})` : "Sizes"}
+      icon={<Ruler className="h-4 w-4" />}
+      note={values.length > 1 ? `${values[0]} to ${values[values.length - 1]}` : undefined}
+    >
+      {values.length ? (
+        <ul className="flex flex-wrap gap-1.5">
+          {values.map((v) => (
+            <li key={v} className="rounded-full border px-2.5 py-0.5 text-xs">
+              {v}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {guide ? (
+        <Fold title="Size guide" className="mt-2">
+          <pre className="whitespace-pre-wrap break-words font-sans text-sm">{guide}</pre>
+        </Fold>
+      ) : null}
+    </Section>
+  );
+}
+
+/** What the design is made of: the friendly breakdown, then the raw lists per option. */
+function MadeOf({ data, seesAmounts }: { data: ProductFull; seesAmounts: boolean }) {
+  const parts = data.composition?.lines ?? [];
+  const bomVariants = (data.variants ?? []).filter((v) => Array.isArray(v.bom) && v.bom.length);
+  if (!parts.length && !bomVariants.length) return null;
+  const hasPieces = parts.some((l) => l.pieces);
+  const hasRates = parts.some((l) => l.rate);
+  const hasAmounts = parts.some((l) => l.amount);
+  const total = parts.reduce((n, l) => n + (l.amount ?? 0), 0);
+  const source = data.composition?.source === "gati" ? "Gati" : "the website";
+  return (
+    <Section title="What it's made of" icon={<Gem className="h-4 w-4" />} note={parts.length ? `from ${source}` : undefined}>
+      {parts.length ? (
+        <Table
+          head={[
+            { label: "Material", wrap: true },
+            { label: "Weight", num: true },
+            ...(hasPieces ? [{ label: "Pieces", num: true }] : []),
+            ...(hasRates ? [{ label: "Rate", num: true }] : []),
+            ...(hasAmounts ? [{ label: "Amount", num: true }] : []),
+          ]}
+          rows={[
+            ...parts.map((l, i) => ({
+              key: `${l.item}-${i}`,
+              cells: [
+                l.item,
+                l.weight ? (l.unit === "ct" ? formatCarats(l.weight) : l.unit === "g" ? formatGrams(l.weight) : l.weight) : "—",
+                ...(hasPieces ? [l.pieces ?? "—"] : []),
+                ...(hasRates ? [l.rate ? formatINR(l.rate) : "—"] : []),
+                ...(hasAmounts ? [l.amount ? formatINR(l.amount) : "—"] : []),
+              ],
+            })),
+            ...(hasAmounts
+              ? [{ key: "total", cells: [<span key="t" className="font-semibold">Total</span>, "", ...(hasPieces ? [""] : []), ...(hasRates ? [""] : []), <span key="a" className="font-semibold">{formatINR(total)}</span>] }]
+              : []),
+          ]}
+        />
+      ) : null}
+      {bomVariants.length ? (
+        <Fold
+          title={bomVariants.length === 1 ? "Materials list" : `Materials list for each option (${bomVariants.length})`}
+          hint="as the website sent it"
+          className={parts.length ? "mt-2" : undefined}
+        >
+          <div className="space-y-2">
+            {bomVariants.map((v, i) => (
+              <details key={v.id} open={bomVariants.length === 1 || i === 0} className="rounded-md border px-3 py-2">
+                <summary className="cursor-pointer select-none text-sm font-medium">
+                  {variantName(v)} <span className="text-xs text-muted-foreground">· {v.bom!.length} lines</span>
+                </summary>
+                <div className="mt-2">
+                  <BomTable lines={v.bom!} />
+                </div>
+              </details>
+            ))}
+            <p className="text-[11px] text-muted-foreground">
+              Weights and units are shown exactly as the website sent them.
+            </p>
+          </div>
+        </Fold>
+      ) : null}
       {!seesAmounts ? (
         <p className="mt-2 text-[11px] text-muted-foreground">
           Rates and amounts are shown to store managers and head office.
@@ -593,16 +678,17 @@ function Bom({ data, seesAmounts }: { data: ProductFull; seesAmounts: boolean })
   );
 }
 
+const MONEY_KEY = /amount|rate|total|price|value|charge|cost/i;
+
 /** Columns are the keys the response actually carries — cost keys are simply absent below manager. */
 function BomTable({ lines }: { lines: BomLine[] }) {
-  const keys: string[] = [];
-  for (const l of lines) for (const k of Object.keys(l)) if (!BOM_SKIP.test(k) && !keys.includes(k)) keys.push(k);
+  const cols = bomColumns(lines);
   return (
     <Table
-      head={keys.map((k) => ({ label: humanize(k), num: lines.some((l) => typeof l[k] === "number") }))}
+      head={cols.map((c) => ({ label: c.label, num: lines.some((l) => typeof l[c.key] === "number") }))}
       rows={lines.map((l, i) => ({
         key: String(i),
-        cells: keys.map((k) => cell(k, l[k])),
+        cells: cols.map((c) => cell(c.key, l[c.key])),
       }))}
     />
   );
@@ -612,48 +698,55 @@ function cell(key: string, v: unknown): ReactNode {
   if (v == null || v === "") return "—";
   if (typeof v === "number") return MONEY_KEY.test(key) ? formatINR(v, { fractionDigits: 2 }) : formatNumber(v, Number.isInteger(v) ? 0 : 3);
   if (typeof v === "boolean") return v ? "Yes" : "No";
-  if (typeof v === "object") return <span className="font-mono text-[11px]">{JSON.stringify(v)}</span>;
   return String(v);
 }
 
-function Composition({ product, seesAmounts }: { product: ProductFull; seesAmounts: boolean }) {
-  const parts = product.composition?.lines ?? [];
-  if (!parts.length) return null;
-  const hasPieces = parts.some((l) => l.pieces);
-  const hasRates = parts.some((l) => l.rate);
-  const hasAmounts = parts.some((l) => l.amount);
-  const total = parts.reduce((n, l) => n + (l.amount ?? 0), 0);
+/** Where the design can be had, and every piece with its tag. One place for both. */
+function StockSection({ data }: { data: ProductFull }) {
+  const stock = data.stock;
+  const pieces = data.pieces ?? [];
+  const rows =
+    data.availabilityByStore ??
+    (stock
+      ? [
+          ...(stock.hereCount ? [{ storeId: "here", storeName: "This store", count: stock.hereCount, here: true }] : []),
+          ...stock.elsewhere,
+        ]
+      : []);
+  const total = stockCount(data);
+  // Nothing known (an older server): say nothing rather than "made to order".
+  if (total == null) return null;
   return (
-    <Section title="Items used" note={`from ${product.composition?.source === "gati" ? "Gati" : "the website"}`}>
-      <Table
-        head={[
-          { label: "Item" },
-          { label: "Weight", num: true },
-          ...(hasPieces ? [{ label: "Pieces", num: true }] : []),
-          ...(hasRates ? [{ label: "Rate", num: true }] : []),
-          ...(hasAmounts ? [{ label: "Amount", num: true }] : []),
-        ]}
-        rows={[
-          ...parts.map((l, i) => ({
-            key: `${l.item}-${i}`,
-            cells: [
-              l.item,
-              l.weight ? (l.unit === "ct" ? formatCarats(l.weight) : l.unit === "g" ? formatGrams(l.weight) : l.weight) : "—",
-              ...(hasPieces ? [l.pieces ?? "—"] : []),
-              ...(hasRates ? [l.rate ? formatINR(l.rate) : "—"] : []),
-              ...(hasAmounts ? [l.amount ? formatINR(l.amount) : "—"] : []),
-            ],
-          })),
-          ...(hasAmounts
-            ? [{ key: "total", cells: ["Total", "", ...(hasPieces ? [""] : []), ...(hasRates ? [""] : []), formatINR(total)] }]
-            : []),
-        ]}
-      />
-      {!seesAmounts ? (
-        <p className="mt-2 text-[11px] text-muted-foreground">
-          Rates and amounts are shown to store managers and head office.
+    <Section
+      title="Stock"
+      icon={<Store className="h-4 w-4" />}
+      note={<Badge variant="secondary">{total === 1 ? "1 piece" : `${total} pieces`}</Badge>}
+    >
+      {total === 0 && pieces.length === 0 ? (
+        <p className="text-sm text-muted-foreground" data-testid="detail-made-to-order">
+          None in stock in the stores you can see — this design is made to order.
         </p>
-      ) : null}
+      ) : (
+        <div className="space-y-3">
+          {rows.length ? (
+            <ul className="flex flex-wrap gap-2 text-sm">
+              {rows.map((r) => (
+                <li
+                  key={r.storeId}
+                  className={
+                    "here" in r && r.here
+                      ? "rounded-md bg-emerald-500/10 px-2 py-1 font-medium text-emerald-700 dark:text-emerald-400"
+                      : "rounded-md bg-muted px-2 py-1"
+                  }
+                >
+                  {"here" in r && r.here ? "This store" : r.storeName} · <span className="num">{r.count}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {pieces.length ? <PieceTable pieces={pieces} /> : null}
+        </div>
+      )}
     </Section>
   );
 }
@@ -685,69 +778,120 @@ const PIECE_COLS: { key: PieceKey; label: string; kind?: "g" | "ct" | "inr" | "i
   { key: "cost", label: "Cost", kind: "inr", help: "What the piece cost." },
 ];
 
-function Pieces({ pieces }: { pieces: StockPieceFull[] }) {
+function PieceTable({ pieces }: { pieces: StockPieceFull[] }) {
   // A column appears when any piece has a value — cost columns are absent from
   // the response below store manager, so they never appear for a salesperson.
   const shown = PIECE_COLS.filter((c) => pieces.some((p) => p[c.key] != null && p[c.key] !== "" && p[c.key] !== 0));
   return (
-    <Section title="Pieces on hand" note={<Badge variant="secondary">{pieces.length}</Badge>}>
-      {pieces.length === 0 ? (
-        <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
-          No pieces in stock in your scope — this design is made to order.
-        </p>
-      ) : (
-        <Table
-          head={shown.map((c) => ({ label: c.label, help: c.help, num: c.kind === "g" || c.kind === "ct" || c.kind === "inr" || c.kind === "int" }))}
-          rows={pieces.map((p) => ({
-            key: p.id,
-            cells: shown.map((c) => {
-              const v = p[c.key];
-              if (v == null || v === "") return "—";
-              switch (c.kind) {
-                case "g":
-                  return formatGrams(Number(v));
-                case "ct":
-                  return formatCarats(Number(v));
-                case "inr":
-                  return formatINR(Number(v));
-                case "mono":
-                  return <span className="font-mono text-xs">{String(v)}</span>;
-                default:
-                  return String(v);
-              }
-            }),
-          }))}
-        />
-      )}
-    </Section>
+    <div>
+      <p className="mb-1 text-xs text-muted-foreground">Tap a column name to see what it means.</p>
+      <Table
+        head={shown.map((c) => ({ label: c.label, help: c.help, num: c.kind === "g" || c.kind === "ct" || c.kind === "inr" || c.kind === "int" }))}
+        rows={pieces.map((p) => ({
+          key: p.id,
+          cells: shown.map((c) => {
+            const v = p[c.key];
+            if (v == null || v === "") return "—";
+            switch (c.kind) {
+              case "g":
+                return formatGrams(Number(v));
+              case "ct":
+                return formatCarats(Number(v));
+              case "inr":
+                return formatINR(Number(v));
+              case "mono":
+                return <span className="font-mono text-xs">{String(v)}</span>;
+              default:
+                return String(v);
+            }
+          }),
+        }))}
+      />
+    </div>
   );
 }
 
-const PROVENANCE_LABELS: Record<string, string> = {
-  gatiSyncedAt: "Gati last synced",
-  gatiUpdatedAt: "Changed in Gati",
-  websiteSyncedAt: "Website last synced",
-  websiteSourceCreatedAt: "Created on the website",
-  websiteSourceUpdatedAt: "Changed on the website",
-  websiteLastSeenAt: "Last seen on the website",
-  createdAt: "Created here",
-  updatedAt: "Last updated here",
+function WebsiteListing({ data }: { data: ProductFull }) {
+  const listing = data.listing;
+  if (!listing) return null;
+  const state = listing.isDeleted ? (
+    <Badge variant="destructive">Deleted on the website</Badge>
+  ) : listing.isActive === false ? (
+    <Badge variant="warning">Hidden on the website</Badge>
+  ) : (
+    <Badge variant="success">Live on the website</Badge>
+  );
+  return (
+    <Fold title="On the website" icon={<Globe className="h-4 w-4" />} hint={state} testId="detail-listing">
+      <dl className="grid grid-cols-1 gap-x-4 gap-y-2 text-sm sm:grid-cols-2">
+        {listing.marketingName ? <Spec label="Name on the website">{listing.marketingName}</Spec> : null}
+        <ListSpec label="Website categories" values={listing.categories} />
+        <ListSpec label="Website sub-categories" values={listing.subCategories} />
+        <ListSpec label="Highlights" values={listing.features} />
+        <ListSpec label="Tags" values={listing.tags} />
+        <ListSpec label="Sold online in" values={listing.countries?.map(countryName)} />
+        {listing.slug ? (
+          <Spec label="Page address">
+            <span className="break-all font-mono text-xs">{listing.slug}</span>
+          </Spec>
+        ) : null}
+      </dl>
+    </Fold>
+  );
+}
+
+const ID_LABELS: Record<string, string> = {
+  styleNumber: "Style no",
+  sku: "SKU",
+  gatiId: "Gati ID",
+  websiteCode: "Website code",
+  externalId: "Website ID",
+  websiteProductCode: "Website product code",
+  legacyId: "Legacy ID",
+  hsn: "HSN",
 };
 
-function Provenance({ data }: { data: ProductFull }) {
-  // Timestamps only; the ids that ride along (import batch…) mean nothing here.
-  const rows = Object.entries(data.provenance ?? {}).filter(([k, v]) => k.endsWith("At") && typeof v === "string" && v);
+function Codes({ data: p }: { data: ProductFull }) {
+  const rows = groupCodes(
+    {
+      styleNumber: p.styleNumber || p.sku,
+      sku: p.sku,
+      gatiId: p.gatiId,
+      websiteCode: p.websiteCode,
+      hsn: p.hsn,
+      ...(p.identifiers ?? {}),
+    },
+    (k) => ID_LABELS[k] ?? humanize(k),
+  );
   if (!rows.length) return null;
   return (
-    <Section title="Where this came from" icon={<History className="h-4 w-4" />}>
-      <dl className="grid grid-cols-1 gap-x-4 gap-y-1.5 text-sm sm:grid-cols-2">
-        {rows.map(([k, v]) => (
-          <Spec key={k} label={PROVENANCE_LABELS[k] ?? humanize(k)}>
-            {when(String(v))}
-          </Spec>
+    <Fold title="Codes" icon={<Hash className="h-4 w-4" />} hint={`${rows.length} ${rows.length === 1 ? "code" : "codes"}`}>
+      <dl className="space-y-1.5 text-sm">
+        {rows.map((r) => (
+          <div key={r.value} className="flex flex-wrap items-baseline justify-between gap-x-4">
+            <dt className="text-xs text-muted-foreground">{r.labels.join(" · ")}</dt>
+            <dd className="break-all font-mono text-xs font-medium">{r.value}</dd>
+          </div>
         ))}
       </dl>
-    </Section>
+    </Fold>
+  );
+}
+
+function HistoryFold({ data }: { data: ProductFull }) {
+  const rows = historyRows(data.provenance);
+  if (!rows.length) return null;
+  return (
+    <Fold title="History" icon={<History className="h-4 w-4" />} hint={`last change ${when(rows[rows.length - 1].at)}`}>
+      <ol className="space-y-1.5 text-sm">
+        {rows.map((r) => (
+          <li key={r.key} className="flex flex-wrap justify-between gap-x-4">
+            <span className="text-muted-foreground">{r.label}</span>
+            <span className="num font-medium">{when(r.at)}</span>
+          </li>
+        ))}
+      </ol>
+    </Fold>
   );
 }
 
@@ -776,12 +920,41 @@ function Section({
   );
 }
 
+/** A section that starts closed: the record is there, out of the way. */
+function Fold({
+  title,
+  icon,
+  hint,
+  className,
+  testId,
+  children,
+}: {
+  title: string;
+  icon?: ReactNode;
+  hint?: ReactNode;
+  className?: string;
+  testId?: string;
+  children: ReactNode;
+}) {
+  return (
+    <details className={`group rounded-lg border ${className ?? ""}`} data-testid={testId}>
+      <summary className="flex cursor-pointer select-none list-none items-center gap-2 px-3 py-2.5 text-sm font-semibold [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+        {icon ? <span className="text-muted-foreground">{icon}</span> : null}
+        <span>{title}</span>
+        {hint ? <span className="ml-auto text-xs font-normal text-muted-foreground">{hint}</span> : null}
+      </summary>
+      <div className="border-t px-3 py-3">{children}</div>
+    </details>
+  );
+}
+
 function Table({
   head,
   rows,
 }: {
   /** `help` makes the column tappable: its name and meaning, wherever the header scrolled to. */
-  head: { label: string; num?: boolean; help?: string }[];
+  head: { label: string; num?: boolean; help?: string; wrap?: boolean }[];
   rows: { key: string; cells: ReactNode[] }[];
 }) {
   const explain = (i: number) => {
@@ -822,7 +995,7 @@ function Table({
                   key={i}
                   onClick={head[i]?.help ? () => explain(i) : undefined}
                   title={head[i]?.help ? `${head[i].label}: ${head[i].help}` : undefined}
-                  className={`whitespace-nowrap py-1.5 pr-3 ${head[i]?.num ? "num text-right" : ""} ${head[i]?.help ? "cursor-help" : ""}`}
+                  className={`${head[i]?.wrap ? "min-w-32" : "whitespace-nowrap"} py-1.5 pr-3 ${head[i]?.num ? "num text-right" : ""} ${head[i]?.help ? "cursor-help" : ""}`}
                 >
                   {c}
                 </td>
@@ -847,12 +1020,6 @@ function Spec({ label, children }: { label: string; children: ReactNode }) {
 function ListSpec({ label, values }: { label: string; values?: string[] }) {
   if (!values?.length) return null;
   return <Spec label={label}>{values.join(", ")}</Spec>;
-}
-
-/** camelCase / snake_case → "Sentence case". */
-function humanize(key: string): string {
-  const s = key.replace(/_/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().trim();
-  return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
 function when(iso: string): string {
