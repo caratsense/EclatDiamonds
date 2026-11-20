@@ -12,8 +12,17 @@ import { ConfigService } from '@nestjs/config';
  * `fetchImpl` is a seam for tests: the suite replaces it, so no test can reach
  * the live website.
  */
-export const DEFAULT_ALLOWED_HOSTS = 'apis.eclatdiamonds.in';
+export const DEFAULT_ALLOWED_HOSTS = 'apis.nibhana.in';
 export const WEBSITE_PAGE_SIZE = 100;
+
+/**
+ * The feed moved when Eclat became Nibhana: apis.eclatdiamonds.in stopped
+ * resolving (NXDOMAIN, seen 2026-11-20) and apis.nibhana.in serves the same
+ * products. An address saved before the move, or an allow-list that still names
+ * the old host, is read as the new host, so syncs carry on with nobody re-saving.
+ */
+const MOVED_HOSTS: Record<string, string> = { 'apis.eclatdiamonds.in': 'apis.nibhana.in' };
+const currentHost = (host: string): string => MOVED_HOSTS[host] ?? host;
 
 export interface WebsitePage {
   products: unknown[];
@@ -50,7 +59,7 @@ export class WebsiteCatalogueClient {
   allowedHosts(): string[] {
     return (this.config.get<string>('WEBSITE_CATALOGUE_ALLOWED_HOSTS') ?? DEFAULT_ALLOWED_HOSTS)
       .split(',')
-      .map((h) => h.trim().toLowerCase())
+      .map((h) => currentHost(h.trim().toLowerCase()))
       .filter(Boolean);
   }
 
@@ -65,6 +74,7 @@ export class WebsiteCatalogueClient {
     if (url.protocol !== 'https:' || url.username || url.password || url.hash) {
       throw new WebsiteClientError('Website API base URL must be https without credentials or fragment.', false);
     }
+    url.hostname = currentHost(url.hostname);
     if (!this.allowedHosts().includes(url.hostname.toLowerCase())) {
       throw new WebsiteClientError(`Website API host "${url.hostname}" is not allow-listed.`, false);
     }
@@ -76,7 +86,7 @@ export class WebsiteCatalogueClient {
    * base (…/v1/api) or the exact products endpoint (…/v1/api/products) and
    * returns the exact endpoint: `/products` appended once, never doubled; the
    * reviewed query (e.g. country=IN) kept; page/limit dropped for the pager to
-   * set. The host is never changed.
+   * set. The host is never changed, except a moved one (MOVED_HOSTS).
    */
   productsEndpoint(input: string): URL {
     const url = this.assertAllowedBase(input.trim());

@@ -20,7 +20,7 @@ process.env.CREDENTIAL_ENCRYPTION_KEY_VERSION = '1';
 process.env.SCHEDULER_ENABLED = 'false';
 delete process.env.WEBSITE_CATALOGUE_ALLOWED_HOSTS;
 
-const HOST = 'https://apis.eclatdiamonds.in';
+const HOST = 'https://apis.nibhana.in';
 const TOKEN = 'svc-probe-token-DO-NOT-LEAK-3c1d';
 
 // ── the URL contract (pure) ─────────────────────────────────────────────────
@@ -44,7 +44,7 @@ describe('website products endpoint contract', () => {
   });
 
   it('refuses http, credentials, fragments and hosts not on the allow-list', () => {
-    for (const bad of ['http://apis.eclatdiamonds.in/v1/api', 'https://u:p@apis.eclatdiamonds.in/v1/api', `${HOST}/v1/api#x`, 'https://evil.example.com/v1/api']) {
+    for (const bad of ['http://apis.nibhana.in/v1/api', 'https://u:p@apis.nibhana.in/v1/api', `${HOST}/v1/api#x`, 'https://evil.example.com/v1/api']) {
       expect(() => client.productsEndpoint(bad)).toThrow(WebsiteClientError);
     }
   });

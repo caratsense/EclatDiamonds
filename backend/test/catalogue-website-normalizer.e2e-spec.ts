@@ -138,7 +138,7 @@ describe('website normaliser (pure)', () => {
 });
 
 describe('website client (stubbed fetch, never the live site)', () => {
-  const config = { get: (k: string) => (k === 'WEBSITE_CATALOGUE_ALLOWED_HOSTS' ? 'apis.eclatdiamonds.in' : undefined) } as any;
+  const config = { get: (k: string) => (k === 'WEBSITE_CATALOGUE_ALLOWED_HOSTS' ? 'apis.nibhana.in' : undefined) } as any;
 
   it('parses the envelopes the feed has used', () => {
     expect(parsePage({ data: [{ a: 1 }], total: 5, totalPages: 1 })).toEqual({ products: [{ a: 1 }], total: 5, totalPages: 1 });
@@ -158,24 +158,40 @@ describe('website client (stubbed fetch, never the live site)', () => {
     }) as any;
 
     await expect(client.fetchPage('https://evil.example.com/api', 't', 1)).rejects.toThrow(/not allow-listed/);
-    await expect(client.fetchPage('http://apis.eclatdiamonds.in/api', 't', 1)).rejects.toThrow(/https/);
+    await expect(client.fetchPage('http://apis.nibhana.in/api', 't', 1)).rejects.toThrow(/https/);
     expect(calls).toHaveLength(0);
 
     answers = [new Response('x', { status: 503 }), new Response(JSON.stringify({ data: [], total: 0 }), { status: 200 })];
-    await expect(client.fetchPage('https://apis.eclatdiamonds.in/api/', 'secret-token', 3)).resolves.toMatchObject({ total: 0 });
+    await expect(client.fetchPage('https://apis.nibhana.in/api/', 'secret-token', 3)).resolves.toMatchObject({ total: 0 });
     expect(calls).toHaveLength(2);
-    expect(calls[0].url).toBe('https://apis.eclatdiamonds.in/api/products?page=3&limit=100');
+    expect(calls[0].url).toBe('https://apis.nibhana.in/api/products?page=3&limit=100');
     expect(calls[0].init).toMatchObject({ method: 'GET', redirect: 'manual' });
     expect((calls[0].init.headers as Record<string, string>).Authorization).toBe('Bearer secret-token');
 
     calls.length = 0;
     answers = [new Response('', { status: 302, headers: { location: 'https://elsewhere.example.com' } })];
-    await expect(client.fetchPage('https://apis.eclatdiamonds.in/api', 't', 1)).rejects.toThrow(/redirected/);
+    await expect(client.fetchPage('https://apis.nibhana.in/api', 't', 1)).rejects.toThrow(/redirected/);
     expect(calls).toHaveLength(1);
 
     answers = [new Response('', { status: 401 })];
-    const err = await client.fetchPage('https://apis.eclatdiamonds.in/api', 'secret-token', 1).catch((e) => e);
+    const err = await client.fetchPage('https://apis.nibhana.in/api', 'secret-token', 1).catch((e) => e);
     expect(String(err.message)).toMatch(/HTTP 401/);
     expect(String(err.message)).not.toContain('secret-token');
+  });
+
+  it('reads the retired apis.eclatdiamonds.in (saved address or allow-list) as apis.nibhana.in', async () => {
+    const old = { get: (k: string) => (k === 'WEBSITE_CATALOGUE_ALLOWED_HOSTS' ? 'apis.eclatdiamonds.in' : undefined) } as any;
+    for (const cfg of [old, { get: () => undefined } as any]) {
+      const client = new WebsiteCatalogueClient(cfg);
+      const calls: string[] = [];
+      client.fetchImpl = (async (url: string) => {
+        calls.push(url);
+        return new Response(JSON.stringify({ data: [], total: 0 }), { status: 200 });
+      }) as any;
+      expect(client.productsEndpoint('https://apis.eclatdiamonds.in/v1/api').toString()).toBe('https://apis.nibhana.in/v1/api/products');
+      await client.fetchPage('https://apis.eclatdiamonds.in/v1/api/products?country=IN', null, 1);
+      expect(calls).toEqual(['https://apis.nibhana.in/v1/api/products?country=IN&page=1&limit=100']);
+      await expect(client.fetchPage('https://evil.example.com/v1/api', null, 1)).rejects.toThrow(/not allow-listed/);
+    }
   });
 });
