@@ -39,7 +39,6 @@ import {
   CATEGORY_LABELS,
   METAL_LABELS,
   SOURCE_LABELS,
-  type Availability,
   type Metal,
   type Product,
   type ProductCategory,
@@ -73,7 +72,7 @@ const COVERAGE_LABELS: Record<ImageCoverage, string> = {
   indexed: "Searchable by photo",
 };
 /** Every URL key that holds a filter: "Clear all" shows while any is set, readable or not. */
-const FILTER_KEYS = ["q", "category", "availability", "store", "subCategory", "size", "karat", "colour", "metal", "priceMin", "priceMax", "source", "coverage"];
+const FILTER_KEYS = ["q", "category", "store", "subCategory", "size", "karat", "colour", "metal", "priceMin", "priceMax", "source", "coverage"];
 const PAGE_SIZE_DEFAULT = 100;
 
 export default function CataloguePage() {
@@ -119,7 +118,6 @@ function CatalogueView() {
   const q = get("q");
   const category = get("category") as ProductCategory | "";
   const metal = get("metal") as Metal | "";
-  const avail = get("availability") as Availability | "";
   // No store in the URL = the session's store, as before; "all" is explicit.
   const store = get("store") || (currentStore.isAggregate ? "all" : currentStore.id);
   const karat = get("karat");
@@ -164,7 +162,7 @@ function CatalogueView() {
   const canAddProduct = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const anyFilter = FILTER_KEYS.some((k) => get(k));
   // Besides the search text, is anything else narrowing the list?
-  const narrowed = advancedCount > 0 || !!params.category || !!params.availability || !!params.storeOnly;
+  const narrowed = advancedCount > 0 || !!params.category || !!params.storeOnly;
   const rejected = isError && (httpStatus(error) ?? 500) < 500;
 
   return (
@@ -221,16 +219,6 @@ function CatalogueView() {
           allLabel="All stores"
           allValue="all"
           className="w-[170px]"
-        />
-        <UrlSelect
-          label="Availability"
-          value={avail}
-          onChange={(v) => setParams({ availability: v })}
-          options={[
-            ["in_stock", "In-Stock"],
-            ["lead_time", "Lead-Time"],
-          ]}
-          allLabel="All availability"
         />
         <Button
           type="button"

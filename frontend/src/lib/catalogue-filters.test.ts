@@ -29,9 +29,10 @@ describe("catalogueListParams", () => {
       url("q=SK-1&category=ring&metal=gold_14k&availability=in_stock&subCategory=engagement&size=12&karat=14&colour=rose&priceMin=1000&priceMax=200000.5&source=website&coverage=no_cad"),
       base,
     );
+    // availability=in_stock is in the URL (an old link) but is no longer a filter.
     expect(p).toEqual({
       page: 1, pageSize: 100, storeId: "all",
-      q: "SK-1", category: "ring", metal: "gold_14k", availability: "in_stock", subCategory: "engagement", size: "12",
+      q: "SK-1", category: "ring", metal: "gold_14k", subCategory: "engagement", size: "12",
       karat: 14, colour: "rose", priceMin: 1000, priceMax: 200000.5, source: "website", imageCoverage: "no_cad",
     });
     expect(advancedFilterCount(p)).toBe(9);

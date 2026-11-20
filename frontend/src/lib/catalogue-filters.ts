@@ -1,4 +1,4 @@
-import type { Availability, Metal, ProductCategory, ProductSource } from "@/lib/mock/catalogue";
+import type { Metal, ProductCategory, ProductSource } from "@/lib/mock/catalogue";
 import type { ImageCoverage, ProductListParams } from "@/lib/queries/products";
 
 /** The params behind "More filters": counted on the button so none hides silently. */
@@ -19,6 +19,8 @@ function amount(v: string): number | undefined {
  * - a store PICKED in the filter also sends `storeOnly`, so the grid keeps only
  *   that store's designs; the session's own store, used when none is picked,
  *   only says where "here" is;
+ * - availability is not sent: the owner removed that filter (20 Nov), and an
+ *   old link that still carries it must not narrow the grid invisibly;
  * - an unreadable number ("-5", "18K") is dropped, not turned into a 400;
  * - the jewellery filters are not sent while the tenant hides the metal field,
  *   since their controls are hidden too.
@@ -37,7 +39,6 @@ export function catalogueListParams(
     q: text("q"),
     category: jewellery ? (text("category") as ProductCategory | undefined) : undefined,
     metal: jewellery ? (text("metal") as Metal | undefined) : undefined,
-    availability: text("availability") as Availability | undefined,
     storeId: opts.store,
     storeOnly: picked && picked !== "all" ? true : undefined,
     subCategory: text("subCategory"),
