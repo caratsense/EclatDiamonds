@@ -1,9 +1,11 @@
 import {
   BadRequestException,
+  Inject,
   Injectable,
   Logger,
   NotFoundException,
   OnModuleInit,
+  forwardRef,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
@@ -15,10 +17,16 @@ import {
   carouselImageKeys,
   type CarouselCardMedia,
 } from './carousel-send';
+import {
+  planMediaHeader,
+  withMediaHeader,
+  type MediaHeaderPlan,
+} from './media-header-send';
 import { readableParty } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ConversationsService } from '../crm/conversations.service';
 import { ActivityService } from '../crm/activity.service';
+import { CampaignsService } from '../crm/campaigns.service';
 import { IdentityService } from '../crm/identity.service';
 import { WhatsAppService } from '../integrations/whatsapp.service';
 import { ChannelAdaptersService } from '../integrations/adapters/channel-adapters.service';
@@ -33,6 +41,7 @@ import {
 import {
   ConsentState,
   evaluateDeliveryPolicy,
+  evaluateSendableContent,
   MessagePurpose,
   OmnichannelChannel,
   providerTemplateStatus,
@@ -196,6 +205,18 @@ export class OmnichannelService implements OnModuleInit {
     private readonly scope: StoreScopeService,
     /** Reads a queued document's bytes at delivery time. */
     private readonly storage: StorageService,
+    /**
+     * Told what became of a broadcast's messages.
+     *
+     * The dependency runs this way round deliberately. Only the outbox knows
+     * whether the provider took a message or refused it, and a campaign cannot
+     * find that out by asking later without polling thousands of rows. So the
+     * outbox reports, and `CampaignRecipient.messageId` is what it reports
+     * against. CampaignsService injects this service in turn, which is why both
+     * sides are behind a forwardRef.
+     */
+    @Inject(forwardRef(() => CampaignsService))
+    private readonly campaigns: CampaignsService,
   ) {}
 
   onModuleInit(): void {
@@ -1762,7 +1783,42 @@ export class OmnichannelService implements OnModuleInit {
         : `omnichannel:receipt:${input.providerMessageId}:${input.status}`,
       metadata: { providerMessageId: input.providerMessageId },
     });
+    await this.reportCampaignOutcome(
+      { id: message.id, organisationId: input.organisationId },
+      input.status,
+      error,
+      input.occurredAt,
+    );
     return { matched: true, updated: true, messageId: updated.id, status: updated.status };
+  }
+
+  /**
+   * Pass one message's outcome to the campaign that queued it, if a campaign
+   * did.
+   *
+   * Never allowed to break delivery. A broadcast's bookkeeping failing is not a
+   * reason to fail — and so retry — a message the provider has already taken,
+   * which would send it to the customer twice.
+   */
+  private async reportCampaignOutcome(
+    message: { id: string; organisationId: string },
+    status: 'sent' | 'delivered' | 'read' | 'failed',
+    error?: string | null,
+    occurredAt?: Date,
+  ): Promise<void> {
+    try {
+      await this.campaigns.applyMessageOutcome({
+        organisationId: message.organisationId,
+        messageId: message.id,
+        status,
+        error,
+        occurredAt,
+      });
+    } catch (err) {
+      this.log.warn(
+        `Message ${message.id} is ${status} but its campaign recipient was not updated: ${errorMessage(err)}`,
+      );
+    }
   }
 
   // --------------------------------------------------------------- Delivery
@@ -1870,22 +1926,22 @@ export class OmnichannelService implements OnModuleInit {
         'This conversation is not linked to a customer, so a marketing message cannot be sent on it.',
       );
     }
-    if (!template && !message.body?.trim()) {
-      return this.failPermanently(message, 'content_missing', 'The queued message has no text to send.');
-    }
     /*
      * An attachment is delivered from `instructions.document`, which names a
      * key in our own private storage. A media message carrying no instruction
      * has no bytes we can fetch — an older queued row, or an inbound media URL
      * copied onto an outbound message — so it still stops here instead of
-     * going out as bare text and being reported as delivered.
+     * going out as bare text and being reported as delivered. A photograph
+     * that HAS its instruction and no caption is a message in its own right.
      */
-    if (!instructions.document && (message.mediaUrl || message.mediaType)) {
-      return this.failPermanently(
-        message,
-        'attachment_missing',
-        'This message has an attachment that was never stored, so it was not sent. Attach it again.',
-      );
+    const content = evaluateSendableContent({
+      hasApprovedTemplate: !!template,
+      body: message.body,
+      hasAttachmentInstruction: !!instructions.document,
+      claimsAttachment: !!(message.mediaUrl || message.mediaType),
+    });
+    if (!content.sendable) {
+      return this.failPermanently(message, content.code, content.reason);
     }
     let documentBytes: Buffer | null = null;
     if (instructions.document) {
@@ -1939,6 +1995,38 @@ export class OmnichannelService implements OnModuleInit {
       ...(isStaffNotice ? {} : { audience: 'customer' as const }),
     };
 
+    /*
+     * A template whose header is a picture has to carry that picture on EVERY
+     * send. The approved template holds the file Meta reviewed, not the file
+     * it delivers, so a send with body components only is malformed and Meta
+     * refuses it -- 125 times in one broadcast, with a message that mentions
+     * neither headers nor pictures.
+     *
+     * Only when nothing is attached. A message that brings its own file still
+     * goes down the media path below, which has always built the header from
+     * those bytes; that is why a quotation's PDF header works and why it must
+     * keep winning over the template's own specimen.
+     */
+    let templateComponents = instructions.templateComponents;
+    if (template && !instructions.document) {
+      const plan = planMediaHeader(template.name ?? '', template.stored);
+      if (plan.kind === 'refuse') {
+        return this.failPermanently(message, 'template_header_missing', plan.reason);
+      }
+      if (plan.kind !== 'none') {
+        const uploaded = await this.uploadHeaderMedia(ctx.organisationId, plan, senderRoute);
+        if (uploaded.id === null) {
+          // Transient on purpose: the picture exists, this attempt at moving it
+          // did not work. Sending anyway would be refused by Meta for a reason
+          // nobody could act on.
+          const reason = safeProviderError(uploaded.reason);
+          await this.markTransientFailure(message, reason, ctx.attempt);
+          throw new Error(reason);
+        }
+        templateComponents = withMediaHeader(templateComponents, plan.format, uploaded.id);
+      }
+    }
+
     const result = instructions.document && documentBytes
       ? // A photograph has to arrive as an image. Sent as a document it is
         // delivered correctly and is still useless: WhatsApp shows the customer
@@ -1959,7 +2047,7 @@ export class OmnichannelService implements OnModuleInit {
             ? {
                 name: template.name ?? '',
                 languageCode: template.metadata.languageCode,
-                components: instructions.templateComponents,
+                components: templateComponents,
               }
             : undefined,
         )
@@ -1975,8 +2063,8 @@ export class OmnichannelService implements OnModuleInit {
           // component is appended to whatever the caller already built.
           await this.withCarousel(
             ctx.organisationId,
-            template.metadata as unknown,
-            instructions.templateComponents,
+            template.stored,
+            templateComponents,
             senderRoute,
           ),
           senderRoute,
@@ -2079,7 +2167,50 @@ export class OmnichannelService implements OnModuleInit {
       dedupeKey: `omnichannel:sent:${message.id}`,
       metadata: { providerMessageId: result.messageId },
     });
+    await this.reportCampaignOutcome(message, 'sent', null, sentAt);
     return { delivered: true, status: 'sent', messageId: message.id, providerMessageId: result.messageId };
+  }
+
+  /**
+   * Put the template's header file in the phone number's media store for THIS
+   * send, and hand back its media id.
+   *
+   * Our own copy is used when we have one. When we do not -- which is every
+   * template created at Meta rather than here -- the bytes are read back from
+   * the address the template sync recorded, Meta's own CDN copy of the file it
+   * approved. That is the picture the client chose and the one Meta already
+   * agreed to, so it is the right thing to deliver; it is fetched rather than
+   * handed over as a link for the reason in `buildMediaHeaderComponent`.
+   */
+  private async uploadHeaderMedia(
+    organisationId: string,
+    plan: Extract<MediaHeaderPlan, { kind: 'stored' | 'approved' }>,
+    route: { assetId?: string | null; storeId?: string | null; audience?: 'customer' },
+  ): Promise<{ id: string } | { id: null; reason: string }> {
+    let bytes: Buffer | null = null;
+    let mimeType: string;
+
+    if (plan.kind === 'stored') {
+      bytes = await this.storage.readPrivate(organisationId, plan.storageKey);
+      if (!bytes) {
+        return { id: null, reason: `The template's header file is no longer stored (${plan.storageKey}).` };
+      }
+      mimeType = plan.storageKey.endsWith('.png') ? 'image/png' : 'image/jpeg';
+    } else {
+      try {
+        const res = await fetch(plan.url, { signal: AbortSignal.timeout(30_000) });
+        if (!res.ok) {
+          return { id: null, reason: `The provider's copy of the header file could not be read (HTTP ${res.status}).` };
+        }
+        bytes = Buffer.from(await res.arrayBuffer());
+        mimeType = res.headers.get('content-type')?.split(';')[0]?.trim() || 'image/jpeg';
+      } catch (error) {
+        return { id: null, reason: `The provider's copy of the header file could not be read: ${errorMessage(error)}` };
+      }
+    }
+
+    const uploaded = await this.whatsapp.uploadMedia(organisationId, { buffer: bytes, mimeType }, route);
+    return uploaded.id ? { id: uploaded.id } : { id: null, reason: `Header file upload failed: ${uploaded.reason}` };
   }
 
   /**
@@ -2127,7 +2258,7 @@ export class OmnichannelService implements OnModuleInit {
     return [...rest, buildCarouselSendComponent(media)];
   }
   private async failPermanently(
-    message: { id: string; payload: unknown },
+    message: { id: string; organisationId: string; payload: unknown },
     code: string,
     reason: string,
   ) {
@@ -2143,11 +2274,12 @@ export class OmnichannelService implements OnModuleInit {
         } as Prisma.InputJsonValue,
       },
     });
+    await this.reportCampaignOutcome(message, 'failed', `${code}: ${safeReason}`);
     return { delivered: false, blocked: true, code, reason: safeReason, messageId: message.id };
   }
 
   private async markTransientFailure(
-    message: { id: string; payload: unknown },
+    message: { id: string; organisationId: string; payload: unknown },
     reason: string,
     attempt: number,
   ): Promise<void> {
@@ -2167,6 +2299,10 @@ export class OmnichannelService implements OnModuleInit {
         } as Prisma.InputJsonValue,
       },
     });
+    // Only once there is nothing left to try. A recipient whose message is
+    // between attempts is still queued, and saying 'failed' in the meantime
+    // would have a manager chasing a message that is about to go out.
+    if (exhausted) await this.reportCampaignOutcome(message, 'failed', reason);
   }
 
   private async loadApprovedTemplate(organisationId: string, assetId: string) {
@@ -2194,7 +2330,15 @@ export class OmnichannelService implements OnModuleInit {
       providerSyncedAt: asset.lastVerifiedAt ?? null,
     });
     if (!verdict.sendable) throw new BadRequestException(verdict.reason);
-    return { ...asset, metadata };
+    /*
+     * `metadata` is the allow-list projection the screens read; `stored` is
+     * what is actually on the row. Delivery needs the second one, because the
+     * fields that say where a template's pictures live -- `headerImageKey`,
+     * `cardImageKeys` -- are deliberately not part of what a browser is told,
+     * and the projection drops them. Passing the projection to the deliverer
+     * left `carouselImageKeys` reading a field that had already been stripped.
+     */
+    return { ...asset, metadata, stored: jsonObject(asset.metadata) };
   }
 
   private async resolveRecipient(

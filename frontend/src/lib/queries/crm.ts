@@ -563,6 +563,22 @@ export function useConversationThread(id: string | null) {
           `/crm/conversations/${id}`,
         )
       ).data,
+    /*
+     * A queued message is a promise still in motion, and the screen has to find
+     * out how it ended.
+     *
+     * The outbox worker settles a send a second or two after the reply is
+     * posted, and this query was fetched once when the thread opened and once
+     * on the send. So a message that failed kept its "waiting to send" clock
+     * until somebody reloaded the page — which is how a store manager sent the
+     * same photograph to one customer three times in under a minute. Polling
+     * only while something is actually queued; React Query leaves
+     * `refetchIntervalInBackground` off, so a tab nobody is looking at is quiet.
+     */
+    refetchInterval: (q) =>
+      q.state.data?.messages.some((m) => m.direction === "outbound" && m.status === "queued")
+        ? 4_000
+        : false,
   });
 }
 
