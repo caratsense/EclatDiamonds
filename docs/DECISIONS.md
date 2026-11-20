@@ -429,3 +429,8 @@ Client, 20 Nov: photos of rings on fingers and on a palm found nothing, with no 
 
 - **No close match no longer means an empty screen.** When nothing reaches the WEAK floor, the nearest designs come back, each marked "No Close Match". Supersedes OP-29's "NO_CLOSE_MATCH (empty)"; the list is empty only when the store has no searchable photos.
 - **The search says why**, from what it can actually check: a photo that could not be read, a very small, dark or blurred photo, no piece picked out of the photo (claimed only when the jewellery detector ran), or the piece was found but nothing in the catalogue looks like it. The photo checks run only on this path and are conservative; their thresholds are not fitted to a labelled jewellery set.
+
+# 2026-11-20 — photo search can be narrowed to CAD or website pictures; every catalogue picture says where it came from
+
+- **Photo search: "Search in Both / CAD / Website".** Both is the default and searches every picture, as before (including the few added by hand). CAD or Website matches only that source's pictures; changing it re-ranks the same photos without a new AI call. Query param `source` (`gati_cad` | `website`) on `POST /products/jewelry/similarity-search`.
+- **An ⓘ source tag on every catalogue picture**: grid card, design gallery, photo-search results. Hovering it (or tapping it in the design gallery) says what kind of picture it is, the website or Gati file it came from, and when it reached CaratSpace. Gallery thumbnails keep their source strip only when the sources are mixed.

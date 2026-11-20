@@ -45,6 +45,9 @@ export interface SimilarityHit {
   matchedImageId?: string | null;
   matchedImageUrl?: string | null;
   matchedImageSource?: ImageSource | null;
+  /** Where that picture was taken from, and when it reached CaratSpace (for its source tag). */
+  matchedImageSourceUrl?: string | null;
+  matchedImageAddedAt?: string | null;
   matchedColour?: string | null;
   matchedAngle?: string | null;
   /** Precedence #1 image (pin, else CAD…); stays marked "Primary" in the detail. */
@@ -88,6 +91,8 @@ export interface SimilaritySearchInput {
   files: File[];
   category?: ProductCategory;
   limit?: number;
+  /** Match only CAD drawings or only website photos; absent = both (every picture). */
+  source?: Extract<ImageSource, "gati_cad" | "website">;
 }
 
 /** The server is at its concurrent-search limit; try again after `retryAfterSec`. */
@@ -139,12 +144,12 @@ export function useWakeVisualSearch() {
  * POST /products/jewelry/similarity-search — photograph a piece, get visually
  * ranked catalogue matches (DINOv2 + SigLIP 2 embeddings, server-side).
  * Auth: salesperson and up. All 1–3 photos go in ONE multipart request as
- * `files`; category / limit ride as query params. A 429 surfaces as
+ * `files`; category / limit / source ride as query params. A 429 surfaces as
  * {@link SearchBusyError} carrying the server's Retry-After.
  */
 export function useSimilaritySearch() {
   return useMutation({
-    mutationFn: async ({ files, category, limit }: SimilaritySearchInput) => {
+    mutationFn: async ({ files, category, limit, source }: SimilaritySearchInput) => {
       const form = new FormData();
       for (const f of files.slice(0, MAX_QUERY_IMAGES)) form.append("files", f);
       try {
@@ -153,7 +158,7 @@ export function useSimilaritySearch() {
           form,
           {
             headers: { "Content-Type": "multipart/form-data" },
-            params: { category, limit },
+            params: { category, limit, source },
             // The server holds one deadline (45s by default) for the whole
             // search; this only has to outlast it, not race it.
             timeout: 60_000,

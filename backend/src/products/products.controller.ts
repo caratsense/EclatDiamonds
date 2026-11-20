@@ -87,7 +87,7 @@ export class ProductsController {
     return this.jewelry.search(
       user,
       shots,
-      { category: query.category, limit: query.limit },
+      { category: query.category, limit: query.limit, source: query.source },
       store,
       res,
     );

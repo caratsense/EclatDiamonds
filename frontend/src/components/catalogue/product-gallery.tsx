@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { Camera, Expand, Gem, ImagePlus, Loader2, Pin, PinOff, Star, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
+import { ImageSourceTag } from "@/components/catalogue/image-source-tag";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -328,11 +329,15 @@ function ImageBadges({ img, matched }: { img: ProductImage; matched: boolean }) 
           <Star className="mr-1 h-3 w-3 fill-current" /> Primary
         </Badge>
       ) : null}
-      {img.source ? (
-        <Badge variant="outline" className="bg-background/90" data-testid="badge-source">
-          {imageSourceLabel(img.source)}
-        </Badge>
-      ) : null}
+      {/* The row ignores the pointer; the tag takes it back so it can be hovered or tapped. */}
+      <ImageSourceTag
+        source={img.source}
+        sourceUrl={img.sourceUrl}
+        addedAt={img.createdAt}
+        focusable
+        className="pointer-events-auto"
+        tipClassName="left-0 top-full mt-1 w-64 max-w-[80vw]"
+      />
       {img.pinned ? (
         <Badge variant="outline" className="bg-background/90">
           Pinned

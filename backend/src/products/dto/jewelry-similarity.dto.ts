@@ -1,5 +1,6 @@
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -38,4 +39,9 @@ export class SimilaritySearchQueryDto {
   @Min(1)
   @Max(50)
   limit?: number;
+
+  /** Match only catalogue pictures from this source: CAD drawings or website photos. Absent = every picture. */
+  @IsOptional()
+  @IsIn(['gati_cad', 'website'])
+  source?: 'gati_cad' | 'website';
 }

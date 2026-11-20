@@ -76,6 +76,8 @@ const ANN_K = 50;
 interface IndexedVector extends RankCandidate {
   storeId: string | null;
   imageId: string;
+  /** Where the picture came from: gati_cad, website, manual, inventory, other. */
+  source: string;
   dino: Float32Array;
   siglip: Float32Array;
 }
@@ -275,6 +277,7 @@ export class JewelrySimilarityService implements OnModuleInit {
           dinoEmbedding: true,
           siglipEmbedding: true,
           product: { select: { category: true } },
+          productImage: { select: { source: true } },
         },
       });
       for (const r of page) {
@@ -283,6 +286,7 @@ export class JewelrySimilarityService implements OnModuleInit {
           productId: r.productId,
           imageId: r.productImageId!,
           storeId: r.storeId,
+          source: r.productImage?.source ?? 'other',
           category: r.product?.category ?? null,
           dino: unitOf(r.dinoEmbedding),
           siglip: unitOf(r.siglipEmbedding),
@@ -299,12 +303,27 @@ export class JewelrySimilarityService implements OnModuleInit {
   /**
    * Candidates from the pgvector HNSW indexes: the nearest rows to every query
    * vector under each model, then ranked exactly like the in-memory path. The
-   * store/active filters run inside the query (iterative scan keeps recall).
+   * store/active/source filters run inside the query (iterative scan keeps recall).
    */
-  private async annCandidates(user: AuthUser, headerStore: string | undefined, vectors: View[]): Promise<IndexedVector[]> {
+  private async annCandidates(
+    user: AuthUser,
+    headerStore: string | undefined,
+    vectors: View[],
+    source?: string,
+  ): Promise<IndexedVector[]> {
     const stores =
       headerStore && headerStore !== 'all' ? [headerStore] : user.allStores ? null : user.storeIds;
-    const scopeSql = stores ? `AND (e."storeId" IS NULL OR e."storeId" = ANY($3::text[]))` : '';
+    // $1 is the organisation and $2 the query vector; the optional filters follow.
+    const extra: unknown[] = [];
+    let filterSql = '';
+    if (stores) {
+      extra.push(stores);
+      filterSql += ` AND (e."storeId" IS NULL OR e."storeId" = ANY($${extra.length + 2}::text[]))`;
+    }
+    if (source) {
+      extra.push(source);
+      filterSql += ` AND i.source = $${extra.length + 2}`;
+    }
     const ids = new Set<string>();
     await this.prisma.$transaction(async (tx) => {
       await tx.$executeRawUnsafe(`SET LOCAL hnsw.ef_search = 200`);
@@ -317,12 +336,12 @@ export class JewelrySimilarityService implements OnModuleInit {
           const rows = await tx.$queryRawUnsafe<{ id: string }[]>(
             `SELECT e.id FROM "ProductEmbedding" e
                JOIN "ProductImage" i ON i.id = e."productImageId" AND i.status = 'active'
-              WHERE e."organisationId" = $1 AND array_length(e."${col}", 1) = ${ANN_DIM} ${scopeSql}
+              WHERE e."organisationId" = $1 AND array_length(e."${col}", 1) = ${ANN_DIM}${filterSql}
               ORDER BY (e."${col}"::vector(${ANN_DIM})) <=> $2::vector(${ANN_DIM})
               LIMIT ${ANN_K}`,
             user.organisationId,
             `[${vec.join(',')}]`,
-            ...(stores ? [stores] : []),
+            ...extra,
           );
           for (const r of rows) ids.add(r.id);
         }
@@ -337,16 +356,18 @@ export class JewelrySimilarityService implements OnModuleInit {
         dinoEmbedding: true,
         siglipEmbedding: true,
         product: { select: { category: true } },
+        productImage: { select: { source: true } },
       },
     });
     return rows.map((r) => ({
       productId: r.productId,
       imageId: r.productImageId!,
       storeId: r.storeId,
+      source: r.productImage?.source ?? 'other',
       category: r.product?.category ?? null,
       dino: unitOf(r.dinoEmbedding),
       siglip: unitOf(r.siglipEmbedding),
-          unit: true,
+      unit: true,
     }));
   }
 
@@ -395,7 +416,8 @@ export class JewelrySimilarityService implements OnModuleInit {
   async search(
     user: AuthUser,
     files: { buffer?: Buffer; mimetype?: string } | ({ buffer?: Buffer; mimetype?: string } | undefined)[] | undefined,
-    opts: { category?: ProductCategory; limit?: number } = {},
+    /** `source`: match only catalogue pictures from it (gati_cad, website); absent = every picture. */
+    opts: { category?: ProductCategory; limit?: number; source?: string } = {},
     headerStore?: string,
     res?: HeaderSink,
   ) {
@@ -468,7 +490,7 @@ export class JewelrySimilarityService implements OnModuleInit {
     }
     this.inFlight++;
     try {
-      return await this.runSearch(user, headerStore, shots, limit, opts.category, inScope, queryId, t0, res, empty);
+      return await this.runSearch(user, headerStore, shots, limit, opts.category, opts.source, inScope, queryId, t0, res, empty);
     } finally {
       this.inFlight--;
     }
@@ -480,6 +502,7 @@ export class JewelrySimilarityService implements OnModuleInit {
     shots: { buffer: Buffer; mime: string }[],
     limit: number,
     category: ProductCategory | undefined,
+    source: string | undefined,
     inScope: (s: string | null) => boolean,
     queryId: string,
     t0: number,
@@ -568,8 +591,8 @@ export class JewelrySimilarityService implements OnModuleInit {
       ).map((r) => r.productImageId),
     );
     const candidates = (
-      annOk ? await this.annCandidates(user, headerStore, vectors) : await this.orgIndex(user.organisationId)
-    ).filter((v) => inScope(v.storeId) && !inactive.has(v.imageId));
+      annOk ? await this.annCandidates(user, headerStore, vectors, source) : await this.orgIndex(user.organisationId)
+    ).filter((v) => inScope(v.storeId) && !inactive.has(v.imageId) && (!source || v.source === source));
     timing.retrieve = Date.now() - t;
 
     t = Date.now();
@@ -603,7 +626,12 @@ export class JewelrySimilarityService implements OnModuleInit {
     if (!merged.length) {
       // No candidate at all in this store's scope: nothing to be near.
       this.bump('search_no_match');
-      body = empty('NO_CLOSE_MATCH', 'There are no searchable catalogue photos in this store yet.');
+      body = empty(
+        'NO_CLOSE_MATCH',
+        source
+          ? 'None of the catalogue photos of that kind are searchable in this store yet. Search all photos instead.'
+          : 'There are no searchable catalogue photos in this store yet.',
+      );
     } else {
       t = Date.now();
       this.bump(matched ? 'search_success' : 'search_no_match');
@@ -626,6 +654,8 @@ export class JewelrySimilarityService implements OnModuleInit {
             id: true,
             url: true,
             source: true,
+            sourceUrl: true,
+            createdAt: true,
             angle: true,
             associations: {
               where: { tombstonedAt: null },
@@ -665,6 +695,8 @@ export class JewelrySimilarityService implements OnModuleInit {
             matchedImageId: m?.id ?? null,
             matchedImageUrl: m?.url ?? null,
             matchedImageSource: m?.source ?? null,
+            matchedImageSourceUrl: m?.sourceUrl ?? null,
+            matchedImageAddedAt: m?.createdAt ?? null,
             matchedColour: a?.colour || null,
             matchedAngle: m?.angle ?? a?.angle ?? null,
             heroImageUrl: p?.imageUrl ?? null,
@@ -685,7 +717,8 @@ export class JewelrySimilarityService implements OnModuleInit {
     );
     this.logger.log(
       `similarity queryId=${queryId} status=${body.status} photos=${queries.length}/${shots.length} cache=${hits} ` +
-        `views=${vectors.length - queries.length} candidates=${candidates.length} retrieval=${annOk ? 'ann' : 'exact'} ` +
+        `views=${vectors.length - queries.length} candidates=${candidates.length} source=${source ?? 'all'} ` +
+        `retrieval=${annOk ? 'ann' : 'exact'} ` +
         `ms=${JSON.stringify(timing)}`,
     );
     return body;

@@ -2,11 +2,11 @@
 
 import { Gem, Hourglass, ImageOff } from "lucide-react";
 
+import { ImageSourceTag } from "@/components/catalogue/image-source-tag";
 import { assetUrl } from "@/lib/api";
 import { formatINR } from "@/lib/format";
 import {
   CATEGORY_LABELS,
-  imageSourceLabel,
   productDisplayName,
   type PriceRange,
   type Product,
@@ -66,11 +66,7 @@ export function ProductCard({ product, onOpen, scoped = false }: ProductCardProp
         ) : (
           <Gem className="h-10 w-10 text-muted-foreground/40" />
         )}
-        {product.heroSource ? (
-          <span className="absolute left-1.5 top-1.5 rounded-full bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-            {imageSourceLabel(product.heroSource)}
-          </span>
-        ) : null}
+        {src ? <ImageSourceTag source={product.heroSource} className="absolute left-1.5 top-1.5" /> : null}
         {/*
           WHERE THIS DESIGN'S DATA CAME FROM.
 

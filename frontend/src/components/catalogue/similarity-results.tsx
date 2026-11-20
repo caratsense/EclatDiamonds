@@ -3,10 +3,10 @@
 import { useState, type ReactNode } from "react";
 import { Gem, RefreshCw, ScanSearch, Sparkles } from "lucide-react";
 
+import { ImageSourceTag } from "@/components/catalogue/image-source-tag";
 import { MatchBadge } from "@/components/catalogue/match-badge";
 import { Button } from "@/components/ui/button";
 import { assetUrl } from "@/lib/api";
-import { imageSourceLabel } from "@/lib/mock/catalogue";
 import {
   useSimilarityFeedback,
   type IndexCoverage,
@@ -158,11 +158,8 @@ function ResultCard({
   // The design's own photo that matched — the reason it is on this list.
   const src = assetUrl(hit.matchedImageUrl || hit.imageUrl || hit.heroImageUrl);
   const name = hit.productName || "Unnamed piece";
-  const matchedMeta = [
-    imageSourceLabel(hit.matchedImageSource),
-    hit.matchedColour,
-    hit.matchedAngle,
-  ].filter(Boolean);
+  // The source has its own tag on the picture; this strip says what it shows.
+  const matchedMeta = [hit.matchedColour, hit.matchedAngle].filter(Boolean);
 
   return (
     <article
@@ -195,6 +192,14 @@ function ResultCard({
           <span className="pointer-events-none absolute left-1.5 top-1.5 rounded-full bg-background/85 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground backdrop-blur">
             #<span className="num">{hit.rank}</span>
           </span>
+          {src ? (
+            <ImageSourceTag
+              source={hit.matchedImageSource}
+              sourceUrl={hit.matchedImageSourceUrl}
+              addedAt={hit.matchedImageAddedAt}
+              className="absolute right-1.5 top-1.5"
+            />
+          ) : null}
           {matchedMeta.length ? (
             <span className="pointer-events-none absolute inset-x-1.5 bottom-1.5 truncate rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
               Matched: {matchedMeta.join(" · ")}

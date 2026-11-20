@@ -391,6 +391,28 @@ describe('Jewelry similarity search (e2e)', () => {
     expect(res.headers['server-timing']).toMatch(/total;dur=\d+/);
   });
 
+  it('source filter: only website photos or only CAD drawings are matched; absent = both', async () => {
+    // The query is A's website photo. B has only a CAD drawing.
+    mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
+    const only = (source: string) =>
+      post('/products/jewelry/similarity-search', tokens.rep)
+        .query({ source })
+        .attach('file', jpeg(), { filename: 'q.jpg', contentType: 'image/jpeg' });
+
+    const web = await only('website');
+    expect(web.body.status).toBe('MATCHES_FOUND');
+    expect(web.body.results.map((r: any) => r.productId)).toEqual([EMB_A]);
+
+    // CAD only: A's photo is out of the running, so B's drawing is the nearest, marked not close.
+    const cad = await only('gati_cad');
+    expect(cad.body.status).toBe('NO_CLOSE_MATCH');
+    expect(cad.body.results.map((r: any) => r.productId)).toEqual([EMB_B]);
+    expect(cad.body.results[0].matchedImageSource).toBe('gati_cad');
+
+    // Anything else is refused at the boundary, not silently ignored.
+    expect((await only('manual')).status).toBe(400);
+  });
+
   it('search is organisation-scoped — another org’s indexed picture never leaks', async () => {
     mockInference.embedResult = { dino: [1, 0, 0], siglip: [1, 0, 0] };
     await prisma.organisation.upsert({ where: { id: 'org_jsim_b' }, update: {}, create: { id: 'org_jsim_b', name: 'JSim B', slug: 'jsim-b' } });

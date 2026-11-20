@@ -54,6 +54,10 @@ export interface ProductImage {
   sortOrder: number;
   /** Where the picture came from (absent on an API that predates sources). */
   source?: ImageSource;
+  /** The website image or synced file it was taken from, when the source recorded one. */
+  sourceUrl?: string | null;
+  /** When the picture reached CaratSpace (added by hand, or first synced). */
+  createdAt?: string | null;
   /** Set only by a head-office pin; `isPrimary` is the computed result. */
   pinned?: boolean;
   /** Small (≤400px) rendition for strips and grids; fall back to `url`. */

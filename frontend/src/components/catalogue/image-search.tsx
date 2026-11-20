@@ -17,6 +17,7 @@ import {
   useWakeVisualSearch,
   type SimilaritySearchResult,
 } from "@/lib/queries/jewelry-similarity";
+import { IMAGE_SOURCE_LABELS } from "@/lib/mock/catalogue";
 import { cn, apiErrorMessage } from "@/lib/utils";
 import { ImageLightbox } from "@/components/catalogue/image-lightbox";
 
@@ -28,6 +29,15 @@ interface Shot {
   file: File;
   url: string;
 }
+
+type SearchSource = "both" | "gati_cad" | "website";
+
+/** Which catalogue pictures a search matches against. */
+const SOURCE_OPTIONS: { value: SearchSource; label: string }[] = [
+  { value: "both", label: "Both" },
+  { value: "gati_cad", label: IMAGE_SOURCE_LABELS.gati_cad },
+  { value: "website", label: IMAGE_SOURCE_LABELS.website },
+];
 
 /**
  * What to photograph, in the order it helps most.
@@ -72,6 +82,10 @@ export function ImageSearch() {
   /** Server said "busy" — epoch ms when a retry is worth it. */
   const [busyUntil, setBusyUntil] = useState<number | null>(null);
   const [openIndex, setOpenIndex] = useState<number | null>(null);
+  /** Which catalogue pictures to match against; both unless narrowed. */
+  const [source, setSource] = useState<SearchSource>("both");
+  /** The filter behind the result on screen. */
+  const [searchedSource, setSearchedSource] = useState<SearchSource>("both");
   const search = useSimilaritySearch();
   const wake = useWakeVisualSearch();
 
@@ -96,16 +110,17 @@ export function ImageSearch() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- once per mount, never on re-render
   }, []);
 
-  function run(next: Shot[]) {
+  function run(next: Shot[], src: SearchSource = source) {
     if (!next.length || search.isPending) return;
     setBusyUntil(null);
     search.mutate(
-      { files: next.map((s) => s.file), limit: SIMILARITY_TOP_N },
+      { files: next.map((s) => s.file), limit: SIMILARITY_TOP_N, source: src === "both" ? undefined : src },
       {
         onSuccess: (data) => {
           setResult(data);
           setOpenIndex(null);
           setSearchedWith(next.length);
+          setSearchedSource(src);
           if (data.status === "MATCHES_FOUND" && data.results?.length) {
             toast.success(
               `Found ${data.results.length} similar design${data.results.length === 1 ? "" : "s"}`,
@@ -192,6 +207,31 @@ export function ImageSearch() {
           <span className="text-xs text-muted-foreground">
             Photograph a piece to find the closest catalogue designs
           </span>
+        </div>
+
+        {/* Changing it re-runs the photos on screen; the server keeps their
+            vectors for a few minutes, so that costs no new AI call. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-muted-foreground">Search in</span>
+          <div className="flex gap-1" role="group" aria-label="Catalogue pictures to search">
+            {SOURCE_OPTIONS.map((o) => (
+              <Button
+                key={o.value}
+                type="button"
+                size="sm"
+                variant={source === o.value ? "default" : "ghost"}
+                aria-pressed={source === o.value}
+                disabled={busy}
+                onClick={() => {
+                  if (o.value === source) return;
+                  setSource(o.value);
+                  if (result && shots.length) run(shots, o.value);
+                }}
+              >
+                {o.label}
+              </Button>
+            ))}
+          </div>
         </div>
 
         <div
@@ -338,14 +378,21 @@ export function ImageSearch() {
             <div className="flex items-center justify-between gap-2">
               <p className="text-xs font-medium text-muted-foreground">
                 {result.status === "MATCHES_FOUND" || result.status === "NO_CLOSE_MATCH"
-                  ? `Closest matches from ${searchedWith} view${searchedWith === 1 ? "" : "s"}`
+                  ? `Closest matches from ${searchedWith} view${searchedWith === 1 ? "" : "s"}${
+                      searchedSource === "both" ? "" : `, ${IMAGE_SOURCE_LABELS[searchedSource]} pictures only`
+                    }`
                   : "Visual search"}
               </p>
               <Button variant="ghost" size="sm" onClick={reset}>
                 <X className="h-4 w-4" /> Clear
               </Button>
             </div>
-            {result.status === "NO_CLOSE_MATCH" && shots.length < MAX_QUERY_IMAGES ? (
+            {result.status === "NO_CLOSE_MATCH" && searchedSource !== "both" ? (
+              <p className="text-xs text-muted-foreground">
+                Only {IMAGE_SOURCE_LABELS[searchedSource]} pictures were searched. Searching Both may find a
+                closer design.
+              </p>
+            ) : result.status === "NO_CLOSE_MATCH" && shots.length < MAX_QUERY_IMAGES ? (
               <p className="text-xs text-muted-foreground">
                 A second view — held at an angle rather than flat on — often
                 finds a design the first one misses.
