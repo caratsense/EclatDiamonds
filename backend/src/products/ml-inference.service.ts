@@ -1,8 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { Cron, CronExpression } from '@nestjs/schedule';
+import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { fetchJson } from '../integrations/integrations.util';
 import { parseEmbedding } from './image-embedding.service';
+
+/**
+ * When the inference service is kept awake: every five minutes in shop hours,
+ * India time (10:00–20:55), and never overnight. Awake round the clock it was
+ * ~80% of the Railway bill in September; the owner chose shop hours (20 Nov).
+ * Opening the catalogue still wakes it at any hour (`wake`).
+ *
+ * The zone is explicit because Railway runs in UTC, where "10-20" would mean
+ * 3:30pm–2:30am here.
+ */
+export const KEEP_WARM = { cronTime: '*/5 10-20 * * *', timeZone: 'Asia/Kolkata' } as const;
 
 /**
  * One piece of jewellery the inference service found inside a picture, embedded
@@ -123,14 +134,15 @@ export class MlInferenceService {
    * had thirteen seconds of the budget left, and no cold start finishes in
    * thirteen seconds.
    *
-   * A health call every five minutes costs one request and keeps it resident.
-   * Deliberately not tied to a tenant or a job queue — it is about the process
-   * being alive, which is nobody's work item.
+   * A health call every five minutes keeps it resident — in shop hours only
+   * (KEEP_WARM), so it can sleep, and stop billing, overnight. Deliberately
+   * not tied to a tenant or a job queue — it is about the process being alive,
+   * which is nobody's work item.
    *
    * Failures are logged at debug and never thrown: this is a convenience, and
    * a sleeping service must not make the application look unhealthy.
    */
-  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'inference.keep-warm' })
+  @Cron(KEEP_WARM.cronTime, { name: 'inference.keep-warm', timeZone: KEEP_WARM.timeZone })
   async keepWarm(): Promise<void> {
     if (!this.available) return;
     try {

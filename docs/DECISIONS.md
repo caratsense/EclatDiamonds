@@ -414,3 +414,11 @@ Owner, 20 Nov: every catalogue filter must work, alone and in every combination.
 - **A price filter matches a price the card shows**: a website option price or a Gati tag price; the design's own price only when it shows neither. The indicative price and the margin price are not shown, so they no longer match.
 - **Karat, metal and price ask about one option together**: "14K under ₹1.6L" needs a 14K option that costs under ₹1.6L. Metal now also reads the website options' metals.
 - **Typed filters are forgiving**: sub-category matches website sub-categories and categories in any case from the start of a word; size "12" = "IND 12"; colour also reads the material words and a rose-gold metal. A design taken off the website stops matching its website categories.
+
+# 2026-11-20 — the photo-search models stay warm in shop hours only
+
+Owner, 20 Nov, on PR #100's five-minute ping that kept the inference service awake round the clock: "Ping only in shop hours".
+
+- **Warm 10:00–20:55 India time**, one health call every five minutes, and asleep overnight, when it does not bill. Awake round the clock it was ~80% of the Railway bill in September.
+- **Opening the catalogue still wakes it at any hour** (PR #100), so a late-evening photo search is slower, not broken.
+- **The zone is explicit (`Asia/Kolkata`)** because Railway runs in UTC, where "10-20" would mean 3:30pm–2:30am here. A unit test reads the schedule `@Cron` registers and fails without it.
