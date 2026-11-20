@@ -9,6 +9,57 @@ import { sniffImageMime } from './image-fetch.util';
 import { MlInferenceService, DualEmbedding, View } from './ml-inference.service';
 import { CatalogueIndexService } from './catalogue-index.service';
 import { JewelryRankingService, MatchLevel, RankCandidate, RANKING_VERSION, unitOf } from './jewelry-ranking.service';
+import sharp from 'sharp';
+
+/**
+ * Photo problems worth naming when a search found nothing close. Checked only
+ * on that path, and conservative: a wrong "your photo is blurred" sends the
+ * salesperson after the wrong fix.
+ * ponytail: thresholds set on phone photos and screenshots, not a labelled
+ * jewellery set; re-fit them from NO_CLOSE_MATCH searches if they misfire.
+ */
+export async function photoIssues(buffer: Buffer): Promise<string[]> {
+  try {
+    const { width = 0, height = 0 } = await sharp(buffer).metadata();
+    // Measured at a fixed size so sharpness compares across photo sizes.
+    const grey = await sharp(buffer)
+      .rotate()
+      .resize(512, 512, { fit: 'inside', withoutEnlargement: true })
+      .greyscale()
+      .toBuffer();
+    const { channels, sharpness } = await sharp(grey).stats();
+    const issues: string[] = [];
+    if (Math.max(width, height) < 500) issues.push('the photo is very small (low resolution)');
+    // Gold on black velvet is dark on average too, but it has bright highlights.
+    if (channels[0].mean < 45 && channels[0].max < 160) issues.push('the photo is too dark');
+    if (sharpness < 0.5) issues.push('the photo is blurred or out of focus');
+    return issues;
+  } catch {
+    return [];
+  }
+}
+
+/** Why nothing matched closely, in words a salesperson can act on. */
+export function explainNoMatch(p: {
+  photos: number;
+  /** Photos the inference service could read and embed. */
+  read: number;
+  issues: string[];
+  /** Did the detector pick a piece out of any photo? null = cannot tell. */
+  pieceFound: boolean | null;
+}): string {
+  const why = [...p.issues];
+  if (p.read < p.photos) why.unshift(`${p.photos - p.read} of ${p.photos} photos could not be read`);
+  if (p.pieceFound === false) {
+    why.push('no ring, pendant or other piece could be picked out of the photo, so the whole picture (hand and background included) was compared');
+  }
+  if (why.length) {
+    return `Likely cause: ${why.join('; ')}. Retake it closer, in good light, with the piece filling more of the frame. Until then, these are the nearest designs in the catalogue.`;
+  }
+  return p.pieceFound
+    ? 'The piece was picked out of the photo clearly, but nothing in the catalogue looks like it closely. These are the nearest designs we have.'
+    : 'Nothing in the catalogue looks like this photo closely. These are the nearest designs we have.';
+}
 
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 /** Rows per page when loading the vector index into memory. */
@@ -97,7 +148,8 @@ export interface HeaderSink {
  *   - no ML_INFERENCE_URL            -> available:false (never fabricates)
  *   - nothing indexed yet            -> CATALOGUE_INDEX_BUILD_REQUIRED, without calling inference
  *   - provider error / no embed      -> SEARCH_ERROR (distinct from NO_CLOSE_MATCH)
- *   - nothing clears thresholds      -> NO_CLOSE_MATCH with empty results
+ *   - nothing clears thresholds      -> NO_CLOSE_MATCH: the nearest designs, each
+ *                                       labelled NO_CLOSE_MATCH, plus a `reason`
  * Results are ALWAYS real store-scoped catalogue products; raw vectors, model
  * internals and credentials are never returned. Query photos are never stored.
  */
@@ -120,6 +172,8 @@ export class JewelrySimilarityService implements OnModuleInit {
   private readonly cache: VectorCache;
   /** True when SEARCH_PGVECTOR=1 and the extension + ANN indexes were found at boot. */
   private ann = false;
+  /** Whether the inference service's jewellery detector ran on its last call; null until one answers. */
+  private detectorOn: boolean | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -442,6 +496,8 @@ export class JewelrySimilarityService implements OnModuleInit {
     if (hits) this.counters.cache_hit += hits;
     const miss = vecs.map((v, i) => (v ? -1 : i)).filter((i) => i >= 0);
     let failure = '';
+    /** Photos the service answered for but could not decode. */
+    let unreadable = 0;
     if (miss.length) {
       try {
         const call = () =>
@@ -460,6 +516,8 @@ export class JewelrySimilarityService implements OnModuleInit {
           await new Promise((r) => setTimeout(r, 2_000));
           out = await call();
         }
+        if (out.pipeline != null) this.detectorOn = out.pipeline >= 2;
+        unreadable = out.errors.length;
         for (const r of out.results) {
           const i = Number(r.id);
           if (!Number.isInteger(i) || !miss.includes(i)) continue;
@@ -488,7 +546,9 @@ export class JewelrySimilarityService implements OnModuleInit {
             // between somebody retrying and somebody giving up on the feature.
             'The image models were waking up, so this search ran out of time. ' +
             'Try once more — it will be quick now.'
-          : 'Visual search temporarily unavailable — inference service did not respond.',
+          : unreadable && !failure
+            ? 'This photo could not be read. Take a fresh photo, or send it as a JPG, PNG or WebP.'
+            : 'Visual search temporarily unavailable — inference service did not respond.',
       );
     }
 
@@ -527,24 +587,27 @@ export class JewelrySimilarityService implements OnModuleInit {
         }
       }
     }
-    const merged = [...best.entries()]
+    const all = [...best.entries()]
       .map(([productId, v]) => ({ productId, ...v }))
-      .sort((a, b) => b.closenessScore - a.closenessScore)
+      .sort((a, b) => b.closenessScore - a.closenessScore);
+    // If anything cleared the floor, only matches are shown. If nothing did,
+    // the nearest designs are shown as "not close", with the reason why.
+    const matched = all.some((h) => h.matchLevel !== 'NO_CLOSE_MATCH');
+    const merged = all
+      .filter((h) => !matched || h.matchLevel !== 'NO_CLOSE_MATCH')
       .slice(0, limit)
       .map((h, i) => ({ ...h, rank: i + 1 }));
     timing.rank = Date.now() - t;
 
     let body: any;
     if (!merged.length) {
+      // No candidate at all in this store's scope: nothing to be near.
       this.bump('search_no_match');
-      body = empty('NO_CLOSE_MATCH', 'No catalogue design matched closely enough.', {
-        matchLevel: outcomes[0]?.matchLevel ?? 'NO_CLOSE_MATCH',
-        closenessScore: Math.max(0, ...outcomes.map((o) => o.closenessScore)),
-      });
+      body = empty('NO_CLOSE_MATCH', 'There are no searchable catalogue photos in this store yet.');
     } else {
       t = Date.now();
-      this.bump('search_success');
-      const [products, images] = await Promise.all([
+      this.bump(matched ? 'search_success' : 'search_no_match');
+      const [products, images, reason] = await Promise.all([
         this.prisma.product.findMany({
           where: { id: { in: merged.map((h) => h.productId) }, organisationId: user.organisationId },
           select: {
@@ -572,17 +635,19 @@ export class JewelrySimilarityService implements OnModuleInit {
             },
           },
         }),
+        matched ? undefined : this.whyNoMatch(shots, queries),
       ]);
       const byId = new Map(products.map((p) => [p.id, p]));
       const imgById = new Map(images.map((m) => [m.id, m]));
       body = {
         queryId,
         available: true,
-        status: 'MATCHES_FOUND' as const,
+        status: matched ? ('MATCHES_FOUND' as const) : ('NO_CLOSE_MATCH' as const),
         /** How many of the submitted photographs produced a usable vector. */
         photosUsed: queries.length,
         matchLevel: merged[0].matchLevel,
         closenessScore: merged[0].closenessScore,
+        ...(reason ? { reason } : {}),
         results: merged.map((h) => {
           const p = byId.get(h.productId);
           const m = h.imageId ? imgById.get(h.imageId) : undefined;
@@ -624,6 +689,20 @@ export class JewelrySimilarityService implements OnModuleInit {
         `ms=${JSON.stringify(timing)}`,
     );
     return body;
+  }
+
+  /** The reason a search found nothing close, from the photos and what the detector saw. */
+  private async whyNoMatch(shots: { buffer: Buffer }[], queries: DualEmbedding[]): Promise<string> {
+    const issues = new Set((await Promise.all(shots.map((s) => photoIssues(s.buffer)))).flat());
+    return explainNoMatch({
+      photos: shots.length,
+      read: queries.length,
+      issues: [...issues],
+      // Only claim what the detector saw when it actually ran.
+      // ponytail: under DETECT_MODE=auto a clean product shot skips detection and
+      // reads as "no piece found"; production runs `always`.
+      pieceFound: this.detectorOn ? queries.some((q) => q.views.length > 0) : null,
+    });
   }
 
   // ---------------------------------------------------------------- feedback

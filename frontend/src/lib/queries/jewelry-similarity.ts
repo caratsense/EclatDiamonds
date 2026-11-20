@@ -70,7 +70,7 @@ export interface SimilaritySearchResult {
   matchLevel?: MatchLevel;
   closenessScore?: number;
   results?: SimilarityHit[];
-  /** Server-supplied reason on the unavailable / error paths. */
+  /** Server-supplied reason on the unavailable / error / no-close-match paths. */
   reason?: string;
   coverage?: IndexCoverage;
 }

@@ -422,3 +422,10 @@ Owner, 20 Nov, on PR #100's five-minute ping that kept the inference service awa
 - **Warm 10:00–20:55 India time**, one health call every five minutes, and asleep overnight, when it does not bill. Awake round the clock it was ~80% of the Railway bill in September.
 - **Opening the catalogue still wakes it at any hour** (PR #100), so a late-evening photo search is slower, not broken.
 - **The zone is explicit (`Asia/Kolkata`)** because Railway runs in UTC, where "10-20" would mean 3:30pm–2:30am here. A unit test reads the schedule `@Cron` registers and fails without it.
+
+# 2026-11-20 — photo search always shows the nearest pieces, and says why none is close
+
+Client, 20 Nov: photos of rings on fingers and on a palm found nothing, with no reason given.
+
+- **No close match no longer means an empty screen.** When nothing reaches the WEAK floor, the nearest designs come back, each marked "No Close Match". Supersedes OP-29's "NO_CLOSE_MATCH (empty)"; the list is empty only when the store has no searchable photos.
+- **The search says why**, from what it can actually check: a photo that could not be read, a very small, dark or blurred photo, no piece picked out of the photo (claimed only when the jewellery detector ran), or the piece was found but nothing in the catalogue looks like it. The photo checks run only on this path and are conservative; their thresholds are not fitted to a labelled jewellery set.

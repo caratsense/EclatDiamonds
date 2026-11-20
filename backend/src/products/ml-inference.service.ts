@@ -60,6 +60,8 @@ export interface BatchResponse {
   timings: Record<string, number>;
   /** Wall time of the HTTP call, as seen from here. */
   wallMs: number;
+  /** The pipeline that served the call: 2+ means the jewellery detector ran, 1 means it did not. */
+  pipeline?: number;
 }
 
 /** The views in a response, keeping only well-formed ones. */
@@ -252,6 +254,13 @@ export class MlInferenceService {
       });
     }
     const errors = (data?.errors ?? []).map((e: any) => ({ id: String(e?.id), error: String(e?.error ?? 'error') }));
-    return { results, errors, timings: numbers(data?.timings_ms), wallMs };
+    const pipeline = Number(data?.preprocessing_version);
+    return {
+      results,
+      errors,
+      timings: numbers(data?.timings_ms),
+      wallMs,
+      pipeline: Number.isInteger(pipeline) ? pipeline : undefined,
+    };
   }
 }
