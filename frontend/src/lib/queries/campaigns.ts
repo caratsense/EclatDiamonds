@@ -454,7 +454,16 @@ export const CAMPAIGN_STATUS_LABELS: Record<CampaignStatus, string> = {
   queued: "Queued",
   sending: "Sending",
   completed: "Sent",
-  partially_failed: "Sent with failures",
+  /*
+   * "Sent", not "Sent with failures".
+   *
+   * A broadcast that reached 125 people and skipped 78 who had no usable
+   * number is a broadcast that worked. Leading with the failure made the
+   * owner read a successful send as a broken one, and his instruction was
+   * plain: report what went out. The skipped are still counted, named and
+   * explained on the broadcast itself — they are just not the headline.
+   */
+  partially_failed: "Sent",
   cancelled: "Cancelled",
   failed: "Failed",
 };

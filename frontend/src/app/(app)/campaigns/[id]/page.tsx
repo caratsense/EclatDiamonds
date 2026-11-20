@@ -56,7 +56,17 @@ import { useSession } from "@/store/use-session";
 const EXCLUSION_LABELS: Record<string, string> = {
   blocked_customer: "Blocked customer",
   campaign_cancelled: "Broadcast cancelled",
-  policy_refused_at_send: "Consent or messaging rules refused it at send time",
+  /*
+   * Deliberately vague no longer.
+   *
+   * This read "Consent or messaging rules refused it at send time" for every
+   * refusal, so the owner — who had already told us his customer list IS the
+   * permission — kept reading "consent" for customers whose real problem was
+   * an unusable number or a thread not linked to any customer. The row now
+   * shows the server's own sentence when there is one, and falls back to this
+   * only when there is not.
+   */
+  policy_refused_at_send: "The messaging rules refused it at send time",
 };
 
 const RECIPIENT_TABS = [
@@ -253,10 +263,10 @@ export default function CampaignDetailPage() {
         <div className="flex gap-2 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground">
           <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0" />
           <p>
-            {c.counts.excluded.toLocaleString()} people were deliberately not messaged. Consent,
-            a STOP reply and blocked-customer status are each enough on their own, and the check
-            runs again per person at the moment of sending — so this number can grow after
-            approval.
+            {c.counts.excluded.toLocaleString()} of them were not messaged — each one is listed
+            below with the reason. A customer who has replied STOP, one marked blocked, and one
+            whose number cannot be messaged are each enough on their own, and every person is
+            checked again at the moment of sending, so this number can grow after approval.
           </p>
         </div>
       ) : null}
@@ -315,9 +325,17 @@ export default function CampaignDetailPage() {
                         </Badge>
                       </TableCell>
                       <TableCell className="max-w-md text-xs text-muted-foreground">
-                        {r.exclusionReason
-                          ? (EXCLUSION_LABELS[r.exclusionReason] ?? r.exclusionReason)
-                          : (r.lastError ?? "—")}
+                        {/*
+                          The server's own sentence first. It names the actual
+                          problem — "that is not a usable WhatsApp number" —
+                          where the category label can only say a rule refused
+                          it, which is what had fifty rows reading the same
+                          unhelpful line.
+                        */}
+                        {r.lastError ??
+                          (r.exclusionReason
+                            ? (EXCLUSION_LABELS[r.exclusionReason] ?? r.exclusionReason)
+                            : "—")}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {r.sentAt ? (

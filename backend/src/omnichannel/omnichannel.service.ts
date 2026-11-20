@@ -550,6 +550,20 @@ export class OmnichannelService implements OnModuleInit {
       languageCode?: string;
       templateComponents?: unknown[];
       idempotencyKey?: string;
+      /**
+       * The customer this send is for, when the caller already knows.
+       *
+       * A broadcast picks people BY customer record and then hands this method
+       * a phone number, which re-derives the identity from a ContactPoint row.
+       * 78 of one campaign's recipients have their number on the Party and no
+       * ContactPoint for it, so the thread was created anonymous and the worker
+       * then refused marketing to an anonymous thread — customers the sender
+       * had named, dropped for not being identifiable.
+       *
+       * Used only when the lookup finds nothing, and still checked through
+       * assertPartyAccess: a hint is not permission.
+       */
+      partyId?: string;
     },
     document?: QueuedDocument,
     /**
@@ -583,8 +597,9 @@ export class OmnichannelService implements OnModuleInit {
     // Store scope is enforced for a KNOWN customer. An unmatched number stays
     // anonymous — it is still bound by consent, window and template rules, and
     // marketing to it is refused outright by the policy.
-    const party = holder?.partyId
-      ? await this.assertPartyAccess(user, holder.partyId, opts.recordAuthorised)
+    const knownPartyId = holder?.partyId ?? input.partyId ?? null;
+    const party = knownPartyId
+      ? await this.assertPartyAccess(user, knownPartyId, opts.recordAuthorised)
       : null;
 
     let templateAssetId: string | undefined;
@@ -1849,7 +1864,10 @@ export class OmnichannelService implements OnModuleInit {
       return this.failPermanently(
         message,
         'consent_required',
-        'Marketing messages require a customer with recorded consent.',
+        // Says the actual condition. It used to read "requires a customer with
+        // recorded consent", which sent somebody looking for a consent record
+        // when the thread simply was not linked to a customer at all.
+        'This conversation is not linked to a customer, so a marketing message cannot be sent on it.',
       );
     }
     if (!template && !message.body?.trim()) {
