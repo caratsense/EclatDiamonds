@@ -1,5 +1,7 @@
 import { Prisma, StockStatus } from '@prisma/client';
 
+import { stockClassWhere } from '../stock/stock-class';
+
 /**
  * Statuses from which a piece may be pulled into a transfer / reserved — and,
  * identically, the only pieces another branch is ever shown when it asks.
@@ -59,6 +61,9 @@ export function pullableStockWhere(
     organisationId,
     storeId: fromStoreId,
     status: { in: TRANSFERABLE_STATUSES },
+    // Sellable merchandise only, as low-stock counts it: a customised piece is
+    // another customer's order and a display piece is not for sale.
+    AND: [stockClassWhere('standard')],
     ...(search
       ? {
           OR: [

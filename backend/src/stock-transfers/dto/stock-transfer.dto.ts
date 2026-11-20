@@ -44,6 +44,7 @@ export class CreateStockTransferDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(500)
   note?: string;
 }
 
@@ -69,6 +70,8 @@ export class PullableStockQueryDto {
 export class ReasonDto {
   @IsOptional()
   @IsString()
+  // Crosses branches now: a decline reason lands in the asking branch's bell.
+  @MaxLength(500)
   reason?: string;
 }
 

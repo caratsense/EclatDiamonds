@@ -198,8 +198,13 @@ export class ProductGroupCodesService implements OnModuleInit {
          * LR to something else later is different work and must run: a key of
          * just the code would collide with the finished job and be answered
          * "already done", leaving the correction stored but never applied.
+         *
+         * The save time is part of the key because a finished job keeps its
+         * key for ever: LR=ring, then bracelet, then ring again would otherwise
+         * collide with the first job and never re-file. A plain re-save needs no
+         * key to collapse it — it changes nothing, so nothing is enqueued.
          */
-        idempotencyKey: `${RECLASSIFY_GROUPS_JOB}:${user.organisationId}:${reclassifyKey(changed, codes)}`,
+        idempotencyKey: `${RECLASSIFY_GROUPS_JOB}:${user.organisationId}:${reclassifyKey(changed, codes)}:${Date.now()}`,
       });
     }
     return { codes, reclassifying: changed };

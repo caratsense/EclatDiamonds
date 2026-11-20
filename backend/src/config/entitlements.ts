@@ -180,6 +180,11 @@ export const ROUTE_FAMILIES: readonly RouteFamily[] = Object.freeze([
   { prefix: '/timelines', capability: 'quotation', why: 'Custom-order and production-stage tracking; reached from the quotation screen.' },
   { prefix: '/stock-transfers', capability: 'stock-transfers', why: 'Inter-branch stock movement.' },
   { prefix: '/stock', capability: 'inventory', why: 'Inventory and merchandising.' },
+  {
+    prefix: '/product-groups',
+    capability: 'settings/product-groups',
+    why: 'What the letters in a Gati design code mean; every category it files into is a jewellery one.',
+  },
   { prefix: '/payments', capability: 'payments', why: 'Payment collection tracking.' },
   { prefix: '/sales', capability: 'payments', why: 'Sale records; the same module as collection.' },
   { prefix: '/marketing', capability: 'marketing', why: 'Campaign management.' },
