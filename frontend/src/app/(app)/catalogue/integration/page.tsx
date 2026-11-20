@@ -177,7 +177,7 @@ function IntegrationView() {
           {w?.listingsTombstoned ? <KV label="Gone from the website">{n(w.listingsTombstoned)}</KV> : null}
           <KV label="Website variants">{n(w?.variants)}</KV>
           <KV label="Automatic sync">
-            {w?.lastSuccessAt ? "Weekly, Sunday 3:00 am" : "Weekly, Sunday 3:00 am, once a first full sync has finished"}
+            {w?.lastSuccessAt ? "Every evening, 7:00 pm" : "Every evening, 7:00 pm, once a first full sync has finished"}
           </KV>
           {w?.tokenStored ? <KV label="Token last used">{when(w.credentialLastUsedAt)}</KV> : null}
         </Panel>
