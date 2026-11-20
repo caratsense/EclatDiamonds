@@ -38,7 +38,11 @@ import {
   previewAudienceWhere,
   visibleStores,
 } from './campaign-audience';
-import { campaignOutcome, nextRecipientStatus } from './campaign-delivery';
+import {
+  campaignOutcome,
+  nextRecipientStatus,
+  recipientSendKey,
+} from './campaign-delivery';
 
 export const CAMPAIGN_EXPAND_JOB = 'campaign.expand';
 export const CAMPAIGN_SEND_JOB = 'campaign.send';
@@ -973,7 +977,23 @@ export class CampaignsService implements OnModuleInit {
           templateComponents: templateComponentsFor(
             resolveVariables(mappings, subjects.get(recipient.partyId ?? '') ?? {}),
           ),
-          idempotencyKey: `campaign:${campaign.id}:${recipient.id}`,
+          /*
+           * The ATTEMPT is part of the key, not just the recipient.
+           *
+           * Without it a retry is a no-op that looks like a send: the key is
+           * already spent, so queueToContact hands back the message it refused
+           * the first time, this loop reads that old refusal off it, and the
+           * row fails again with an error from an hour ago. The nails-event
+           * broadcast was re-sent three times that way after the header bug
+           * was fixed, and not one of the 125 was ever tried again.
+           *
+           * `attempts` was incremented by the claim above, so it is this
+           * attempt's number — and it is never reset, which is what makes each
+           * retry a key the provider has not seen. Within one attempt the key
+           * is still fixed, so a job that dies mid-chunk and runs again cannot
+           * message anybody twice.
+           */
+          idempotencyKey: recipientSendKey(campaign.id, recipient.id, recipient.attempts + 1),
         });
         /*
          * STILL QUEUED. `queueToContact` returns `{ message, job, ... }` — an

@@ -1,4 +1,4 @@
-import { campaignOutcome, nextRecipientStatus } from './campaign-delivery';
+import { campaignOutcome, nextRecipientStatus, recipientSendKey } from './campaign-delivery';
 
 /**
  * The incident this is written against, in the numbers it was reported in: a
@@ -120,5 +120,32 @@ describe('what the campaign itself says', () => {
 
   it('completes a campaign everybody was excluded from, having sent nothing', () => {
     expect(campaignOutcome({ excluded: 126 })).toEqual({ settled: true, status: 'completed' });
+  });
+});
+
+describe('the key that decides whether a retry is a send', () => {
+  it('is the same key twice within one attempt', () => {
+    // A send job that dies mid-chunk runs again and re-reads the same rows.
+    // Nobody may be messaged twice because of that.
+    expect(recipientSendKey('c1', 'r1', 1)).toBe(recipientSendKey('c1', 'r1', 1));
+  });
+
+  it('is a different key on the next attempt', () => {
+    /*
+     * The regression. With a key of campaign + recipient only, a retry after
+     * the cause was fixed found the key already spent, was handed back the
+     * message the provider had refused an hour earlier, and recorded that old
+     * refusal as the new outcome. 125 people were "re-sent" to three times and
+     * not one message was ever sent.
+     */
+    expect(recipientSendKey('c1', 'r1', 2)).not.toBe(recipientSendKey('c1', 'r1', 1));
+  });
+
+  it('never collides between two people in the same broadcast', () => {
+    expect(recipientSendKey('c1', 'r1', 1)).not.toBe(recipientSendKey('c1', 'r2', 1));
+  });
+
+  it('never collides between two broadcasts to the same person', () => {
+    expect(recipientSendKey('c1', 'r1', 1)).not.toBe(recipientSendKey('c2', 'r1', 1));
   });
 });
