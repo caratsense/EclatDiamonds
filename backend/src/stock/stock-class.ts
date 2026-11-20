@@ -1,4 +1,4 @@
-import { Prisma, StockClass } from '@prisma/client';
+import { Prisma, StockClass, StockStatus } from '@prisma/client';
 
 /**
  * One definition of "what kind of stock is this piece", read by every screen
@@ -12,6 +12,16 @@ import { Prisma, StockClass } from '@prisma/client';
  */
 
 export const STOCK_CLASSES: StockClass[] = ['standard', 'customised', 'non_stock'];
+
+/**
+ * A piece on the shelf: not sold, returned, melted or sent out. "On hand" and
+ * "In-Stock" both mean these three.
+ *
+ * Lives here with the class rules because the two together ARE the catalogue's
+ * stock count, and the low-stock sweep has to count what the catalogue counts —
+ * two different stock numbers on two screens is worse than no alert at all.
+ */
+export const ON_HAND: StockStatus[] = ['in_stock', 'aging', 'dead_stock'];
 
 export const STOCK_CLASS_LABEL: Record<StockClass, string> = {
   standard: 'Standard stock',

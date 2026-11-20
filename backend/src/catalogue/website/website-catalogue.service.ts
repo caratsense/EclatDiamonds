@@ -18,6 +18,7 @@ import { CredentialCrypto } from '../../integration/framework/credential-crypto'
 import { JobContext, JobsService } from '../../jobs/jobs.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CatalogueIndexService } from '../../products/catalogue-index.service';
+import { GroupCodeMap, groupCodesFor } from '../../sync/product-group-codes';
 import { categoryFromRow } from '../../sync/sync.service';
 import { WebsiteCatalogueClient, WebsiteClientError, WebsitePage, WebsiteProbe } from './website-catalogue.client';
 import { normalizeWebsiteProduct } from './website-normalizer';
@@ -92,8 +93,14 @@ export class WebsiteCatalogueService implements OnModuleInit, OnApplicationBoots
     void this.catchUp().catch((e) => this.log.warn(`website catch-up sync not queued: ${errText(e)}`));
   }
 
-  private ctx(runId: string): PersistContext {
-    return { runId, now: new Date(), categoryOf: categoryFromRow };
+  /**
+   * `codes` is the tenant's product-group map, read once per batch by the
+   * caller. Without it a website re-import would re-classify a design from the
+   * built-in codes alone and undo whatever head office had told us the rest of
+   * them mean (product-group-codes.ts).
+   */
+  private ctx(runId: string, codes: GroupCodeMap): PersistContext {
+    return { runId, now: new Date(), categoryOf: (row) => categoryFromRow(row, codes) };
   }
 
   // ── credential ──────────────────────────────────────────────────────────
@@ -483,6 +490,7 @@ export class WebsiteCatalogueService implements OnModuleInit, OnApplicationBoots
     seen: Set<string>,
     heartbeat: () => Promise<void>,
   ) {
+    const codes = await groupCodesFor(this.prisma, organisationId);
     const queue: string[] = [];
     for (const [i, payload] of products.entries()) {
       if (i && i % 25 === 0) await heartbeat();
@@ -490,13 +498,13 @@ export class WebsiteCatalogueService implements OnModuleInit, OnApplicationBoots
         const r = dryRun
           ? await this.prisma
               .$transaction(async (tx) => {
-                throw new DryRunRollback(await persistWebsiteProduct(tx, organisationId, this.ctx(runId), payload));
+                throw new DryRunRollback(await persistWebsiteProduct(tx, organisationId, this.ctx(runId, codes), payload));
               }, { timeout: 60_000 })
               .catch((e) => {
                 if (e instanceof DryRunRollback) return e.result as PersistResult;
                 throw e;
               })
-          : await this.prisma.$transaction((tx) => persistWebsiteProduct(tx, organisationId, this.ctx(runId), payload), { timeout: 60_000 });
+          : await this.prisma.$transaction((tx) => persistWebsiteProduct(tx, organisationId, this.ctx(runId, codes), payload), { timeout: 60_000 });
         this.count(r, c, preview, seen);
         queue.push(...r.newImageIds);
       } catch (e) {
@@ -504,7 +512,7 @@ export class WebsiteCatalogueService implements OnModuleInit, OnApplicationBoots
         const code = productCodeOf(payload);
         if (failures.length < PREVIEW_LIMIT) failures.push({ productCode: code, error: errText(e) });
         if (!dryRun) {
-          const id = await recordFailedSnapshot(this.prisma, organisationId, this.ctx(runId), payload, errText(e));
+          const id = await recordFailedSnapshot(this.prisma, organisationId, this.ctx(runId, codes), payload, errText(e));
           seen.add(id);
         } else seen.add(code ?? `#${seen.size}`);
       }
@@ -602,18 +610,22 @@ export class WebsiteCatalogueService implements OnModuleInit, OnApplicationBoots
     if (run.status !== 'running') throw new ConflictException(`Website sync run is ${run.status}; start a new one.`);
 
     const c = { created: 0, updated: 0, unchanged: 0, conflicted: 0, failed: 0, imagesExpected: 0, imagesReceived: 0, imagesQueued: 0 };
+    // Through `db`, not the request client: this batch runs inside the Gati
+    // ingestion transaction, and the codes it classifies by must be the ones
+    // that transaction can see.
+    const codes = await groupCodesFor(db as unknown as PrismaService, organisationId);
     const queue: string[] = [];
     for (const payload of body.products) {
       await db.$executeRawUnsafe('SAVEPOINT website_item');
       try {
-        const r = await persistWebsiteProduct(db, organisationId, this.ctx(run.id), payload);
+        const r = await persistWebsiteProduct(db, organisationId, this.ctx(run.id, codes), payload);
         await db.$executeRawUnsafe('RELEASE SAVEPOINT website_item');
         this.count(r, c, [], new Set());
         queue.push(...r.newImageIds);
       } catch (e) {
         await db.$executeRawUnsafe('ROLLBACK TO SAVEPOINT website_item');
         c.failed++;
-        await recordFailedSnapshot(db, organisationId, this.ctx(run.id), payload, errText(e));
+        await recordFailedSnapshot(db, organisationId, this.ctx(run.id, codes), payload, errText(e));
       }
     }
     const received = await db.externalProductSnapshot.count({ where: { organisationId, source: WEBSITE, syncRunId: run.id } });
@@ -720,8 +732,12 @@ export class WebsiteCatalogueService implements OnModuleInit, OnApplicationBoots
         where: { organisationId: org, source: WEBSITE, externalId: conflict.externalId },
       });
       if (snap) {
+        // Resolved before the transaction opens, not inside it: a read on
+        // another connection while this one holds a write transaction is how a
+        // pool deadlock starts.
+        const codes = await groupCodesFor(this.prisma, org);
         const r = await this.prisma.$transaction(
-          (tx) => persistWebsiteProduct(tx, org, this.ctx(snap.syncRunId ?? 'link'), snap.payload),
+          (tx) => persistWebsiteProduct(tx, org, this.ctx(snap.syncRunId ?? 'link', codes), snap.payload),
           { timeout: 60_000 },
         );
         await this.enqueueImages(org, r.newImageIds);

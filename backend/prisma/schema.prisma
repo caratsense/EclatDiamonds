@@ -200,13 +200,30 @@ enum StockStatus {
 /// in stock-transfers/stock-transfer-status.ts; no other path may change status.
 enum StockTransferStatus {
   draft
+  /// A PULL waiting on the branch that holds the pieces. Only a destination-
+  /// initiated transfer passes through here: asking another branch for a piece
+  /// is a request to them, so they answer before head office ever sees it.
+  pending_source
   submitted
   ho_approved
   dispatched
   received
   acknowledged
+  /// The holding branch said no. Distinct from `rejected`, which is head
+  /// office's no — the asker needs to know which of the two answered.
+  declined
   rejected
   cancelled
+}
+
+/// Which end of the move raised it. A push (`source`) is the original flow: the
+/// branch holding the stock sends it away. A pull (`destination`) is a branch
+/// asking another branch for a piece a customer is standing in front of them
+/// wanting. Both move the same goods through the same dispatch/receive/
+/// acknowledge stages; they differ only in who asks and who has to agree.
+enum StockTransferInitiator {
+  source
+  destination
 }
 
 enum SaleDocType {
@@ -558,6 +575,7 @@ model Organisation {
   auditLogs                    AuditLog[]
   saleLines                    SaleLine[]
   stockMovements               StockMovement[]
+  lowStockAlerts               LowStockAlert[]
   manufacturingOrderItems      ManufacturingOrderItem[]
   productionBags               ProductionBag[]
   importBatches                ImportBatch[]
@@ -810,6 +828,7 @@ model Store {
   parties               Party[]
   products              Product[]
   stockItems            StockItem[]
+  lowStockAlerts        LowStockAlert[]
   transfersFrom         StockTransfer[]            @relation("StockTransferFrom")
   transfersTo           StockTransfer[]            @relation("StockTransferTo")
   leads                 Lead[]
@@ -2089,6 +2108,15 @@ model Product {
   /// otherwise. Defaulted, so every existing design stays ordinary stock.
   stockClass StockClass @default(standard)
 
+  /// How many pieces of this design a branch should be holding before somebody
+  /// is told it is running short.
+  ///
+  /// NULL follows the tenant's default (`Organisation.settings.lowStockAlerts`).
+  /// Per-design rather than per-design-per-branch because nobody is going to
+  /// fill in a number for 1,415 designs × 11 branches; a default that works on
+  /// day one and an override for the designs that matter is what gets used.
+  reorderLevel Int?
+
   // Image lives in object storage; only the URL is stored here.
   imageUrl String?
   stlUrl   String?
@@ -2128,6 +2156,8 @@ model Product {
   importBatch         ImportBatch?           @relation(fields: [importBatchId], references: [id])
   /// Reorder asks against this design (SpecialRequest kind = reorder).
   reorderRequests     SpecialRequest[]
+  /// Branches currently short of this design, one row per branch.
+  lowStockAlerts      LowStockAlert[]
 
   @@unique([organisationId, sku])
   @@unique([organisationId, legacyId])
@@ -2424,6 +2454,40 @@ model StockMovement {
   @@index([organisationId])
 }
 
+/// Module 9 — one branch being short of one design, remembered so it is said once.
+///
+/// The row IS the de-duplication rule: the sweep tells somebody when it opens a
+/// row and never again until the branch recovers and `resolvedAt` is set. A
+/// daily repeat about something nobody has restocked is how people learn to
+/// ignore the bell.
+model LowStockAlert {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+  productId      String
+  storeId        String
+
+  /// The level in force and the pieces actually held when the row opened. Kept
+  /// so a notification read next week still says what it meant at the time,
+  /// even if the level has been changed since.
+  level  Int
+  onHand Int
+
+  firstAlertedAt DateTime  @default(now())
+  /// Null while the branch is still short. Set when it is back at its level,
+  /// which is also what allows the same pair to alert again later.
+  resolvedAt     DateTime?
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  store   Store   @relation(fields: [storeId], references: [id], onDelete: Cascade)
+
+  /// One row per design per branch, reopened rather than duplicated. The unique
+  /// index is also the claim: two API replicas sweeping at the same moment
+  /// produce one alert between them, not two.
+  @@unique([productId, storeId])
+  @@index([organisationId, resolvedAt])
+}
+
 /// Module 9 � inter-store stock transfer (state machine). Source store submits � 
 /// HO approves (pieces reserved) �  source dispatches �  destination receives (a
 /// StockMovement is written and each piece is re-homed to the destination) � 
@@ -2438,12 +2502,20 @@ model StockTransfer {
   fromStoreId String
   toStoreId   String
 
-  /// Rejection or cancellation reason, set on the terminal-negative transitions.
+  /// Which end raised it. Defaults to `source` so every existing transfer stays
+  /// exactly the push it was recorded as.
+  initiatedBy StockTransferInitiator @default(source)
+
+  /// Rejection, decline or cancellation reason, set on the negative transitions.
   reason String?
 
   // Actor id + timestamp per stage (ids only � names/roles resolved in the view).
   requestedById    String
   submittedAt      DateTime?
+  /// The holding branch's answer to a PULL (accept or decline) — kept apart
+  /// from approvedById, which is head office's decision on the movement itself.
+  sourceDecidedById String?
+  sourceDecidedAt   DateTime?
   approvedById     String?
   approvedAt       DateTime?
   dispatchedById   String?
@@ -3495,6 +3567,10 @@ enum NotificationKind {
   /// places a click, and when somebody reassigns a conversation by hand — the
   /// recipient is the person expected to make the first contact.
   lead_assigned
+  /// A branch is below its reorder level on a design it sells. Its own kind so
+  /// the bell can be filtered to shelf work, and so it is never confused with a
+  /// reorder REQUEST somebody raised (`special_request`).
+  low_stock
   system
 }
 

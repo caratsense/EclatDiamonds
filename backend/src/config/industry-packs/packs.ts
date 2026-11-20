@@ -427,6 +427,9 @@ const JEWELLERY: IndustryPack = {
       // Head office's website catalogue connection, sync runs and receipts. It
       // was reachable only from a link inside a design's detail (client, 20 Nov).
       'catalogue/integration',
+      // Gati design-code letters -> ProductCategory, whose values are all
+      // jewellery (ring, necklace, ...), so it is not a universal screen.
+      'settings/product-groups',
     ),
     aiCrmContext:
       'Jewellery retail enquiries, appointments, preferences, quotations and purchase follow-ups.',

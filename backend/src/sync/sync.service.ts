@@ -15,6 +15,7 @@ import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { ProvenanceService } from '../common/provenance.service';
 import { StaffSyncRowDto, StoreSyncRowDto } from './dto/sync.dto';
+import { GroupCodeMap, groupCodesFor } from './product-group-codes';
 import { gatiRateRows } from '../integrations/gati-rates';
 import { GatiIngestionContext, GatiRoutingPolicy, parseGatiRoutingPolicy } from './gati-ingestion.guard';
 import {
@@ -191,18 +192,25 @@ const CATEGORY_RULES: [RegExp, string][] = [
  */
 const CODE_FIELDS = ['StyleCode', 'StyleSKUNo', 'InwardSKUNo', 'JewelCode'] as const;
 
-function categoryFromCode(r: Rec): string | null {
+function categoryFromCode(r: Rec, codes?: GroupCodeMap): string | null {
   for (const f of CODE_FIELDS) {
-    const group = groupFromToken(r[f]);
+    const group = groupFromToken(r[f], codes);
     if (group) return group;
   }
   return null;
 }
 
-/** Category from the Gati product-group code first, then an English-word scan
- * (kept for website imports, which carry real descriptions); `other` if none. */
-export function categoryFromRow(r: Rec): string {
-  const fromCode = categoryFromCode(r);
+/**
+ * Category from the Gati product-group code first, then an English-word scan
+ * (kept for website imports, which carry real descriptions); `other` if none.
+ *
+ * `codes` is the tenant's merged map (built-in codes plus whatever head office
+ * has told us the rest mean). Callers that have an organisation in hand pass
+ * it; the default is the built-in map, which is what every caller used before
+ * the mapping became tenant data.
+ */
+export function categoryFromRow(r: Rec, codes?: GroupCodeMap): string {
+  const fromCode = categoryFromCode(r, codes);
   if (fromCode) return fromCode;
   const hay = Object.values(r)
     .map((v) => String(v ?? ''))
@@ -2326,6 +2334,7 @@ export class SyncService {
 
   async syncProducts(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const branch = await this.branchResolver('products', organisationId);
+    const codes = await groupCodesFor(this.prisma, organisationId);
     let upserted = 0;
     let skipped = 0;
     const synced: string[] = [];
@@ -2344,7 +2353,7 @@ export class SyncService {
         name: str(r.StyleCode) || sku,
         styleNumber: sent(r, 'StyleCode', str),
         gatiSyncedAt: now,
-        category: categoryFromRow(r) as any,
+        category: categoryFromRow(r, codes) as any,
         metal: metal as any,
         // Product.karat is a non-null Int; when purity is unknown the honest
         // signal is metal=gold_unspecified, and karat falls back to 0 (a design,
@@ -2377,6 +2386,7 @@ export class SyncService {
   // ── Inward (+Summary) -> StockItem ───────────────────────────────────────────
   async syncStock(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const branch = await this.branchResolver('stock', organisationId);
+    const codes = await groupCodesFor(this.prisma, organisationId);
     const productByStyle = await this.idMap(
       'product',
       records.map((r) => r.StyleId),
@@ -2460,6 +2470,21 @@ export class SyncService {
       }
       const stockStatus = stockStatusFromInward(r);
       byStatus[stockStatus] = (byStatus[stockStatus] ?? 0) + 1;
+      /*
+       * The piece's own code first, then the linked design's.
+       *
+       * An Inward row sends no StyleCode and `JewelCode` is an inward serial on
+       * this install, so a piece whose own SKU is a serial had nothing to read
+       * and stayed `other` — while its design was filed correctly. The 17 Nov
+       * migration repaired exactly those rows from the design's code; without
+       * the same fall-back here the next batch for that piece would undo the
+       * repair, and would undo a product-group code head office had just
+       * supplied. Only reached when the piece itself yields nothing, so no row
+       * that classifies today can change its answer.
+       */
+      const ownCategory = categoryFromRow(r, codes);
+      const category =
+        ownCategory !== 'other' ? ownCategory : categoryFromRow({ StyleCode: product?.styleNumber }, codes);
       const data = {
         storeId,
         productId,
@@ -2467,7 +2492,7 @@ export class SyncService {
         name: str(r.JewelCode),
         // Same keyword rule as the product sync — without this the piece keeps
         // the `other` default and every stock row reads "Other".
-        category: categoryFromRow(r) as any,
+        category: category as any,
         metal: metal as any,
         karat: karatFromRow(r),
         status: stockStatus as any,
@@ -3091,6 +3116,7 @@ export class SyncService {
     // Karat -> MetalKind through the one shared mapping (catalogue/metal.ts).
     // This used to file 9KT and 14KT as 18K, which priced and filtered a 9KT
     // ring as something it is not; an unreadable karat is now gold_unspecified.
+    const codes = await groupCodesFor(this.prisma, organisationId);
     let upserted = 0;
     let skipped = 0;
     let created = 0;
@@ -3183,7 +3209,7 @@ export class SyncService {
           composition: (composition ?? undefined) as Prisma.InputJsonValue | undefined,
           sku: code,
           name: str(r.name) || code,
-          category: categoryFromRow(r) as any,
+          category: categoryFromRow(r, codes) as any,
           metal: karatToMetal(r.metal, karat || null),
           karat,
           price: price ?? 0,

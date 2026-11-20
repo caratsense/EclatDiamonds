@@ -47,7 +47,7 @@ export const MODULES = [
   // Administration
   'settings/onboarding', 'settings/stores', 'new-store', 'settings/configuration', 'settings/rates',
   'settings/integrations', 'settings/integrations/templates',
-  'data', 'settings/audit', 'settings/staff-digest', 'settings/lead-tags',
+  'data', 'settings/audit', 'settings/staff-digest', 'settings/lead-tags', 'settings/product-groups',
   'data/images', 'settings/messaging-routes', 'settings/channels', 'settings/access',
 ] as const;
 
@@ -182,6 +182,10 @@ export const HEAD_OFFICE_DELEGABLE: ModuleSlug[] = [
   // to become their typist, or hand over all of head office to avoid it.
   'bot-script/edit',
   'settings/messaging-routes',
+  // The codes in a design number are the merchandiser's subject, not the
+  // owner's. Head office should be able to hand the screen over without
+  // handing over head office.
+  'settings/product-groups',
 ];
 
 /** The roles in use. Area manager and storeperson are retired: nobody can be given them. */
@@ -467,6 +471,12 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
    * granted, "Add campaign" unusable.
    */
   ['crm/qualification/adset-rules', 'bot-script/edit'],
+  /*
+   * The product-group screen's own API. @Roles('head_office') like the rest of
+   * the delegable screens, so without this a delegated holder would open the
+   * page and be refused by it.
+   */
+  ['product-groups', 'settings/product-groups'],
 ];
 
 type Route = { module: ModuleSlug | null; soft: boolean };

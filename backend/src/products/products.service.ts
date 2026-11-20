@@ -5,13 +5,13 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Availability, MetalKind, Prisma, ProductCategory, StockStatus } from '@prisma/client';
+import { Availability, MetalKind, Prisma, ProductCategory } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
 import { PageRequest, Paginated } from '../common/pagination';
 import { StorageService } from '../storage/storage.service';
-import { stockClassWhere } from '../stock/stock-class';
+import { ON_HAND, stockClassWhere } from '../stock/stock-class';
 import { CreateProductDto } from './dto/product.dto';
 import { forViewer } from './composition';
 import { ROLE_RANK } from '../common/role.util';
@@ -136,8 +136,6 @@ export interface CardExtras {
 const ONLINE_RANGE_KINDS = ['variant', 'min_variant', 'natural_diamond'];
 /** Gati tag price rows (one, or a store min & max pair). */
 const isTagKind = (k: string) => k.startsWith('gati_tag');
-/** A piece on the shelf: not sold, returned or sent out. "On hand" and "In-Stock" both count these. */
-const ON_HAND: StockStatus[] = ['in_stock', 'aging', 'dead_stock'];
 /** The prices a catalogue card shows: website option prices and Gati tag prices. */
 const SHOWN_PRICE: Prisma.ProductPriceWhereInput = {
   OR: [{ kind: { in: ONLINE_RANGE_KINDS } }, { kind: { startsWith: 'gati_tag' } }],

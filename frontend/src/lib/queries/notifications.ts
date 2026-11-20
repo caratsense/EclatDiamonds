@@ -34,6 +34,8 @@ export type NotificationKind =
   | "attendance_review"
   | "reminder"
   | "lead_assigned"
+  /** A branch is below its reorder level on a design it sells. */
+  | "low_stock"
   | "system";
 
 export interface FeedNotification {

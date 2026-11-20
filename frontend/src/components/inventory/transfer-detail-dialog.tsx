@@ -60,11 +60,34 @@ interface Stage {
   at: string | null;
 }
 
-/** Build the ordered lifecycle stages that have happened, for the timeline. */
+/**
+ * Build the ordered lifecycle stages that have happened, for the timeline.
+ *
+ * A pull has one more step at the front — the branch holding the pieces
+ * answering — and its own words for the step before it: a request goes to that
+ * branch first, not to Head Office.
+ */
 function stagesFor(t: StockTransfer): Stage[] {
+  const pulling = t.initiatedBy === "destination";
   return [
     { label: "Created", actor: t.requestedBy, at: t.createdAt },
-    { label: "Submitted to HO", actor: t.requestedBy, at: t.submittedAt },
+    {
+      label: pulling ? `Sent to ${t.fromStoreName}` : "Submitted to HO",
+      actor: t.requestedBy,
+      at: t.submittedAt,
+    },
+    ...(pulling
+      ? [
+          {
+            label:
+              t.status === "declined"
+                ? `Declined by ${t.fromStoreName}`
+                : `Accepted by ${t.fromStoreName}`,
+            actor: t.sourceDecidedBy,
+            at: t.sourceDecidedAt,
+          },
+        ]
+      : []),
     { label: "HO approved", actor: t.approvedBy, at: t.approvedAt },
     { label: "Dispatched", actor: t.dispatchedBy, at: t.dispatchedAt },
     { label: "Received", actor: t.receivedBy, at: t.receivedAt },
@@ -76,7 +99,7 @@ export function TransferDetailDialog({
   transferId,
   onOpenChange,
 }: TransferDetailDialogProps) {
-  const { role, stores } = useSession();
+  const { role, stores, user } = useSession();
   const { data: t, isLoading, isError } = useStockTransfer(transferId);
   const action = useTransferAction();
 
@@ -89,7 +112,9 @@ export function TransferDetailDialog({
     [stores],
   );
 
-  const actions = t ? availableActions(t, role, operatedStoreIds) : [];
+  // The signed-in person, not just their role: nobody answers their own
+  // request, and a manager who runs both branches is a real case.
+  const actions = t ? availableActions(t, role, operatedStoreIds, user.id) : [];
 
   function run(meta: ActionMeta, note?: string) {
     if (!t) return;
@@ -147,7 +172,7 @@ export function TransferDetailDialog({
                     {TRANSFER_STATUS_LABELS[t.status]}
                   </Badge>
                 </DialogTitle>
-                <DialogDescription className="flex items-center gap-1.5 pt-1">
+                <DialogDescription className="flex flex-wrap items-center gap-1.5 pt-1">
                   <span className="font-medium text-foreground">
                     {t.fromStoreName}
                   </span>
@@ -156,15 +181,27 @@ export function TransferDetailDialog({
                     {t.toStoreName}
                   </span>
                   <span>· {t.itemCount} piece{t.itemCount === 1 ? "" : "s"}</span>
+                  {/* Who asked changes what this screen means to the reader:
+                      stock you are giving up, or stock you are waiting for. */}
+                  {t.initiatedBy === "destination" ? (
+                    <span>· requested by {t.toStoreName}</span>
+                  ) : null}
                 </DialogDescription>
               </DialogHeader>
 
-              {/* Rejection / cancellation reason. */}
+              {/* Why it stopped — rejected by HO, declined by the branch, or withdrawn. */}
               {t.reason &&
-              (t.status === "rejected" || t.status === "cancelled") ? (
+              (t.status === "rejected" ||
+                t.status === "declined" ||
+                t.status === "cancelled") ? (
                 <p className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm">
                   <span className="font-medium">
-                    {t.status === "rejected" ? "Rejected" : "Cancelled"}:
+                    {t.status === "rejected"
+                      ? "Rejected"
+                      : t.status === "declined"
+                        ? `Declined by ${t.fromStoreName}`
+                        : "Cancelled"}
+                    :
                   </span>{" "}
                   {t.reason}
                 </p>
@@ -291,10 +328,14 @@ export function TransferDetailDialog({
             <DialogTitle>
               {reasonFor?.action === "reject"
                 ? "Reject transfer"
-                : "Cancel transfer"}
+                : reasonFor?.action === "decline"
+                  ? "Decline the request"
+                  : "Cancel transfer"}
             </DialogTitle>
             <DialogDescription>
-              Add an optional reason — it is recorded on the transfer.
+              {reasonFor?.action === "decline"
+                ? "Say why you are keeping the piece — the branch that asked sees this."
+                : "Add an optional reason — it is recorded on the transfer."}
             </DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
@@ -304,7 +345,9 @@ export function TransferDetailDialog({
               placeholder={
                 reasonFor?.action === "reject"
                   ? "e.g. Pieces needed at the source store this week."
-                  : "e.g. Requested in error."
+                  : reasonFor?.action === "decline"
+                    ? "e.g. Promised to a customer here on Saturday."
+                    : "e.g. Requested in error."
               }
               value={reason}
               onChange={(e) => setReason(e.target.value)}
@@ -321,7 +364,9 @@ export function TransferDetailDialog({
               Back
             </Button>
             <Button
-              variant="destructive"
+              /* Declining is an answer, not damage — it confirms like any other
+                 decision rather than reading as a red warning. */
+              variant={reasonFor?.action === "decline" ? "gold" : "destructive"}
               disabled={action.isPending}
               onClick={() =>
                 reasonFor && run(reasonFor, reason.trim() || undefined)
@@ -331,7 +376,9 @@ export function TransferDetailDialog({
                 ? "Working…"
                 : reasonFor?.action === "reject"
                   ? "Reject transfer"
-                  : "Cancel transfer"}
+                  : reasonFor?.action === "decline"
+                    ? "Decline request"
+                    : "Cancel transfer"}
             </Button>
           </DialogFooter>
         </DialogContent>

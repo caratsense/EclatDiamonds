@@ -3,6 +3,7 @@ import { StockTransfersService } from './stock-transfers.service';
 import {
   CreateStockTransferDto,
   ListStockTransferDto,
+  PullableStockQueryDto,
   ReasonDto,
 } from './dto/stock-transfer.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
@@ -21,6 +22,12 @@ import { Roles } from '../auth/roles.decorator';
  * re-derives the authoritative store from the record, never the request. The
  * ModuleAccessGuard runs first, so only roles holding the `stock-transfers`
  * screen (auth/access.ts) reach these floors at all.
+ *
+ * A PULL (asking another branch for a piece) adds three routes and no new
+ * floors: `pullable` and `pull` sit with the other asking routes at
+ * `salesperson`, and `accept`/`decline` are the holding branch's answer, so
+ * they sit with fulfilment at `store_manager`. Head office approves a pull at
+ * exactly the same point it approves a push.
  */
 @Controller('stock-transfers')
 export class StockTransfersController {
@@ -38,6 +45,20 @@ export class StockTransfersController {
     return this.transfers.list(user, store, query ?? {});
   }
 
+  /**
+   * The pieces one OTHER branch has available, so the person at the counter can
+   * ask for one. This is the platform's only cross-branch stock read; what it
+   * exposes and to whom is set out in pullable-stock.ts.
+   *
+   * Declared before `@Get(':id')` on purpose: Nest matches routes in
+   * declaration order, so the parameterised one would otherwise swallow it.
+   */
+  @Roles('salesperson')
+  @Get('pullable')
+  pullable(@CurrentUser() user: AuthUser, @Query() query: PullableStockQueryDto) {
+    return this.transfers.pullableStock(user, query);
+  }
+
   // Same visibility as the list: either side of the transfer, or head office.
   @Roles('salesperson')
   @Get(':id')
@@ -53,11 +74,33 @@ export class StockTransfersController {
     return this.transfers.create(user, dto);
   }
 
+  // Asking is the same job as raising, so the same floor: the salesperson with
+  // the customer in front of them is exactly who should be able to ask.
+  @Roles('salesperson')
+  @Post('pull')
+  createPull(@CurrentUser() user: AuthUser, @Body() dto: CreateStockTransferDto) {
+    return this.transfers.createPull(user, dto);
+  }
+
   // Submitting is part of raising (a draft nobody can submit never reaches HO).
   @Roles('salesperson')
   @Post(':id/submit')
   submit(@CurrentUser() user: AuthUser, @Param('id') id: string) {
     return this.transfers.submit(user, id);
+  }
+
+  // The holding branch's answer to a pull. Accepting and declining are the same
+  // weight deliberately — refusing is a normal outcome, not an escalation.
+  @Roles('store_manager')
+  @Post(':id/accept')
+  accept(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.transfers.acceptPull(user, id);
+  }
+
+  @Roles('store_manager')
+  @Post(':id/decline')
+  decline(@CurrentUser() user: AuthUser, @Param('id') id: string, @Body() dto: ReasonDto) {
+    return this.transfers.declinePull(user, id, dto);
   }
 
   @Roles('head_office')
