@@ -700,4 +700,57 @@ describe('Catalogue product API (e2e)', () => {
       .attach('files', svg, { filename: 'logo.png', contentType: 'image/png' })
       .expect(400);
   });
+
+  // ---- a design and its photos added by hand -------------------------------
+  const addDesign = (body: object) =>
+    request(server()).post('/products').set(as('catapi_ho')).send({ name: 'Hand Ring', category: 'ring', ...body });
+
+  it('a design added by hand takes its karat from the metal, and refuses one that contradicts it', async () => {
+    const made = await addDesign({ sku: '  CATAPI-HAND-1 ', metal: 'gold_18k' }).expect(201);
+    expect(made.body).toMatchObject({ sku: 'CATAPI-HAND-1', karat: 18 });
+
+    const clash = await addDesign({ sku: 'CATAPI-HAND-2', metal: 'gold_22k', karat: 18 }).expect(400);
+    expect(clash.body.message).toMatch(/does not match the metal, which is 22K/);
+    await addDesign({ sku: 'CATAPI-HAND-3', metal: 'platinum', karat: 99 }).expect(400);
+    // Platinum implies no karat.
+    expect((await addDesign({ sku: 'CATAPI-HAND-4', metal: 'platinum' }).expect(201)).body.karat).toBe(0);
+
+    // An absurd number is a 400, not a database overflow (500).
+    for (const bad of [{ weightGrams: 1e10 }, { price: 1e13 }, { caratWeight: 1e8 }, { leadTimeDays: 100_000 }]) {
+      await addDesign({ sku: 'CATAPI-HAND-5', metal: 'silver', ...bad }).expect(400);
+    }
+    await addDesign({ sku: '   ', metal: 'silver' }).expect(400);
+  });
+
+  it('two saves of one SKU at once make one design and a 409, never a 500', async () => {
+    const body = { sku: 'CATAPI-RACE-1', metal: 'silver' };
+    const codes = (await Promise.all([addDesign(body), addDesign(body)])).map((r) => r.status).sort();
+    expect(codes).toEqual([201, 409]);
+  });
+
+  it('a photo added by hand goes after the newest one, even after others were removed', async () => {
+    const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c6300010000050001', 'hex');
+    const id = (await addDesign({ sku: 'CATAPI-PICS-1', metal: 'silver' }).expect(201)).body.id;
+    await request(server())
+      .post(`/products/${id}/images`)
+      .set(as('catapi_ho'))
+      .attach('files', png, { filename: 'a.png', contentType: 'image/png' })
+      .attach('files', png, { filename: 'b.png', contentType: 'image/png' })
+      .attach('files', png, { filename: 'c.png', contentType: 'image/png' })
+      .expect(201);
+    const [a, b, c] = await prisma.productImage.findMany({ where: { productId: id }, orderBy: { sourceOrder: 'asc' } });
+    for (const gone of [a, b]) {
+      await request(server()).delete(`/products/${id}/images/${gone.id}`).set(as('catapi_ho')).expect(200);
+    }
+    const after = await request(server())
+      .post(`/products/${id}/images`)
+      .set(as('catapi_ho'))
+      .attach('files', png, { filename: 'd.png', contentType: 'image/png' })
+      .expect(201);
+    // C stays the cover; D, the newest, comes after it.
+    expect(after.body.map((i: { id: string; isPrimary: boolean }) => [i.id === c.id ? 'c' : 'd', i.isPrimary])).toEqual([
+      ['c', true],
+      ['d', false],
+    ]);
+  });
 });

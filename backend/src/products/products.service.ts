@@ -17,6 +17,7 @@ import { forViewer } from './composition';
 import { ROLE_RANK } from '../common/role.util';
 import { applyImageOrder } from '../catalogue/image-order';
 import { CatalogueIndexService } from './catalogue-index.service';
+import { karatFromMetal } from '../sync/sync.util';
 import { sniffImageMime } from './image-fetch.util';
 import sharp from 'sharp';
 import {
@@ -1088,6 +1089,13 @@ export class ProductsService {
     });
     if (existing) throw new ConflictException(`SKU "${dto.sku}" already exists`);
 
+    // The metal already says the karat (18K gold is 18): fill it in when left
+    // blank, as the Gati sync does, and refuse one that contradicts it.
+    const impliedKarat = karatFromMetal(dto.metal);
+    if (dto.karat != null && impliedKarat != null && dto.karat !== impliedKarat) {
+      throw new BadRequestException(`Karat ${dto.karat} does not match the metal, which is ${impliedKarat}K`);
+    }
+
     const created = await this.prisma.product.create({
       data: {
         organisationId: user.organisationId,
@@ -1101,7 +1109,7 @@ export class ProductsService {
         categoryLabel: dto.categoryLabel?.trim() || null,
         materialLabel: dto.materialLabel?.trim() || null,
         unitOfMeasure: dto.unitOfMeasure?.trim() || null,
-        karat: dto.karat ?? 0,
+        karat: dto.karat ?? impliedKarat ?? 0,
         weightGrams:
           dto.weightGrams != null ? new Prisma.Decimal(dto.weightGrams) : undefined,
         caratWeight:
@@ -1113,6 +1121,13 @@ export class ProductsService {
         storeId: dto.storeId,
         attributes: (dto.attributes ?? undefined) as Prisma.InputJsonValue | undefined,
       },
+    }).catch((err) => {
+      // Two saves of one SKU at once both pass the check above; the database's
+      // unique index decides, and the loser gets the same answer as a re-save.
+      if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
+        throw new ConflictException(`SKU "${dto.sku}" already exists`);
+      }
+      throw err;
     });
     return toView(created);
   }
@@ -1212,7 +1227,14 @@ export class ProductsService {
 
     // Every photo is readable before any is stored: a batch is all or nothing.
     const photos = await Promise.all(files.map((f) => ProductsService.webImage(f)));
-    const existing = await this.prisma.productImage.count({ where: { productId: id, source: 'manual' } });
+    // After the newest hand-added photo, never "after as many as there are":
+    // once one is deleted, a count hands a new photo an older one's place
+    // (and with it, sometimes, the cover).
+    const last = await this.prisma.productImage.aggregate({
+      where: { productId: id, source: 'manual' },
+      _max: { sourceOrder: true },
+    });
+    const next = (last._max.sourceOrder ?? -1) + 1;
     const urls: string[] = [];
     for (const [i, photo] of photos.entries()) {
       // A unique name per photo: `${id}.${ext}` would have each angle overwrite
@@ -1230,7 +1252,7 @@ export class ProductsService {
             source: 'manual',
             angle: angles?.[i]?.trim() || null,
             // Keeps the batch in the order it was taken, after earlier uploads.
-            sourceOrder: existing + i,
+            sourceOrder: next + i,
           },
         });
         out.push(img.id);

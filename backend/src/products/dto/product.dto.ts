@@ -6,13 +6,17 @@ import {
   IsObject,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
+import { Transform } from 'class-transformer';
 import { Availability, MetalKind, ProductCategory } from '@prisma/client';
 import { IsRealName } from '../../common/contact.util';
 
 export class CreateProductDto {
+  // Trimmed before it is checked: "  R001 " is R001, and "   " is no SKU at all.
+  @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
   @IsString()
   @IsNotEmpty()
   sku!: string;
@@ -58,24 +62,30 @@ export class CreateProductDto {
   @MaxLength(24)
   unitOfMeasure?: string;
 
+  // Upper limits sit far above any real piece and below each column's own
+  // ceiling, so a typo is a 400 that says so, not a database overflow (500).
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(24)
   karat?: number;
 
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(100_000)
   weightGrams?: number;
 
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(10_000)
   caratWeight?: number;
 
   @IsOptional()
   @IsNumber()
   @Min(0)
+  @Max(10_000_000_000)
   price?: number;
 
   @IsOptional()
@@ -85,6 +95,7 @@ export class CreateProductDto {
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(3650)
   leadTimeDays?: number;
 
   @IsOptional()

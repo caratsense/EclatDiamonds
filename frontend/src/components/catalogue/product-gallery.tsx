@@ -27,6 +27,8 @@ import { apiErrorMessage, cn } from "@/lib/utils";
 
 /** Per-photo ceiling, matching the API's own limit on this route. */
 const MAX_BYTES = 12 * 1024 * 1024;
+/** Photos per upload, the API's own limit on this route. */
+const MAX_FILES = 10;
 
 /** The views worth labelling, in the order a piece is usually shot. */
 const ANGLES = ["Front", "Side", "Back", "On model", "Detail", "CAD / design"] as const;
@@ -103,6 +105,10 @@ export function ProductGallery({
     // Clear immediately: re-picking the same file otherwise fires no change event.
     e.target.value = "";
     if (!chosen.length) return;
+    if (chosen.length > MAX_FILES) {
+      toast.error(`Up to ${MAX_FILES} photos at a time. Pick fewer, then add the rest.`);
+      return;
+    }
     // Shrunk here to a ≤1600 px JPEG: an iPad photo is several MB over shop
     // wifi, and its HEIC (which Safari decodes) would show nowhere else. A CAD
     // sheet keeps full resolution for its dimension callouts.
