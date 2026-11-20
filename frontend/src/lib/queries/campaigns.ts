@@ -1,4 +1,9 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 
@@ -357,17 +362,34 @@ export function useCampaign(id: string | undefined) {
   });
 }
 
+/**
+ * The recipient list, a page at a time.
+ *
+ * The endpoint has always paged — it returns a cursor and takes one — and the
+ * screen never used it: it loaded fifty rows and printed "showing the first
+ * 50" underneath. On a broadcast of 204 that hid three quarters of the people
+ * involved, including most of the ones who had not received it, which is the
+ * part anybody opening this screen came to look at.
+ */
 export function useCampaignRecipients(id: string | undefined, status?: string) {
-  return useQuery({
+  return useInfiniteQuery({
     queryKey: keys.recipients(id ?? "", status),
     enabled: Boolean(id),
-    queryFn: async () => {
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) => {
       const { data } = await api.get<{ items: CampaignRecipientRow[]; nextCursor: string | null }>(
         `/campaigns/${id}/recipients`,
-        { params: { ...(status ? { status } : {}), limit: 50 } },
+        {
+          params: {
+            ...(status ? { status } : {}),
+            ...(pageParam ? { cursor: pageParam } : {}),
+            limit: 50,
+          },
+        },
       );
       return data;
     },
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
   });
 }
 

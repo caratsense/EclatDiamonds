@@ -17,6 +17,7 @@ import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { IdentityService } from './identity.service';
+import { explainDeliveryError } from '../integrations/whatsapp-delivery-errors';
 import {
   MAX_CONDITIONS,
   SegmentDefinition,
@@ -693,7 +694,10 @@ export class CampaignsService implements OnModuleInit {
         contact: maskContact(r.contactValue),
         status: r.status,
         exclusionReason: r.exclusionReason,
-        lastError: r.lastError,
+        // Meta's codes, as a sentence. Stored as codes so no echoed customer
+        // content lands in the row; explained here so the report does not read
+        // "Provider error 131049" to the person deciding what to do about it.
+        lastError: explainDeliveryError(r.lastError),
         sentAt: r.sentAt,
       })),
       nextCursor: rows.length > limit ? page[page.length - 1]?.id : null,

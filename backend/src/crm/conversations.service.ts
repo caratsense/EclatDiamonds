@@ -43,6 +43,7 @@ import { LeadIntakeService } from './lead-intake.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import type { AdReferral } from '../integration/contracts/ad-referral';
 import { ProvenanceTagsService } from './provenance-tags.service';
+import { explainDeliveryError } from '../integrations/whatsapp-delivery-errors';
 
 /**
  * ConversationsService — the unified inbox (Phase A3).
@@ -2063,6 +2064,10 @@ export class ConversationsService {
       const asset = assetId ? templateById.get(assetId) : undefined;
       return {
         ...message,
+        // The same sentence the broadcast report gives, for the same reason: a
+        // colleague looking at a failed message needs to know whether to try
+        // again or to stop.
+        error: explainDeliveryError(message.error),
         // The raw provider payload stays on the server. It carries the sender's
         // WhatsApp profile name and the full envelope, none of which the inbox
         // needs, and shipping it to every browser that opens a thread is a wider
