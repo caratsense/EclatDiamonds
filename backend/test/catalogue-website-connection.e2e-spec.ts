@@ -223,24 +223,36 @@ describe('Website connection health (e2e, stubbed website)', () => {
     expect(await prisma.product.count({ where: { organisationId: C.org } })).toBe(0);
   });
 
-  it('the weekly schedule waits for a passed test AND a finished first full sync', async () => {
+  it('the evening schedule waits for a first full sync, re-tests a failed connection, and catches up a missed evening', async () => {
     process.env.SCHEDULER_ENABLED = 'true';
     try {
-      const mine = () => prisma.jobTask.count({ where: { organisationId: C.org, kind: 'catalogue.website_sync' } });
-      await website.scheduleWeekly();
-      expect(await mine()).toBe(0);
+      const jobs = (key: string) =>
+        prisma.jobTask.count({ where: { organisationId: C.org, kind: 'catalogue.website_sync', idempotencyKey: { contains: key } } });
+      // The last test failed (above) and there is no full import yet: the first one is a person's call.
+      await website.scheduleDaily();
+      await prisma.catalogueSyncRun.create({ data: { organisationId: C.org, source: 'website', dryRun: true, status: 'done', finishedAt: new Date() } });
+      await website.scheduleDaily();
+      expect(await jobs('daily-')).toBe(0);
+      // A full sync finished two days ago: tonight's run is queued although the
+      // last test failed, and a restart catches up the missed evening.
+      const old = await prisma.catalogueSyncRun.create({
+        data: { organisationId: C.org, source: 'website', dryRun: false, status: 'done', finishedAt: new Date(Date.now() - 2 * 86_400_000) },
+      });
+      await website.scheduleDaily();
+      expect(await jobs('daily-')).toBe(1);
+      await website.catchUp();
+      expect(await jobs('catchup-')).toBe(1);
+      // Synced within the day: nothing to catch up.
+      await prisma.catalogueSyncRun.update({ where: { id: old.id }, data: { finishedAt: new Date() } });
+      await prisma.jobTask.deleteMany({ where: { organisationId: C.org, kind: 'catalogue.website_sync' } });
+      await website.catchUp();
+      expect(await jobs('catchup-')).toBe(0);
+      // Each run re-tests first: still down, it stays failed; back up, it is verified again.
+      expect(await website.recheckConnection(C.org)).toBe(false);
+      expect((await health()).website).toMatchObject({ verified: false, connectionState: 'failed' });
       site.mode = 'ok';
-      await request(server()).post('/catalogue-integration/website/test').set(as()).expect(201);
+      expect(await website.recheckConnection(C.org)).toBe(true);
       expect((await health()).website).toMatchObject({ verified: true, connectionState: 'connected' });
-      // Verified, but no full import yet: the first one is a person's call.
-      await website.scheduleWeekly();
-      expect(await mine()).toBe(0);
-      await prisma.catalogueSyncRun.create({ data: { organisationId: C.org, source: 'website', dryRun: true, status: 'done' } });
-      await website.scheduleWeekly();
-      expect(await mine()).toBe(0);
-      await prisma.catalogueSyncRun.create({ data: { organisationId: C.org, source: 'website', dryRun: false, status: 'done' } });
-      await website.scheduleWeekly();
-      expect(await mine()).toBe(1);
       await prisma.catalogueSyncRun.deleteMany({ where: { organisationId: C.org } });
     } finally {
       process.env.SCHEDULER_ENABLED = 'false';

@@ -5,6 +5,7 @@ import {
   Injectable,
   Logger,
   NotFoundException,
+  OnApplicationBootstrap,
   OnModuleInit,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -18,7 +19,7 @@ import { JobContext, JobsService } from '../../jobs/jobs.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { CatalogueIndexService } from '../../products/catalogue-index.service';
 import { categoryFromRow } from '../../sync/sync.service';
-import { WebsiteCatalogueClient, WebsiteClientError, WebsitePage } from './website-catalogue.client';
+import { WebsiteCatalogueClient, WebsiteClientError, WebsitePage, WebsiteProbe } from './website-catalogue.client';
 import { normalizeWebsiteProduct } from './website-normalizer';
 import {
   PersistContext,
@@ -69,7 +70,7 @@ class LostRun extends Error {}
  * See docs/modules/05-catalogue-sources.md. Never logs a payload or the token.
  */
 @Injectable()
-export class WebsiteCatalogueService implements OnModuleInit {
+export class WebsiteCatalogueService implements OnModuleInit, OnApplicationBootstrap {
   private readonly log = new Logger(WebsiteCatalogueService.name);
 
   constructor(
@@ -84,6 +85,11 @@ export class WebsiteCatalogueService implements OnModuleInit {
 
   onModuleInit(): void {
     this.jobs.register(WEBSITE_SYNC_JOB, (payload, ctx) => this.runJob(payload as { runId?: string; claim?: string }, ctx));
+  }
+
+  /** See catchUp. Never holds up the boot. */
+  onApplicationBootstrap(): void {
+    void this.catchUp().catch((e) => this.log.warn(`website catch-up sync not queued: ${errText(e)}`));
   }
 
   private ctx(runId: string): PersistContext {
@@ -197,8 +203,47 @@ export class WebsiteCatalogueService implements OnModuleInit {
     const integration = await this.findIntegration(user.organisationId);
     const endpoint = integration && this.endpointOf(integration.config);
     if (!integration || !endpoint) throw new BadRequestException('The website catalogue connection is not configured.');
+    let result: { probe: WebsiteProbe; at: Date };
+    try {
+      result = await this.probeAndRecord(integration, endpoint);
+    } catch (e) {
+      await this.audit.record(user, {
+        action: 'integration.connection_tested',
+        entityType: 'Integration',
+        entityId: integration.id,
+        summary: 'Website catalogue connection test failed',
+        metadata: { error: errText(e) },
+      });
+      throw upstreamError(e);
+    }
+    const { probe, at } = result;
+    await this.audit.record(user, {
+      action: 'integration.connection_tested',
+      entityType: 'Integration',
+      entityId: integration.id,
+      summary: 'Website catalogue connection test passed',
+      metadata: { sourceTotal: probe.sourceTotal, latencyMs: probe.latencyMs },
+    });
+    return { verified: true, productsEndpoint: probe.productsEndpoint, sourceTotal: probe.sourceTotal, latencyMs: probe.latencyMs, checkedAt: at };
+  }
+
+  /** Test connection without a person, before a scheduled run. True when it passed. */
+  async recheckConnection(organisationId: string): Promise<boolean> {
+    const integration = await this.findIntegration(organisationId);
+    const endpoint = integration && this.endpointOf(integration.config);
+    if (!integration || !endpoint) return false;
+    return this.probeAndRecord(integration, endpoint).then(
+      () => true,
+      () => false,
+    );
+  }
+
+  /** The probe behind both: a pass marks the connection connected, a failure marks it failed and rethrows. */
+  private async probeAndRecord(
+    integration: Parameters<WebsiteCatalogueService['storedToken']>[0] & { config: Prisma.JsonValue },
+    endpoint: string,
+  ): Promise<{ probe: WebsiteProbe; at: Date }> {
     const at = new Date();
-    const prior = (integration.config ?? {}) as WebsiteConfig;
     try {
       const probe = await this.client.probe(endpoint, this.storedToken(integration));
       const config: WebsiteConfig = {
@@ -209,28 +254,15 @@ export class WebsiteCatalogueService implements OnModuleInit {
         where: { id: integration.id },
         data: { status: 'connected', lastHealthAt: at, lastError: null, config: config as Prisma.InputJsonValue },
       });
-      await this.audit.record(user, {
-        action: 'integration.connection_tested',
-        entityType: 'Integration',
-        entityId: integration.id,
-        summary: 'Website catalogue connection test passed',
-        metadata: { sourceTotal: probe.sourceTotal, latencyMs: probe.latencyMs },
-      });
-      return { verified: true, productsEndpoint: probe.productsEndpoint, sourceTotal: probe.sourceTotal, latencyMs: probe.latencyMs, checkedAt: at };
+      return { probe, at };
     } catch (e) {
+      const prior = (integration.config ?? {}) as WebsiteConfig;
       const config: WebsiteConfig = { ...prior, productsEndpoint: endpoint, lastProbe: { at: at.toISOString(), ok: false, endpoint, error: errText(e) } };
       await this.prisma.integration.update({
         where: { id: integration.id },
         data: { status: 'error', lastError: errText(e), config: config as Prisma.InputJsonValue },
       });
-      await this.audit.record(user, {
-        action: 'integration.connection_tested',
-        entityType: 'Integration',
-        entityId: integration.id,
-        summary: 'Website catalogue connection test failed',
-        metadata: { error: errText(e) },
-      });
-      throw upstreamError(e);
+      throw e;
     }
   }
 
@@ -319,7 +351,9 @@ export class WebsiteCatalogueService implements OnModuleInit {
     const org = ctx.organisationId;
     if (!org) throw new Error('website sync job has no organisation');
     if (payload.runId && payload.claim) return this.execute(org, payload.runId, new Date(payload.claim));
-    // The daily schedule: a full run unless one is already going.
+    // The evening schedule or a catch-up: re-test the connection the way "Test
+    // connection" does, then a full run unless one is already going.
+    if (!(await this.recheckConnection(org))) return { skipped: 'the website connection test failed' };
     try {
       const { run, claim } = await this.startSync(null, org, 'full');
       return this.execute(org, run.id, claim);
@@ -808,7 +842,7 @@ export class WebsiteCatalogueService implements OnModuleInit {
         lastHealthAt: integration?.lastHealthAt ?? null,
         lastError: integration?.lastError ?? null,
         lastProbe: cfg.lastProbe ?? null,
-        schedule: 'weekly',
+        schedule: 'daily',
         lastRun: lastRun && {
           id: lastRun.id,
           status: lastRun.status,
@@ -868,24 +902,37 @@ export class WebsiteCatalogueService implements OnModuleInit {
 
   // ── schedule ────────────────────────────────────────────────────────────
   /**
-   * Saturday 21:30 UTC = Sunday 03:00 IST: once a week per organisation whose
-   * connection is configured and has passed its test, which picks up designs
-   * added to the website. A connection that failed its last test is skipped
-   * (health shows it as failed); one already running is skipped by startSync.
-   * Nothing is scheduled before the first full (non-dry) sync has finished:
-   * the first import into a catalogue is a person's decision, never a cron's.
+   * 19:00 IST (pinned, whatever the server's clock), every evening, per organisation whose connection is
+   * configured and has passed a test once, which picks up the designs and
+   * photos added to the website that day. Each run re-tests the connection
+   * first (runJob), so a failed one is retried every evening instead of
+   * blocking syncs until someone presses Test; one already running is skipped
+   * by startSync. Nothing is scheduled before the first full (non-dry) sync
+   * has finished: the first import into a catalogue is a person's decision,
+   * never a cron's.
    */
-  @Cron('0 30 21 * * 6', { name: WEBSITE_SYNC_JOB })
-  async scheduleWeekly(): Promise<number> {
+  @Cron('0 0 19 * * *', { name: WEBSITE_SYNC_JOB, timeZone: 'Asia/Kolkata' })
+  scheduleDaily(): Promise<number> {
+    return this.queueScheduled('daily');
+  }
+
+  /** A restart or deploy catches up an evening it missed: no full sync has finished in the last day. */
+  catchUp(): Promise<number> {
+    return this.queueScheduled('catchup');
+  }
+
+  private async queueScheduled(kind: 'daily' | 'catchup'): Promise<number> {
     if ((this.config.get<string>('SCHEDULER_ENABLED') ?? 'true') === 'false') return 0;
     const day = new Date().toISOString().slice(0, 10);
+    const done = { source: WEBSITE, dryRun: false, status: 'done' };
+    const recent = { ...done, finishedAt: { gt: new Date(Date.now() - 24 * 3_600_000) } };
     const orgs = (
       await this.prisma.integration.findMany({
         where: {
           providerCode: WEBSITE_PROVIDER,
-          status: 'connected',
+          status: { in: ['connected', 'error'] },
           lastHealthAt: { not: null },
-          organisation: { catalogueSyncRuns: { some: { source: WEBSITE, dryRun: false, status: 'done' } } },
+          organisation: { catalogueSyncRuns: kind === 'catchup' ? { some: done, none: recent } : { some: done } },
         },
         select: { organisationId: true, config: true },
       })
@@ -897,7 +944,7 @@ export class WebsiteCatalogueService implements OnModuleInit {
           kind: WEBSITE_SYNC_JOB,
           organisationId,
           payload: {},
-          idempotencyKey: `${WEBSITE_SYNC_JOB}:${organisationId}:weekly-${day}`,
+          idempotencyKey: `${WEBSITE_SYNC_JOB}:${organisationId}:${kind}-${day}`,
           maxAttempts: 1,
         });
         queued++;
