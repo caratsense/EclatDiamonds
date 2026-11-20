@@ -100,6 +100,12 @@ export default function CampaignDetailPage() {
 
   const campaign = useCampaign(id);
   const recipients = useCampaignRecipients(id, tab === "all" ? undefined : tab);
+  /*
+   * Every page loaded so far, as one list. The endpoint pages and the screen
+   * used to ignore that, showing fifty rows and a line saying so — on a
+   * broadcast of 204 that hid three quarters of the people involved.
+   */
+  const recipientRows = recipients.data?.pages.flatMap((p) => p.items) ?? [];
   const approve = useApproveCampaign();
   const cancel = useCancelCampaign();
   const retry = useRetryCampaign();
@@ -288,7 +294,7 @@ export default function CampaignDetailPage() {
 
           {recipients.isLoading ? (
             <Skeleton className="h-32 w-full" />
-          ) : !recipients.data?.items.length ? (
+          ) : !recipientRows.length ? (
             <p className="py-6 text-center text-sm text-muted-foreground">
               {c.status === "draft" || c.status === "awaiting_approval"
                 ? "The list is built when the broadcast is approved."
@@ -306,7 +312,7 @@ export default function CampaignDetailPage() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {recipients.data.items.map((r) => (
+                  {recipientRows.map((r) => (
                     <TableRow key={r.id}>
                       <TableCell className="font-[family-name:var(--font-mono-face)] text-sm">
                         {r.contact ?? "—"}
@@ -351,12 +357,22 @@ export default function CampaignDetailPage() {
                   ))}
                 </TableBody>
               </Table>
-              {recipients.data.nextCursor ? (
-                <p className="pt-3 text-xs text-muted-foreground">
-                  Showing the first {recipients.data.items.length}. The counts above cover
-                  everyone.
+              <div className="flex items-center justify-between gap-3 pt-3">
+                <p className="text-xs text-muted-foreground">
+                  {recipientRows.length} shown
+                  {recipients.hasNextPage ? " so far" : ""}.
                 </p>
-              ) : null}
+                {recipients.hasNextPage ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void recipients.fetchNextPage()}
+                    disabled={recipients.isFetchingNextPage}
+                  >
+                    {recipients.isFetchingNextPage ? "Loading…" : "Show more"}
+                  </Button>
+                ) : null}
+              </div>
             </div>
           )}
         </CardContent>
