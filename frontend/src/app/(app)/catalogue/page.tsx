@@ -46,11 +46,13 @@ import {
   type ProductSource,
 } from "@/lib/mock/catalogue";
 import {
+  httpStatus,
   useCreateProduct,
   useProducts,
   useUploadProductImage,
   type ImageCoverage,
 } from "@/lib/queries/products";
+import { advancedFilterCount, catalogueListParams } from "@/lib/catalogue-filters";
 import { useDebouncedValue } from "@/lib/queries/search";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
@@ -62,15 +64,15 @@ import { apiErrorMessage, isRealName, positiveNumberInput } from "@/lib/utils";
 
 const nav = getNavItem("catalogue")!;
 
-const KARATS = [24, 22, 18, 14, 10, 9];
+const KARATS = [24, 22, 18, 14, 12, 10, 9];
 const COVERAGE_LABELS: Record<ImageCoverage, string> = {
   none: "No photo",
   no_cad: "No CAD",
   unindexed: "Not searchable yet",
   indexed: "Searchable by photo",
 };
-/** Filters behind "More filters" — counted on the button so none hides silently. */
-const ADVANCED = ["subCategory", "size", "karat", "colour", "metal", "priceMin", "priceMax", "source", "coverage"] as const;
+/** Every URL key that holds a filter: "Clear all" shows while any is set, readable or not. */
+const FILTER_KEYS = ["q", "category", "availability", "store", "subCategory", "size", "karat", "colour", "metal", "priceMin", "priceMax", "source", "coverage"];
 const PAGE_SIZE_DEFAULT = 100;
 
 export default function CataloguePage() {
@@ -122,29 +124,17 @@ function CatalogueView() {
   const karat = get("karat");
   const source = get("source") as ProductSource | "";
   const coverage = get("coverage") as ImageCoverage | "";
-  const page = Math.max(1, Number(get("page")) || 1);
-  const pageSize = Number(get("pageSize")) || PAGE_SIZE_DEFAULT;
-  const num = (k: string) => (get(k) && Number.isFinite(Number(get(k))) ? Number(get(k)) : undefined);
-  const advancedCount = ADVANCED.filter((k) => get(k)).length;
+  // A stale or hand-typed URL ("page=2.5", "pageSize=1000") falls back, never 400s.
+  const page = Math.max(1, Math.floor(Number(get("page"))) || 1);
+  const sizeAsked = Math.floor(Number(get("pageSize")));
+  const pageSize = sizeAsked >= 1 && sizeAsked <= 500 ? sizeAsked : PAGE_SIZE_DEFAULT;
+  const params = catalogueListParams(get, { store, showsMetalFilters, page, pageSize });
+  const advancedCount = advancedFilterCount(params);
   const [showAdvanced, setShowAdvanced] = useState(advancedCount > 0);
 
-  const { data, isLoading, isError, refetch } = useProducts({
-    page,
-    pageSize,
-    q: q || undefined,
-    category: category || undefined,
-    metal: metal || undefined,
-    availability: avail || undefined,
-    storeId: store === "all" ? undefined : store,
-    subCategory: get("subCategory") || undefined,
-    size: get("size") || undefined,
-    karat: num("karat"),
-    colour: get("colour") || undefined,
-    priceMin: num("priceMin"),
-    priceMax: num("priceMax"),
-    source: source || undefined,
-    imageCoverage: coverage || undefined,
-  });
+  const { data, isLoading, isError, error, refetch, isPlaceholderData } = useProducts(params);
+  // The previous results stay on screen while new ones load: say so.
+  const updating = isPlaceholderData;
   const products = data?.items ?? [];
   const total = data?.total ?? 0;
 
@@ -171,7 +161,10 @@ function CatalogueView() {
   const selectStores = stores.filter((s) => !s.isAggregate);
   // POST /products requires store_manager+; hide the CTA for salespeople.
   const canAddProduct = ROLE_RANK[role] >= ROLE_RANK.store_manager;
-  const anyFilter = [...ADVANCED, "q", "category", "availability", "store"].some((k) => get(k));
+  const anyFilter = FILTER_KEYS.some((k) => get(k));
+  // Besides the search text, is anything else narrowing the list?
+  const narrowed = advancedCount > 0 || !!params.category || !!params.availability;
+  const rejected = isError && (httpStatus(error) ?? 500) < 500;
 
   return (
     <>
@@ -246,15 +239,20 @@ function CatalogueView() {
           <SlidersHorizontal className="h-4 w-4" />
           More filters{advancedCount ? ` (${advancedCount})` : ""}
         </Button>
+        {anyFilter ? (
+          <Button type="button" variant="ghost" className="h-11" onClick={() => router.replace(pathname, { scroll: false })}>
+            <X className="h-4 w-4" /> Clear all
+          </Button>
+        ) : null}
       </div>
 
       {showAdvanced ? (
         <div className="mb-4 grid grid-cols-2 gap-2 rounded-lg border bg-muted/20 p-3 sm:grid-cols-3 lg:grid-cols-5">
           <Field label="Sub-category">
-            <UrlText value={get("subCategory")} onCommit={(v) => setParams({ subCategory: v })} placeholder="e.g. Solitaire" />
+            <UrlText value={get("subCategory")} onCommit={(v) => setParams({ subCategory: v })} placeholder="e.g. Solitaire, Engagement" />
           </Field>
           <Field label="Size">
-            <UrlText value={get("size")} onCommit={(v) => setParams({ size: v })} placeholder="e.g. IND 12" />
+            <UrlText value={get("size")} onCommit={(v) => setParams({ size: v })} placeholder="e.g. 12 or IND 12" />
           </Field>
           {showsMetalFilters ? (
             <>
@@ -284,10 +282,10 @@ function CatalogueView() {
             </>
           ) : null}
           <Field label="Price from (₹)">
-            <UrlText value={get("priceMin")} onCommit={(v) => setParams({ priceMin: v })} inputMode="numeric" type="number" min={0} />
+            <UrlText value={get("priceMin")} onCommit={(v) => setParams({ priceMin: v })} sanitize={positiveNumberInput} inputMode="decimal" />
           </Field>
           <Field label="Price to (₹)">
-            <UrlText value={get("priceMax")} onCommit={(v) => setParams({ priceMax: v })} inputMode="numeric" type="number" min={0} />
+            <UrlText value={get("priceMax")} onCommit={(v) => setParams({ priceMax: v })} sanitize={positiveNumberInput} inputMode="decimal" />
           </Field>
           <Field label="Source">
             <UrlSelect
@@ -309,44 +307,51 @@ function CatalogueView() {
               className="w-full"
             />
           </Field>
-          {anyFilter ? (
-            <div className="flex items-end">
-              <Button type="button" variant="ghost" className="h-11" onClick={() => router.replace(pathname, { scroll: false })}>
-                <X className="h-4 w-4" /> Clear all
-              </Button>
-            </div>
-          ) : null}
         </div>
       ) : null}
 
-      <p className="mb-3 text-sm text-muted-foreground">
+      <p className="mb-3 text-sm text-muted-foreground" aria-live="polite">
         <span className="num">{total}</span>{" "}
         {total === 1 ? productNoun.toLowerCase() : productNounPlural.toLowerCase()}
+        {updating ? " · updating…" : null}
       </p>
 
       {isError ? (
         <div className="mx-auto max-w-md rounded-lg border bg-muted/30 p-4 text-center">
           <p className="text-sm font-medium">Couldn&apos;t load the catalogue.</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            The connection may have dropped. Check your network and try again.
+            {rejected
+              ? apiErrorMessage(error, "One of the filters was not accepted.")
+              : "The connection may have dropped. Check your network and try again."}
           </p>
-          <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
-            Retry
-          </Button>
+          {rejected ? (
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => router.replace(pathname, { scroll: false })}>
+              Clear filters
+            </Button>
+          ) : (
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => refetch()}>
+              Retry
+            </Button>
+          )}
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 lg:grid-cols-4">
+          <div
+            className={`grid grid-cols-2 gap-3 transition-opacity sm:grid-cols-3 sm:gap-4 lg:grid-cols-4 ${updating ? "opacity-60" : ""}`}
+            aria-busy={updating}
+          >
             {isLoading
               ? Array.from({ length: 8 }).map((_, i) => <Skeleton key={i} className="h-72 rounded-xl" />)
-              : products.map((p) => <ProductCard key={p.id} product={p} onOpen={openProduct} />)}
+              : products.map((p) => <ProductCard key={p.id} product={p} onOpen={openProduct} scoped={store !== "all"} />)}
           </div>
 
-          {!isLoading && products.length === 0 ? (
+          {!isLoading && !updating && products.length === 0 ? (
             <p className="rounded-xl border border-dashed py-12 text-center text-sm text-muted-foreground">
-              {q
-                ? `Nothing matches “${q}”. Check the code, or search by part of it.`
-                : `No ${productNounPlural.toLowerCase()} match these filters. Adjust them or add one.`}
+              {q && narrowed
+                ? `Nothing matches “${q}” with these filters. Clear a filter, or check the code.`
+                : q
+                  ? `Nothing matches “${q}”. Check the code, or search by part of it.`
+                  : `No ${productNounPlural.toLowerCase()} match these filters. Adjust them or add one.`}
             </p>
           ) : null}
 
@@ -393,9 +398,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function UrlText({
   value,
   onCommit,
+  sanitize,
   className = "h-11",
   ...props
-}: { value: string; onCommit: (v: string) => void } & Omit<React.ComponentProps<typeof Input>, "value" | "onChange">) {
+}: {
+  value: string;
+  onCommit: (v: string) => void;
+  /** Cleans each keystroke, e.g. a price box that cannot hold "-" or letters. */
+  sanitize?: (raw: string) => string;
+} & Omit<React.ComponentProps<typeof Input>, "value" | "onChange">) {
   const [text, setText] = useState(value);
   const [seen, setSeen] = useState(value);
   if (value !== seen) {
@@ -410,7 +421,14 @@ function UrlText({
   useEffect(() => {
     if (debounced === text.trim() && debounced !== value) commit.current(debounced);
   }, [debounced, text, value]);
-  return <Input value={text} onChange={(e) => setText(e.target.value)} className={className} {...props} />;
+  return (
+    <Input
+      value={text}
+      onChange={(e) => setText(sanitize ? sanitize(e.target.value) : e.target.value)}
+      className={className}
+      {...props}
+    />
+  );
 }
 
 /** Select bound to one URL param; "" (or `allValue`) means no filter. */

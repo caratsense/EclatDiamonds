@@ -195,9 +195,15 @@ matched image selected; the hero stays marked "Primary".
   heroThumbUrl, heroSource, onlinePrice:{min,max,indicative}|null, tagPrice:
   {min,max}|null, onHand, flags:{noImage, noCad, conflicts, indexing:
   'none'|'partial'|'full'}`. Filters: q (existing), category, subCategory
-  (listing), size (ProductOption), karat, colour (variant/association), priceMin/
-  priceMax (online min or tag), storeId, availability, source, imageCoverage
-  (`none|no_cad|unindexed|indexed`). Server-side, paginated.
+  (listing sub-categories and categories, any case, from the start of a word),
+  size (ProductOption; "12" = "IND 12"), karat, metal, colour
+  (variant/association/material words), priceMin/priceMax (any price the card
+  shows: a website option or a Gati tag; with karat or metal, the price of an
+  option of that karat or metal), storeId (`all` explicitly overrides the
+  X-Store-Id header), availability (pieces on hand in the chosen store, or in
+  the viewer's stores — not the stored flag), source, imageCoverage
+  (`none|no_cad|unindexed|indexed`). Server-side, paginated; every filter is
+  ANDed. Decided 20 Nov 2026, see DECISIONS.md.
 - Detail (`GET /products/:id/full`, lazy): product master, identifiers (Gati id,
   SKU, style, website code, external id), listing, every variant, sizes, every
   price with {source, kind, variant}, every active image (source, colour, angle,

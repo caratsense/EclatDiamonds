@@ -15,6 +15,11 @@ import {
 interface ProductCardProps {
   product: Product;
   onOpen: (product: Product) => void;
+  /**
+   * The list is for one store: say what is on the shelf there first, as the
+   * In-Stock filter counts it, then what other stores have.
+   */
+  scoped?: boolean;
 }
 
 function range(r?: PriceRange | null): string | null {
@@ -31,7 +36,7 @@ function range(r?: PriceRange | null): string | null {
  * are reviewed once on Catalogue → Integration and on the manager-facing
  * product detail (client, 9 Oct).
  */
-export function ProductCard({ product, onOpen }: ProductCardProps) {
+export function ProductCard({ product, onOpen, scoped = false }: ProductCardProps) {
   const src = assetUrl(product.heroThumbUrl || product.heroImageUrl || product.imageUrl);
   const name = productDisplayName(product);
   const code = product.styleNumber || product.sku;
@@ -39,6 +44,7 @@ export function ProductCard({ product, onOpen }: ProductCardProps) {
   const tag = range(product.tagPrice);
   const flags = product.flags;
   const onHand = product.onHand ?? product.stock?.totalCount;
+  const here = scoped && product.stock ? product.stock.hereCount : null;
 
   return (
     <button
@@ -97,7 +103,23 @@ export function ProductCard({ product, onOpen }: ProductCardProps) {
           {tag ? <Price label="Tag" value={tag} /> : null}
           {!online && !tag ? <Price label="Price" value={product.price > 0 ? formatINR(product.price) : "—"} /> : null}
         </dl>
-        {onHand != null ? (
+        {here != null && onHand ? (
+          <p className="mt-auto pt-1 text-[11px] text-muted-foreground">
+            {here > 0 ? (
+              <>
+                <span className="num font-medium text-foreground">{here}</span> here
+              </>
+            ) : (
+              "None here"
+            )}
+            {onHand > here ? (
+              <>
+                {" · "}
+                <span className="num">{onHand - here}</span> at other stores
+              </>
+            ) : null}
+          </p>
+        ) : onHand != null ? (
           <p className="mt-auto pt-1 text-[11px] text-muted-foreground">
             {onHand > 0 ? (
               <>

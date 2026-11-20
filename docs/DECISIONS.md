@@ -404,3 +404,13 @@ Owner, 26 Oct: "eclat was brand name which name has changed to nibhana we are cr
 - **The product name stays CaratSpace** (`PRODUCT_NAME`, backend and frontend). PR #52 had set it to Nibhana on the belief that CaratSpace had moved to its own repository; it has not. Nibhana, formerly Éclat Diamonds, is the client and stays in `TENANT_NAME`.
 - **The app wears the client's colours**: emerald and champagne gold from PR #52 are kept, with the CaratSpace wordmark in gold. Supersedes the 10 Oct line "Product name CaratSpace; the shop's name Nibhana" only in that the shop's colours now dress the app.
 - **Everything else in PR #52 is merged as written**: the Figma DSR and CRM screens, the app a size smaller, broadcasts beside customers, and three audit fixes (a replaced DSR keeps its old figures in the trail, a locked payroll month is not redrafted, an auto-approved discount is audited), now each with a test.
+
+# 2026-11-20 — catalogue filters answer the question the card answers
+
+Owner, 20 Nov: every catalogue filter must work, alone and in every combination. A trace found the filters were ANDed correctly but several matched something other than what the card shows.
+
+- **In-Stock / Lead-Time come from the pieces on the shelf**, in the chosen store (or in any store the viewer may see for "All stores"), counted as the card's "on hand" counts them. `Product.availability` is no longer read by the filter: it was set once when a design was created and never updated, so every Gati design read In-Stock and every website design Lead-Time.
+- **"All stores" is sent as `storeId=all`**, so the store in the top bar cannot narrow it. A store-scoped card now says "N here · M at other stores".
+- **A price filter matches a price the card shows**: a website option price or a Gati tag price; the design's own price only when it shows neither. The indicative price and the margin price are not shown, so they no longer match.
+- **Karat, metal and price ask about one option together**: "14K under ₹1.6L" needs a 14K option that costs under ₹1.6L. Metal now also reads the website options' metals.
+- **Typed filters are forgiving**: sub-category matches website sub-categories and categories in any case from the start of a word; size "12" = "IND 12"; colour also reads the material words and a rose-gold metal. A design taken off the website stops matching its website categories.

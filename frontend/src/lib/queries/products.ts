@@ -55,16 +55,20 @@ export interface ProductListParams {
   category?: ProductCategory;
   metal?: Metal;
   availability?: Availability;
-  /** Explicit store filter (distinct from the session store scope). */
+  /**
+   * A store id, or "all". Send "all" explicitly: without it the X-Store-Id
+   * header (the top-bar store) narrows the list to that branch.
+   */
   storeId?: string;
-  /** Website listing sub-category, as the listing spells it. */
+  /** Words from a website sub-category or category, any case, e.g. "engagement". */
   subCategory?: string;
-  /** A size option, e.g. "IND 12". */
+  /** A size; "12", "IND12" and "IND 12" are the same. */
   size?: string;
+  /** With metal or a price, all of them must hold for the same option. */
   karat?: number;
-  /** Variant / image colour, e.g. "rose". */
+  /** Variant / photo colour or material words, e.g. "rose". */
   colour?: string;
-  /** Rupees; matched against the online minimum, else the tag price. */
+  /** Rupees; any price the card shows (online or tag) falls in the range. */
   priceMin?: number;
   priceMax?: number;
   source?: ProductSource;

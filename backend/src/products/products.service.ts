@@ -5,7 +5,7 @@ import {
   Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { Availability, MetalKind, Prisma, ProductCategory } from '@prisma/client';
+import { Availability, MetalKind, Prisma, ProductCategory, StockStatus } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { StoreScopeService } from '../common/store-scope.service';
@@ -122,6 +122,12 @@ export interface CardExtras {
 const ONLINE_RANGE_KINDS = ['variant', 'min_variant', 'natural_diamond'];
 /** Gati tag price rows (one, or a store min & max pair). */
 const isTagKind = (k: string) => k.startsWith('gati_tag');
+/** A piece on the shelf: not sold, returned or sent out. "On hand" and "In-Stock" both count these. */
+const ON_HAND: StockStatus[] = ['in_stock', 'aging', 'dead_stock'];
+/** The prices a catalogue card shows: website option prices and Gati tag prices. */
+const SHOWN_PRICE: Prisma.ProductPriceWhereInput = {
+  OR: [{ kind: { in: ONLINE_RANGE_KINDS } }, { kind: { startsWith: 'gati_tag' } }],
+};
 
 const PRICE_LABELS: Record<string, string> = {
   indicative: 'Indicative online price',
@@ -202,20 +208,24 @@ const seesAmounts = (user: AuthUser) => ROLE_RANK[user.role] >= ROLE_RANK.store_
 export interface ProductFilters {
   /** Free text: style number, SKU, name, Gati id, website code or marketing name. */
   q?: string;
-  /** A ProductCategory value, or a website listing category ("Rings"). */
+  /** A ProductCategory value, or a website listing category as the website spells it ("Rings"). */
   category?: string;
-  /** Website listing sub-category. */
+  /** Words from a website sub-category or category, any case: "engagement" finds "Engagement Rings". */
   subCategory?: string;
-  /** A size option ("IND 12") or a Gati piece size label. */
+  /** A size option or a Gati piece size; "12", "IND12" and "IND 12" are the same size. */
   size?: string;
   karat?: number;
-  /** Variant colour / metal type, or the colour group of a photo. */
+  /** Variant colour / metal type, the colour group of a photo, or the design's material words. */
   colour?: string;
   metal?: MetalKind;
-  /** Any online or tag price of the design falls in [priceMin, priceMax]. */
+  /**
+   * A price the card shows falls in [priceMin, priceMax]. With karat or metal,
+   * it must be the price of an option of that karat or metal.
+   */
   priceMin?: number;
   priceMax?: number;
   storeId?: string;
+  /** in_stock: pieces on the shelf where the viewer stands (or in any store they may see). */
   availability?: Availability;
   source?: ProductSource;
   imageCoverage?: 'none' | 'no_cad' | 'unindexed' | 'indexed';
@@ -233,7 +243,8 @@ export function parseProductFilters(raw: Record<string, unknown>): ProductFilter
   const str = (k: string, max = 80) => {
     const r = raw[k];
     if (r !== undefined && typeof r !== 'string') throw new BadRequestException(`${k} must be given once`);
-    const v = r?.trim();
+    // An iPad types ’ for ' — match what the person meant.
+    const v = r?.trim().replace(/[‘’]/g, "'").replace(/[“”]/g, '"');
     return v ? v.slice(0, max) : undefined;
   };
   const oneOf = <T extends string>(k: string, allowed: readonly T[]): T | undefined => {
@@ -251,6 +262,10 @@ export function parseProductFilters(raw: Record<string, unknown>): ProductFilter
     }
     return n;
   };
+  let priceMin = number('priceMin');
+  let priceMax = number('priceMax');
+  // "From ₹2L to ₹1L" is a slip, not a request for nothing.
+  if (priceMin != null && priceMax != null && priceMin > priceMax) [priceMin, priceMax] = [priceMax, priceMin];
   return {
     q: str('q', 64),
     category: str('category'),
@@ -259,8 +274,8 @@ export function parseProductFilters(raw: Record<string, unknown>): ProductFilter
     karat: number('karat', true),
     colour: str('colour'),
     metal: oneOf('metal', Object.values(MetalKind)),
-    priceMin: number('priceMin'),
-    priceMax: number('priceMax'),
+    priceMin,
+    priceMax,
     storeId: str('storeId'),
     availability: oneOf('availability', Object.values(Availability)),
     source: oneOf('source', SOURCES),
@@ -415,7 +430,7 @@ export class ProductsService {
       where: {
         productId: { in: productIds },
         // Sold and returned pieces are not on the shelf; only countable stock is.
-        status: { in: ['in_stock', 'aging', 'dead_stock'] },
+        status: { in: ON_HAND },
         // And only merchandise. A ring made for one customer, or a display
         // sample, is on the shelf but is not something to offer the next person
         // — counting it is how a salesperson promises a piece that is spoken for.
@@ -468,12 +483,31 @@ export class ProductsService {
     return user.allStores ? null : user.storeIds;
   }
 
-  /** Every narrowing the list supports, as one AND of Prisma filters. */
-  private filterWhere(f: ProductFilters): Prisma.ProductWhereInput[] {
+  /**
+   * Every narrowing the list supports, as one AND of Prisma filters. Each one
+   * matches what the card shows for the same design, so a filtered grid never
+   * contradicts its own cards. `viewerStore` is the counter the viewer stands
+   * at (null for "all stores"); `visible` the stores whose stock they may see.
+   */
+  private async filterWhere(
+    organisationId: string,
+    f: ProductFilters,
+    viewerStore: string | null,
+    visible: string[] | null,
+  ): Promise<Prisma.ProductWhereInput[]> {
     const and: Prisma.ProductWhereInput[] = [];
     const ci = (v: string) => ({ equals: v, mode: 'insensitive' as const });
-    if (f.metal) and.push({ metal: f.metal });
-    if (f.availability) and.push({ availability: f.availability });
+    if (f.availability) {
+      // Pieces on the shelf where the viewer stands, or in any store they may
+      // see — counted exactly as the card's "on hand". Not Product.availability:
+      // that flag is set once when a design is created and never updated.
+      const onHand: Prisma.StockItemWhereInput = {
+        status: { in: ON_HAND },
+        ...stockClassWhere('standard'),
+        ...(viewerStore ? { storeId: viewerStore } : visible ? { storeId: { in: visible } } : {}),
+      };
+      and.push({ stockItems: f.availability === 'in_stock' ? { some: onHand } : { none: onHand } });
+    }
     // A salesperson with a customer asking about "SK-010225-A" types the code.
     // Every identifier a design can be quoted by, because Gati keeps its style
     // code in `name` and the website its code in `websiteCode` — a search over
@@ -492,25 +526,87 @@ export class ProductsService {
       });
     }
     if (f.category) {
-      const isEnum = (Object.values(ProductCategory) as string[]).includes(f.category);
-      and.push({
-        OR: [
-          ...(isEnum ? [{ category: f.category as ProductCategory }] : []),
-          { websiteListing: { categories: { has: f.category } } },
-        ],
-      });
+      const cat = (Object.values(ProductCategory) as string[]).includes(f.category)
+        ? (f.category as ProductCategory)
+        : null;
+      and.push(
+        cat
+          ? {
+              OR: [
+                { category: cat },
+                // An imported design is stored as `other` with its file's own word
+                // beside it ("Rings") — the word its card shows.
+                ...(cat !== ProductCategory.other
+                  ? [{ category: ProductCategory.other, categoryLabel: { startsWith: cat.replace(/s$/, ''), mode: 'insensitive' as const } }]
+                  : []),
+              ],
+            }
+          : // A website category as the website spells it ("Rings"), from an API caller.
+            { websiteListing: { tombstonedAt: null, categories: { has: f.category } } },
+      );
     }
-    if (f.subCategory) and.push({ websiteListing: { subCategories: { has: f.subCategory } } });
+    if (f.subCategory) {
+      // Typed by a person, so matched like one: any case, from the start of any
+      // word, in the website's sub-categories or categories — "solitaire" finds
+      // "Solitaires", "engagement" finds "Engagement Rings", "ring" does not find
+      // "Earrings". Prisma cannot match array elements that way, hence SQL.
+      const v = f.subCategory.replace(/[\\%_]/g, '\\$&');
+      const rows = await this.prisma.$queryRaw<{ productId: string }[]>`
+        SELECT l."productId" FROM "ProductWebsiteListing" l
+        WHERE l."organisationId" = ${organisationId} AND l."tombstonedAt" IS NULL
+          AND EXISTS (
+            SELECT 1 FROM unnest(l."subCategories" || l."categories") AS s(name)
+            WHERE s.name ILIKE ${`${v}%`} OR s.name ILIKE ${`% ${v}%`}
+          )`;
+      and.push({ id: { in: rows.map((r) => r.productId) } });
+    }
     if (f.size) {
+      // "12", "ind12" and "IND 12" are one size to the person typing it.
+      const n = f.size.replace(/^ind\s*/i, '');
+      const spellings = [...new Set([f.size, n, `IND ${n}`])];
       and.push({
         OR: [
-          { options: { some: { kind: 'size', value: ci(f.size), tombstonedAt: null } } },
-          { stockItems: { some: { sizeLabel: ci(f.size) } } },
+          { options: { some: { kind: 'size', tombstonedAt: null, OR: spellings.map((s) => ({ value: ci(s) })) } } },
+          // A Gati piece's own size — only while the piece is still on the shelf.
+          { stockItems: { some: { status: { in: ON_HAND }, OR: spellings.map((s) => ({ sizeLabel: ci(s) })) } } },
         ],
       });
     }
-    if (f.karat != null) {
-      and.push({ OR: [{ karat: f.karat }, { variants: { some: { karat: f.karat, status: 'active' } } }] });
+    const amount =
+      f.priceMin != null || f.priceMax != null
+        ? {
+            ...(f.priceMin != null ? { gte: new Prisma.Decimal(f.priceMin) } : {}),
+            ...(f.priceMax != null ? { lte: new Prisma.Decimal(f.priceMax) } : {}),
+          }
+        : null;
+    const wantsOption = f.karat != null || !!f.metal;
+    if (wantsOption || amount) {
+      // ONE option has to satisfy karat, metal and budget together: "14K under
+      // ₹1.6L" means a 14K option that costs under ₹1.6L, not a 14K option and
+      // some other option under ₹1.6L. A website option carries its own karat,
+      // metal and price.
+      const option: Prisma.ProductVariantWhereInput = {
+        status: 'active',
+        ...(f.karat != null ? { karat: f.karat } : {}),
+        ...(f.metal ? { metal: f.metal } : {}),
+        ...(amount ? { price: amount } : {}),
+      };
+      // The design itself as one option: a Gati style's karat, metal and tag
+      // prices. A budget on its own takes any price the card shows, website ones
+      // included; the design's own price counts only when it shows no other.
+      const own: Prisma.ProductWhereInput = {
+        ...(f.karat != null ? { karat: f.karat } : {}),
+        ...(f.metal ? { metal: f.metal } : {}),
+        ...(amount
+          ? {
+              OR: [
+                { prices: { some: { amount, ...(wantsOption ? { kind: { startsWith: 'gati_tag' } } : SHOWN_PRICE) } } },
+                { priceKnown: true, price: { ...amount, gt: 0 }, prices: { none: SHOWN_PRICE } },
+              ],
+            }
+          : {}),
+      };
+      and.push({ OR: [{ variants: { some: option } }, own] });
     }
     if (f.colour) {
       const has = { contains: f.colour, mode: 'insensitive' as const };
@@ -522,27 +618,9 @@ export class ProductsService {
               some: { status: 'active', associations: { some: { colour: has, tombstonedAt: null } } },
             },
           },
-        ],
-      });
-    }
-    if (f.priceMin != null || f.priceMax != null) {
-      const amount = {
-        ...(f.priceMin != null ? { gte: new Prisma.Decimal(f.priceMin) } : {}),
-        ...(f.priceMax != null ? { lte: new Prisma.Decimal(f.priceMax) } : {}),
-      };
-      // "Can it be had within the budget": any online price or tag price of the
-      // design in range. Product.price is the Gati tag basis when no tag rows exist.
-      and.push({
-        OR: [
-          {
-            prices: {
-              some: {
-                amount,
-                OR: [{ kind: { in: [...ONLINE_RANGE_KINDS, 'indicative'] } }, { kind: { startsWith: 'gati_tag' } }],
-              },
-            },
-          },
-          { priceKnown: true, price: { ...amount, gt: 0 } },
+          // A design added by hand or imported says it in words, or in its metal.
+          { materialLabel: has },
+          ...(/rose|pink/i.test(f.colour) ? [{ metal: MetalKind.rose_gold_18k }] : []),
         ],
       });
     }
@@ -578,17 +656,18 @@ export class ProductsService {
     headerStore?: string,
     pagination?: PageRequest,
   ): Promise<ReturnType<typeof toView>[] | Paginated<ReturnType<typeof toView>>> {
-    const and = this.filterWhere(f);
+    // Which counter is this person standing at? "all" means none in particular —
+    // sent explicitly by the catalogue, so a branch in the header cannot narrow it.
+    const requested = f.storeId ?? headerStore;
+    const viewerStore = requested && requested !== 'all' ? requested : null;
+    if (viewerStore) this.scope.assertStoreAllowed(user, viewerStore);
+    const visible = this.visibleStoreIds(user);
+    const and = await this.filterWhere(user.organisationId, f, viewerStore, visible);
     const q = f.q;
 
     // Within the org, scope to the user's stores (+ global products with no store).
-    const requested = f.storeId ?? headerStore;
-    if (requested && requested !== 'all') {
-      this.scope.assertStoreAllowed(user, requested);
-      and.push({ OR: [{ storeId: requested }, { storeId: null }] });
-    } else if (!user.allStores) {
-      and.push({ OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] });
-    }
+    if (viewerStore) and.push({ OR: [{ storeId: viewerStore }, { storeId: null }] });
+    else if (!user.allStores) and.push({ OR: [{ storeId: { in: user.storeIds } }, { storeId: null }] });
     // ORGANISATION boundary first — the catalogue is company-wide WITHIN an org,
     // never across organisations. Applied to both count and findMany below.
     const where: Prisma.ProductWhereInput = { organisationId: user.organisationId, AND: and };
@@ -598,11 +677,10 @@ export class ProductsService {
     const orderBy: Prisma.ProductOrderByWithRelationInput[] = [
       { imageUrl: { sort: 'asc', nulls: 'last' } },
       { createdAt: 'desc' },
+      // Unique last, or page 2 can repeat or skip designs that tie on the above.
+      { id: 'asc' },
     ];
 
-    // Which counter is this person standing at? "all" means none in particular.
-    const viewerStore = requested && requested !== 'all' ? requested : null;
-    const visible = this.visibleStoreIds(user);
     const view = async (rows: Prisma.ProductGetPayload<object>[]) => {
       const presence = await this.stockPresence(rows.map((p) => p.id), viewerStore, visible);
       const extras = await this.cardExtras(user.organisationId, rows, presence);

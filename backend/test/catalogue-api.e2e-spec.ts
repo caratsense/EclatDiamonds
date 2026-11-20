@@ -53,9 +53,12 @@ const P1 = 'catapi_p1'; // Gati + website, the full picture
 const P2 = 'catapi_p2'; // website-only, no pictures
 const P3 = 'catapi_p3'; // manual, owned by store 2
 const P4 = 'catapi_p4'; // manual, one un-indexed upload
+const P5 = 'catapi_p5'; // manual: on the shelf only in store 2, plus a sold piece in store 1
+const P6 = 'catapi_p6'; // Gati only: 22K, MRP 80,000 below its 95,000–1,10,000 tags
+const P7 = 'catapi_p7'; // imported: the file said "Rings" and "Rose Gold 18K"
 const PB = 'catapi_pb'; // another organisation's
 const IMG = { cad: 'catapi_img_cad', w1: 'catapi_img_w1', w2: 'catapi_img_w2', p4: 'catapi_img_p4', b: 'catapi_img_b' };
-const MINE = new Set([P1, P2, P3, P4]);
+const MINE = new Set([P1, P2, P3, P4, P5, P6, P7]);
 
 /** Keys that must never reach a viewer below store manager. */
 // (`amount` is also a selling price's key in `prices`, so composition amounts are checked on their own.)
@@ -78,9 +81,10 @@ function allKeys(v: unknown, out = new Set<string>()): Set<string> {
 async function teardown(prisma: PrismaService) {
   for (const org of [A.org, B.org]) {
     await prisma.catalogueConflict.deleteMany({ where: { organisationId: org } });
-    await prisma.productEmbedding.deleteMany({ where: { productId: { in: [P1, P2, P3, P4, PB] } } });
+    await prisma.productEmbedding.deleteMany({ where: { productId: { in: [P1, P2, P3, P4, P5, P6, P7, PB] } } });
     await prisma.stockItem.deleteMany({ where: { organisationId: org } });
     await prisma.product.deleteMany({ where: { organisationId: org } }); // cascades catalogue rows
+    await prisma.importBatch.deleteMany({ where: { organisationId: org } });
     await prisma.auditLog.deleteMany({ where: { organisationId: org } });
     await prisma.userStore.deleteMany({ where: { user: { organisationId: org } } });
     await prisma.user.deleteMany({ where: { organisationId: org } });
@@ -234,6 +238,35 @@ describe('Catalogue product API (e2e)', () => {
     await prisma.product.create({ data: { id: P3, organisationId: A.org, sku: 'CATAPI-S2', name: 'CATAPI-S2-ONLY', metal: 'silver', storeId: A.s2 } });
     await prisma.product.create({ data: { id: P4, organisationId: A.org, sku: 'CATAPI-M4', name: 'CATAPI-MANUAL', metal: 'gold_22k', imageUrl: '/uploads/p4.jpg' } });
     await prisma.productImage.create({ data: { id: IMG.p4, organisationId: A.org, productId: P4, url: '/uploads/p4.jpg', source: 'manual', isPrimary: true } });
+    // --- P5: on the shelf only in store 2; its store-1 piece was sold ----------
+    await prisma.product.create({ data: { id: P5, organisationId: A.org, sku: 'CATAPI-M5', name: 'CATAPI-SHELF-S2', metal: 'silver' } });
+    await prisma.stockItem.createMany({
+      data: [
+        { id: 'catapi_piece_5a', organisationId: A.org, storeId: A.s2, productId: P5, legacyId: 'J-5001', status: 'in_stock' },
+        { id: 'catapi_piece_5b', organisationId: A.org, storeId: A.s1, productId: P5, legacyId: 'J-5002', status: 'sold', sizeLabel: 'IND 9' },
+      ],
+    });
+    // --- P6: Gati only; the card shows its tags, not its lower MRP -------------
+    await prisma.product.create({
+      data: {
+        id: P6, organisationId: A.org, sku: 'CATAPI-G6-SKU', name: 'CATAPI-G6', legacyId: 'CATAPI-G6', category: 'necklace',
+        metal: 'gold_22k', karat: 22, price: 80000,
+        prices: {
+          create: [
+            { organisationId: A.org, source: 'gati', kind: 'gati_tag_min', amount: 95000 },
+            { organisationId: A.org, source: 'gati', kind: 'gati_tag_max', amount: 110000 },
+          ],
+        },
+      },
+    });
+    // --- P7: imported — stored as `other`, with the file's own words -----------
+    await prisma.importBatch.create({ data: { id: 'catapi_batch', organisationId: A.org, sourceSystem: 'test', entity: 'product' } });
+    await prisma.product.create({
+      data: {
+        id: P7, organisationId: A.org, sku: 'CATAPI-I7', name: 'CATAPI-IMPORTED', importBatchId: 'catapi_batch',
+        categoryLabel: 'Rings', metal: 'rose_gold_18k', materialLabel: 'Rose Gold 18K',
+      },
+    });
     // --- another organisation --------------------------------------------------
     await prisma.product.create({ data: { id: PB, organisationId: B.org, sku: 'CATAPI-B', name: 'CATAPI-B-RING', metal: 'gold_18k' } });
     await prisma.productImage.create({ data: { id: IMG.b, organisationId: B.org, productId: PB, url: 'https://example.com/b.jpg', source: 'manual' } });
@@ -281,24 +314,59 @@ describe('Catalogue product API (e2e)', () => {
 
   it.each([
     ['&category=Rings', [P1]],
-    ['&category=ring', [P1]],
+    ['&category=ring', [P1, P7]], // P7: imported as `other`, its file said "Rings"
+    ['&category=necklace', [P6]],
     ['&subCategory=Solitaire', [P1]],
+    ['&subCategory=solitaire', [P1]], // any case
+    ['&subCategory=soli', [P1]], // the start of a word
+    ['&subCategory=ring', [P1]], // P1's "Rings", not P2's "Earrings"
+    ['&subCategory=earr', [P2]],
     ['&size=ind%2012', [P1]],
+    ['&size=12', [P1]],
+    ['&size=IND14', [P1]],
+    ['&size=9', []], // only P5's SOLD piece is an IND 9
     ['&karat=9', [P2]],
-    ['&colour=rose', [P1]],
+    ['&karat=22', [P6]],
+    ['&colour=rose', [P1, P7]], // P7 by its metal and its material words
+    ['&colour=white', [P2]],
     ['&priceMin=50000&priceMax=53000', [P1]],
     ['&priceMax=1000', []],
-    ['&availability=lead_time', [P2]],
+    ['&availability=in_stock', [P1, P5]], // from the pieces on the shelf, not a stored flag
+    ['&availability=lead_time', [P2, P3, P4, P6, P7]],
     ['&source=website', [P2]],
+    ['&source=gati', [P6]],
     ['&source=gati_website', [P1]],
-    ['&source=manual', [P3, P4]],
-    ['&imageCoverage=none', [P2, P3]],
-    ['&imageCoverage=no_cad', [P2, P3, P4]],
+    ['&source=import', [P7]],
+    ['&source=manual', [P3, P4, P5]],
+    ['&imageCoverage=none', [P2, P3, P5, P6, P7]],
+    ['&imageCoverage=no_cad', [P2, P3, P4, P5, P6, P7]],
     ['&imageCoverage=unindexed', [P4]],
     ['&imageCoverage=indexed', [P1]],
-    ['&storeId=' + A.s1, [P1, P2, P4]],
-    ['&storeId=' + A.s2, [P1, P2, P3, P4]],
+    ['&storeId=' + A.s1, [P1, P2, P4, P5, P6, P7]],
+    ['&storeId=' + A.s2, [P1, P2, P3, P4, P5, P6, P7]],
+    ['&storeId=all', [P1, P2, P3, P4, P5, P6, P7]],
   ])('filters server-side: %s', async (qs, expected) => {
+    expect(await ids('catapi_ho', qs)).toEqual([...expected].sort());
+  });
+
+  it.each([
+    ['&metal=gold_14k', [P1]], // a website option's metal, not only the design's own
+    ['&metal=gold_18k', [P1]],
+    ['&metal=gold_22k', [P4, P6]],
+    ['&metal=rose_gold_18k', [P7]],
+    ['&karat=14&metal=gold_14k', [P1]],
+    ['&karat=18&metal=gold_14k', []], // no option is both
+    ['&karat=14&priceMax=45000', [P1]], // the 14K option costs 40,000
+    ['&karat=18&priceMax=45000', []], // the 18K option costs 55,000 and its tags 52–58k
+    ['&metal=gold_18k&priceMin=54000&priceMax=56000', [P1]],
+    ['&metal=gold_14k&priceMin=54000', []],
+    ['&karat=22&priceMin=95000&priceMax=96000', [P6]], // a Gati style's tag price
+    ['&karat=22&priceMax=85000', []], // its 80,000 MRP is not what its card shows
+    ['&priceMax=85000', [P1]],
+    ['&priceMin=95000&priceMax=96000', [P6]],
+    ['&priceMin=45000&priceMax=45000', []], // the indicative price is not on the card
+    ['&priceMin=39999.5&priceMax=40000.5', [P1]],
+  ])('asks karat, metal and price of one option together: %s', async (qs, expected) => {
     expect(await ids('catapi_ho', qs)).toEqual([...expected].sort());
   });
 
@@ -306,6 +374,90 @@ describe('Catalogue product API (e2e)', () => {
     await list('catapi_ho', '&imageCoverage=everything').expect(400);
     await list('catapi_ho', '&karat=abc').expect(400);
     await list('catapi_ho', '&source=ebay').expect(400);
+    await list('catapi_ho', '&priceMin=-1').expect(400);
+  });
+
+  it('reads "from 60,000 to 50,000" as 50,000 to 60,000', async () => {
+    expect(await ids('catapi_ho', '&priceMin=60000&priceMax=50000')).toEqual([P1]);
+  });
+
+  it('In-Stock counts the pieces on the shelf in the chosen store, or in the viewer\'s stores', async () => {
+    expect(await ids('catapi_ho', `&storeId=${A.s1}&availability=in_stock`)).toEqual([P1]);
+    expect(await ids('catapi_ho', `&storeId=${A.s2}&availability=in_stock`)).toEqual([P1, P5].sort());
+    expect(await ids('catapi_ho', `&storeId=${A.s1}&availability=lead_time`)).toEqual([P2, P4, P5, P6, P7].sort());
+    expect(await ids('catapi_rep', '&availability=in_stock')).toEqual([P1]);
+    await list('catapi_rep', `&storeId=${A.s2}`).expect(403);
+    // The card's numbers agree: P5 has nothing on the shelf in store 1, one elsewhere.
+    const res = await list('catapi_ho', `&storeId=${A.s1}`).expect(200);
+    expect(res.body.items.find((i: { id: string }) => i.id === P5).stock).toMatchObject({ hereCount: 0, totalCount: 1 });
+  });
+
+  it('"All stores" means all stores, whichever store the top bar sends', async () => {
+    const withHeader = async (qs: string) => {
+      const res = await request(server()).get(`/products?page=1&pageSize=100&q=catapi${qs}`).set(as('catapi_ho')).set('X-Store-Id', A.s1).expect(200);
+      return (res.body.items as { id: string }[]).map((i) => i.id);
+    };
+    expect(await withHeader('')).not.toContain(P3);
+    expect(await withHeader('&storeId=all')).toContain(P3);
+  });
+
+  it('a design taken off the website stops matching its website categories', async () => {
+    await prisma.productWebsiteListing.update({ where: { productId: P1 }, data: { tombstonedAt: new Date() } });
+    try {
+      expect(await ids('catapi_ho', '&subCategory=solitaire')).toEqual([]);
+      expect(await ids('catapi_ho', '&category=Rings')).toEqual([]);
+    } finally {
+      await prisma.productWebsiteListing.update({ where: { productId: P1 }, data: { tombstonedAt: null } });
+    }
+  });
+
+  // Every combination of two or three filters returns exactly the designs that
+  // each filter returns alone — except where filters are one question by design:
+  // karat, metal and price ask about the same option, and In-Stock is relative
+  // to the chosen store (both covered above).
+  const SINGLES = [
+    '&category=ring', '&subCategory=ring', '&size=12', '&karat=18', '&colour=rose', '&metal=gold_22k', '&priceMax=60000',
+    '&availability=in_stock', '&source=manual', '&imageCoverage=no_cad', `&storeId=${A.s1}`,
+  ];
+  const ONE_QUESTION = [['karat', 'metal', 'priceMax'], ['availability', 'storeId']];
+  it('combines any two or three filters as the overlap of each alone', async () => {
+    const key = (qs: string) => qs.slice(1, qs.indexOf('='));
+    const alone = new Map<string, string[]>();
+    for (const qs of SINGLES) alone.set(qs, await ids('catapi_ho', qs));
+    const combos: string[][] = [];
+    for (let i = 0; i < SINGLES.length; i++)
+      for (let j = i + 1; j < SINGLES.length; j++) {
+        combos.push([SINGLES[i], SINGLES[j]]);
+        for (let k = j + 1; k < SINGLES.length; k++) combos.push([SINGLES[i], SINGLES[j], SINGLES[k]]);
+      }
+    let checked = 0;
+    for (const combo of combos) {
+      const keys = combo.map(key);
+      if (ONE_QUESTION.some((g) => keys.filter((k) => g.includes(k)).length > 1)) continue;
+      const overlap = combo.reduce((acc, qs) => acc.filter((id) => alone.get(qs)!.includes(id)), [...MINE].sort());
+      expect({ qs: combo.join(''), ids: await ids('catapi_ho', combo.join('')) }).toEqual({ qs: combo.join(''), ids: overlap });
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(150);
+  }, 300_000);
+
+  it('pages through designs that tie on photo and date without repeating or skipping one', async () => {
+    const at = new Date('2026-01-01T00:00:00Z');
+    const pg = [1, 2, 3, 4, 5].map((n) => `catapi_pg_${n}`);
+    await prisma.product.createMany({
+      data: pg.map((id, n) => ({ id, organisationId: A.org, sku: `CATAPI-PG-${n}`, name: `CATAPI-PAGING-${n}`, metal: 'silver' as const, createdAt: at })),
+    });
+    try {
+      const seen: string[] = [];
+      for (const page of [1, 2, 3]) {
+        const res = await request(server()).get(`/products?page=${page}&pageSize=2&q=catapi-paging`).set(as('catapi_ho')).expect(200);
+        expect(res.body.total).toBe(5);
+        seen.push(...res.body.items.map((i: { id: string }) => i.id));
+      }
+      expect(seen.sort()).toEqual([...pg].sort());
+    } finally {
+      await prisma.product.deleteMany({ where: { id: { in: pg } } });
+    }
   });
 
   it('keeps the style-number exact match first, and still finds by marketing name', async () => {
