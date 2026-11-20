@@ -1642,6 +1642,40 @@ function ThreadView({
                         </span>
                       ) : null}
 
+                      {/* WHAT A TEMPLATE MESSAGE ACTUALLY SHOWED THE CUSTOMER.
+
+                          An approved template is a shape the provider holds,
+                          so a template send stores no text and no media of its
+                          own — the row is genuinely empty, and this bubble drew
+                          "(attachment)" against it. The client watched 104
+                          customers receive the nails-event invitation, every
+                          detail of it in the photograph, and found an empty
+                          message on each of their threads.
+
+                          Rebuilt from the template the send named, with this
+                          recipient's own values in it. The picture comes
+                          straight from Meta's CDN, the same source the campaign
+                          preview loads — so what she approved, what was sent
+                          and what the thread shows are one image. */}
+                      {m.template?.headerImageUrl ? (
+                        <div className="mb-1.5 overflow-hidden rounded-lg bg-black/5 dark:bg-white/5">
+                          {/* A plain img, like the composer's preview: the
+                              source is scontent.whatsapp.net, which does not
+                              belong in remotePatterns. It expires, so a broken
+                              load must leave the words standing rather than
+                              take the bubble down with it. */}
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={m.template.headerImageUrl}
+                            alt="Image sent to the customer with this message"
+                            className="h-auto max-h-64 w-full object-contain"
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                            }}
+                          />
+                        </div>
+                      ) : null}
+
                       {m.body ? (
                         <p className="whitespace-pre-wrap select-text">
                           {whatsappText(
@@ -1650,8 +1684,21 @@ function ThreadView({
                               : m.body,
                           )}
                         </p>
-                      ) : !m.mediaUrl && !m.mediaType ? (
+                      ) : m.template?.body ? (
+                        <p className="whitespace-pre-wrap select-text">
+                          {whatsappText(m.template.body)}
+                        </p>
+                      ) : !m.mediaUrl && !m.mediaType && !m.template?.headerImageUrl ? (
                         <p className="whitespace-pre-wrap select-text opacity-70">(attachment)</p>
+                      ) : null}
+
+                      {/* The template's footer, in the smaller, quieter type
+                          WhatsApp gives it — it is the business's sign-off, not
+                          part of the message. */}
+                      {!m.body && m.template?.footerText ? (
+                        <p className="mt-1 text-[11.5px] opacity-60 select-text">
+                          {m.template.footerText}
+                        </p>
                       ) : null}
 
                       <div className="mt-1 flex items-center justify-end gap-1 text-[10.5px] text-[#667781] dark:text-[#8696a0]">

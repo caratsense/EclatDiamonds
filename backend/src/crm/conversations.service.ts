@@ -26,6 +26,12 @@ import { ActivityService } from './activity.service';
 import { IdentityService, ContactKind } from './identity.service';
 import { AdSetRulesService, type AdSetRoutingContext } from './adset-rules.service';
 import {
+  bodyParametersFrom,
+  templateAssetIdFrom,
+  templateCardFrom,
+  templateComponentsFrom,
+} from '../omnichannel/template-card';
+import {
   adCardFrom,
   extractMetaReferral,
   platformFromSourceUrl,
@@ -99,17 +105,29 @@ const PREVIEW_MAX = 120;
  * signature is dropped here — without this every staff reply would preview as
  * the sender's own name instead of what they said.
  */
-function previewOf(m: {
-  body: string | null;
-  mediaType: string | null;
-  authorType: string;
-  authorUser?: { name: string } | null;
-}): string {
+function previewOf(
+  m: {
+    body: string | null;
+    mediaType: string | null;
+    authorType: string;
+    authorUser?: { name: string } | null;
+  },
+  /*
+   * The approved template's wording, for a message that carries none of its
+   * own. A template send stores no body — the words live with the provider —
+   * so the newest message on a broadcast thread had nothing to preview and the
+   * list showed a blank line against every customer who had just been sent an
+   * invitation. The caller resolves this; it is null for an ordinary message.
+   */
+  templateBody?: string | null,
+): string {
   let text = m.body?.trim() ?? '';
-  const signature = m.authorUser?.name ? `*${m.authorUser.name}*\n` : null;
+  const signature = m.authorUser?.name ? `*${m.authorUser.name}*
+` : null;
   if (m.authorType === 'agent' && signature && text.startsWith(signature)) {
     text = text.slice(signature.length).trim();
   }
+  if (!text) text = templateBody?.trim() ?? '';
   if (!text) {
     if (!m.mediaType) return '';
     return m.mediaType.startsWith('image/') ? 'Photo' : 'Attachment';
@@ -1870,6 +1888,9 @@ export class ConversationsService {
             direction: true,
             authorType: true,
             mediaType: true,
+            // Which template this named, for the preview below. Read off
+            // the row rather than stored a second time; see templateCardFrom.
+            payload: true,
             authorUser: { select: { name: true } },
           },
         },
@@ -1885,6 +1906,42 @@ export class ConversationsService {
         if (ruleIds.has(rule.id)) names.set(rule.id, rule.name);
       }
     }
+
+    /*
+     * The templates named by the newest message of each thread, in one read.
+     *
+     * A broadcast is the same template on every thread it touched, so this is
+     * typically one row serving two hundred previews; a lookup per thread
+     * would be two hundred round trips for it.
+     */
+    const previewTemplateIds = [
+      ...new Set(
+        rows
+          .map((r) => (r.messages[0] ? templateAssetIdFrom(r.messages[0].payload) : null))
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const previewTemplates = previewTemplateIds.length
+      ? await this.prisma.integrationAsset.findMany({
+          where: { id: { in: previewTemplateIds }, organisationId: user.organisationId },
+          select: { id: true, name: true, metadata: true },
+        })
+      : [];
+    const previewTemplateById = new Map(previewTemplates.map((t) => [t.id, t]));
+
+    const templateBodyFor = (message: { payload: unknown } | undefined) => {
+      if (!message) return null;
+      const assetId = templateAssetIdFrom(message.payload);
+      const asset = assetId ? previewTemplateById.get(assetId) : undefined;
+      if (!asset) return null;
+      return (
+        templateCardFrom(
+          asset.name,
+          asset.metadata,
+          bodyParametersFrom(templateComponentsFrom(message.payload)),
+        )?.body ?? null
+      );
+    };
 
     return rows.map(({ messages, party, ...row }) => ({
       ...row,
@@ -1920,7 +1977,7 @@ export class ConversationsService {
        */
       lastMessage: messages[0]
         ? {
-            preview: previewOf(messages[0]),
+            preview: previewOf(messages[0], templateBodyFor(messages[0])),
             direction: messages[0].direction,
             authorType: messages[0].authorType,
             authorName: messages[0].authorUser?.name ?? null,
@@ -1974,14 +2031,52 @@ export class ConversationsService {
      * `payload`; a stored second copy could drift from it, and this costs a
      * field read.
      */
-    const messages = rows.map(({ payload, ...message }) => ({
-      ...message,
-      // The raw provider payload stays on the server. It carries the sender's
-      // WhatsApp profile name and the full envelope, none of which the inbox
-      // needs, and shipping it to every browser that opens a thread is a wider
-      // surface than the feature requires.
-      ad: adCardFrom(extractMetaReferral(payload)),
-    }));
+    /*
+     * THE TEMPLATE'S OWN WORDS AND PICTURE, for the bubbles that have none.
+     *
+     * A template send names a shape the provider holds; the text and the header
+     * image never pass through our message row, so the row is blank and the
+     * bubble was blank with it. The client watched 104 customers receive the
+     * nails-event invitation and saw an empty message against every one.
+     *
+     * Loaded ONCE for the whole thread, keyed by asset id — a broadcast thread
+     * is the same template repeated, and a lookup per bubble would be a hundred
+     * round trips to read one row a hundred times.
+     */
+    const templateIds = [
+      ...new Set(
+        rows
+          .map((row) => templateAssetIdFrom(row.payload))
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ];
+    const templates = templateIds.length
+      ? await this.prisma.integrationAsset.findMany({
+          where: { id: { in: templateIds }, organisationId: user.organisationId },
+          select: { id: true, name: true, metadata: true },
+        })
+      : [];
+    const templateById = new Map(templates.map((t) => [t.id, t]));
+
+    const messages = rows.map(({ payload, ...message }) => {
+      const assetId = templateAssetIdFrom(payload);
+      const asset = assetId ? templateById.get(assetId) : undefined;
+      return {
+        ...message,
+        // The raw provider payload stays on the server. It carries the sender's
+        // WhatsApp profile name and the full envelope, none of which the inbox
+        // needs, and shipping it to every browser that opens a thread is a wider
+        // surface than the feature requires.
+        ad: adCardFrom(extractMetaReferral(payload)),
+        template: asset
+          ? templateCardFrom(
+              asset.name,
+              asset.metadata,
+              bodyParametersFrom(templateComponentsFrom(payload)),
+            )
+          : null,
+      };
+    });
 
     return { conversation, messages };
   }
