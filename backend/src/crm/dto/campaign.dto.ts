@@ -216,7 +216,19 @@ export class CancelCampaignDto {
 export class ListRecipientsDto {
   @IsOptional()
   @IsString()
-  @IsIn(['pending', 'excluded', 'queued', 'sent', 'delivered', 'read', 'failed', 'dead', 'cancelled'])
+  /*
+   * One status, or one of two GROUPS.
+   *
+   * `reached` is sent + delivered + read and `not_reached` is failed + dead,
+   * because those are the two questions somebody opens this screen with. The
+   * tabs used to offer the raw statuses, so "Sent" meant the 7 people whose
+   * receipt had not yet come back rather than the 145 who got the message, and
+   * the 138 who were delivered or had read it could not be listed at all.
+   */
+  @IsIn([
+    'pending', 'excluded', 'queued', 'sent', 'delivered', 'read', 'failed', 'dead', 'cancelled',
+    'reached', 'not_reached',
+  ])
   status?: string;
 
   /**
