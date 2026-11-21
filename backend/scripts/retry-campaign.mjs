@@ -54,6 +54,33 @@ const LIMIT = arg('limit') ? Number(arg('limit')) : null;
  */
 const INCLUDE_REFUSED = process.argv.includes('--include-policy-refused');
 const RECLAIMABLE = 'policy_refused_at_send';
+/*
+ * HOW RECENTLY THIS PERSON WAS LAST MESSAGED, and a refusal to do it again.
+ *
+ * Meta caps how much marketing one person receives (error 131049), per
+ * recipient, over a rolling window. Re-sending the same template to the same
+ * list is therefore not free: it spends that allowance, and the people it
+ * burns are refused for hours afterwards.
+ *
+ * This is not theoretical. On the nails-event broadcast the outcome tracked
+ * the number of attempts almost exactly — 80% of the people tried twice got
+ * it, 9% of the people tried three times did, and nobody tried four times did.
+ * The retries were debugging a delivery bug, and they made the delivery worse.
+ *
+ *   attempts  reached  refused
+ *     2         143      36
+ *     3           2      21
+ *     4           0       2
+ *
+ * So a recipient messaged within this window is left out unless somebody
+ * deliberately says otherwise. `--force` is the override and prints what it
+ * is overriding.
+ */
+const COOLDOWN_HOURS = arg('cooldown-hours') ? Number(arg('cooldown-hours')) : 24;
+const FORCE = process.argv.includes('--force');
+if (!Number.isFinite(COOLDOWN_HOURS) || COOLDOWN_HOURS < 0) {
+  throw new Error(`--cooldown-hours must be a number of hours, not "${arg('cooldown-hours')}".`);
+}
 if (LIMIT !== null && (!Number.isInteger(LIMIT) || LIMIT < 1)) {
   throw new Error(`--limit must be a whole number of people, not "${arg('limit')}".`);
 }
@@ -104,8 +131,41 @@ const failed =
 const alreadySent = (counts.find((c) => c.status === 'sent')?._count._all ?? 0)
   + (counts.find((c) => c.status === 'delivered')?._count._all ?? 0)
   + (counts.find((c) => c.status === 'read')?._count._all ?? 0);
+/*
+ * Anyone messaged inside the cooldown is held back, and said so out loud.
+ * `sentAt` is when the provider last took a message for them; a recipient
+ * that has never reached the provider has none and is always eligible.
+ */
+const cooldownSince = new Date(Date.now() - COOLDOWN_HOURS * 3600_000);
+const tooSoon = FORCE
+  ? 0
+  : await prisma.campaignRecipient.count({
+      where: {
+        organisationId: campaign.organisationId,
+        campaignId: campaign.id,
+        OR: [
+          { status: { in: ['failed', 'dead'] } },
+          ...(INCLUDE_REFUSED ? [{ status: 'excluded', exclusionReason: RECLAIMABLE }] : []),
+        ],
+        sentAt: { gte: cooldownSince },
+      },
+    });
+if (tooSoon) {
+  console.log(
+    `\n  HELD BACK: ${tooSoon} were already messaged in the last ${COOLDOWN_HOURS}h.`,
+  );
+  console.log('  Messaging them again spends their marketing allowance with Meta and is');
+  console.log('  the most likely way to have them refused. Use --force to override, or wait.');
+}
+const cooldownClause = FORCE ? {} : { OR: [{ sentAt: null }, { sentAt: { lt: cooldownSince } }] };
+// What the run would ACTUALLY do, cooldown subtracted. A figure that ignores
+// the hold-back is the figure somebody plans around and then has to explain.
+const eligible = Math.max(failed - tooSoon, 0);
 console.log(`
-  would re-send to : ${LIMIT === null ? failed : `${Math.min(LIMIT, failed)} of ${failed} (--limit)`}`);
+  would re-send to : ${LIMIT === null ? eligible : `${Math.min(LIMIT, eligible)} of ${eligible} (--limit)`}`);
+if (tooSoon) {
+  console.log(`  (${failed} are retryable; ${tooSoon} of them are inside the ${COOLDOWN_HOURS}h cooldown)`);
+}
 const excluded = counts.find((c) => c.status === 'excluded')?._count._all ?? 0;
 if (reclaimable) {
   console.log(`  of those, ${reclaimable} were refused by a rule that has since changed`);
@@ -155,6 +215,7 @@ if (!failed) {
 
   // The old message is let go of as well: leaving it linked would have this
   // attempt's outcome read off the previous attempt's refusal.
+
   // Oldest first, so a --limit run re-sends the people who have been waiting
   // longest rather than an arbitrary slice.
   const picked = LIMIT === null
@@ -169,6 +230,7 @@ if (!failed) {
               ? [{ status: 'excluded', exclusionReason: RECLAIMABLE }]
               : []),
           ],
+          ...cooldownClause,
         },
         orderBy: { createdAt: 'asc' },
         take: LIMIT,
@@ -185,6 +247,7 @@ if (!failed) {
           ? [{ status: 'excluded', exclusionReason: RECLAIMABLE }]
           : []),
       ],
+      ...cooldownClause,
       ...(picked ? { id: { in: picked.map((r) => r.id) } } : {}),
     },
     /*

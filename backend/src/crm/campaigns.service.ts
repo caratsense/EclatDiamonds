@@ -677,10 +677,20 @@ export class CampaignsService implements OnModuleInit {
     const row = await this.loadCampaign(user, id);
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
     const page = Math.max(opts.page ?? 1, 1);
+    /*
+     * A tab is a question, not a column value. "Did they get it?" spans three
+     * statuses and "did it fail?" spans two, so the filter resolves a group to
+     * the statuses behind it rather than making the reader know which is which.
+     */
+    const GROUPS: Record<string, string[]> = {
+      reached: ['sent', 'delivered', 'read'],
+      not_reached: ['failed', 'dead'],
+    };
+    const group = opts.status ? GROUPS[opts.status] : undefined;
     const where = {
       organisationId: user.organisationId,
       campaignId: row.id,
-      ...(opts.status ? { status: opts.status } : {}),
+      ...(group ? { status: { in: group } } : opts.status ? { status: opts.status } : {}),
     };
     const total = await this.prisma.campaignRecipient.count({ where });
     const rows = await this.prisma.campaignRecipient.findMany({

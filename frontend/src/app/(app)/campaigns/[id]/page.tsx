@@ -41,6 +41,7 @@ import {
   useCampaignRecipients,
   useCancelCampaign,
   useRetryCampaign,
+  type CampaignCounts,
 } from "@/lib/queries/campaigns";
 import { ROLE_RANK } from "@/lib/types";
 import { apiErrorMessage } from "@/lib/utils";
@@ -69,13 +70,73 @@ const EXCLUSION_LABELS: Record<string, string> = {
   policy_refused_at_send: "The messaging rules refused it at send time",
 };
 
-const RECIPIENT_TABS = [
-  { value: "all", label: "Everyone" },
-  { value: "sent", label: "Sent" },
-  { value: "excluded", label: "Excluded" },
-  { value: "failed", label: "Failed" },
-  { value: "dead", label: "Given up" },
+/**
+ * The tabs, as questions rather than column values.
+ *
+ * They used to be the raw statuses: Everyone, Sent, Excluded, Failed, Given
+ * up. "Sent" therefore meant the seven people whose delivery receipt had not
+ * come back yet — not the 145 who got the message — and the 138 who were
+ * delivered or had already read it could not be listed at all. The owner's
+ * words: "it's not showing sent, all names, only 7 people I can see in the
+ * sent tab... we cannot clearly see who all received what each means."
+ *
+ * `count` reads the campaign's own figures, so a tab never disagrees with the
+ * delivery row above it.
+ */
+const RECIPIENT_TABS: {
+  value: string;
+  label: string;
+  count: (c: CampaignCounts) => number;
+  hint?: string;
+}[] = [
+  { value: "all", label: "Everyone", count: (c) => c.targeted + c.excluded },
+  {
+    value: "reached",
+    label: "Got it",
+    count: (c) => c.sent + c.delivered + c.read,
+    hint: "The message arrived on their phone.",
+  },
+  { value: "read", label: "Read", count: (c) => c.read, hint: "They opened and read it." },
+  {
+    value: "delivered",
+    label: "Delivered",
+    count: (c) => c.delivered,
+    hint: "It reached their phone; they have not opened it yet.",
+  },
+  {
+    value: "sent",
+    label: "Sent, no receipt",
+    count: (c) => c.sent,
+    hint: "WhatsApp accepted it but has not confirmed delivery yet.",
+  },
+  {
+    value: "not_reached",
+    label: "Did not arrive",
+    count: (c) => c.failed + c.dead,
+    hint: "WhatsApp refused it. The reason is on each row.",
+  },
+  {
+    value: "excluded",
+    label: "Not messaged",
+    count: (c) => c.excluded,
+    hint: "Left out before sending — no usable number, opted out, or blocked.",
+  },
 ];
+
+/** What a row's status means, in the words a person would use. */
+const STATUS_WORDS: Record<string, string> = {
+  read: "Read",
+  delivered: "Delivered",
+  sent: "Sent",
+  queued: "Waiting to send",
+  pending: "Waiting to send",
+  failed: "Did not arrive",
+  // Never "dead" on a screen. It is a queue word for a row that has used up
+  // its attempts, and it reads as something that happened to the customer.
+  dead: "Did not arrive",
+  excluded: "Not messaged",
+  cancelled: "Cancelled",
+};
 
 /**
  * One figure on the delivery row.
@@ -344,12 +405,26 @@ export default function CampaignDetailPage() {
           >
             <TabsList>
               {RECIPIENT_TABS.map((t) => (
-                <TabsTrigger key={t.value} value={t.value}>
+                <TabsTrigger key={t.value} value={t.value} title={t.hint}>
                   {t.label}
+                  {/* The count on the tab itself, from the campaign's own
+                      figures. Without it somebody opens a tab to find out how
+                      many are behind it, and an empty one looks broken rather
+                      than empty. */}
+                  <span className="ml-1.5 tabular-nums opacity-60">{t.count(c.counts)}</span>
                 </TabsTrigger>
               ))}
             </TabsList>
           </Tabs>
+
+          {/* What the tab they are on actually means. One line, under the
+              tabs, because every one of these words is a WhatsApp distinction
+              rather than an ordinary English one. */}
+          {RECIPIENT_TABS.find((t) => t.value === tab)?.hint ? (
+            <p className="pb-1 pt-2 text-xs text-muted-foreground">
+              {RECIPIENT_TABS.find((t) => t.value === tab)?.hint}
+            </p>
+          ) : null}
 
           {recipients.isLoading ? (
             <Skeleton className="h-32 w-full" />
@@ -386,7 +461,7 @@ export default function CampaignDetailPage() {
                                 : "outline"
                           }
                         >
-                          {r.status}
+                          {STATUS_WORDS[r.status] ?? r.status}
                         </Badge>
                       </TableCell>
                       <TableCell className="max-w-md text-xs text-muted-foreground">
