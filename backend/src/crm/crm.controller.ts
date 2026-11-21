@@ -238,6 +238,9 @@ export class CrmConversationsController {
     @Query('partyId') partyId?: string,
     @Query('nonAd') nonAd?: string,
     @Query('sourcePlatform') sourcePlatform?: string,
+    /** Threads a broadcast started: any of them, or one campaign's. */
+    @Query('broadcast') broadcast?: string,
+    @Query('campaignId') campaignId?: string,
   ) {
     /*
      * Every one of these narrows the caller's own scope; none widens it. The
@@ -261,6 +264,8 @@ export class CrmConversationsController {
       storeId: store || undefined,
       partyId: partyId || undefined,
       sourcePlatform: sourcePlatform || undefined,
+      broadcast: broadcast === 'true',
+      campaignId: campaignId || undefined,
       limit: limit ? Number(limit) : undefined,
     });
   }

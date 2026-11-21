@@ -672,23 +672,45 @@ export class CampaignsService implements OnModuleInit {
   async recipients(
     user: AuthUser,
     id: string,
-    opts: { status?: string; cursor?: string; limit?: number } = {},
+    opts: { status?: string; page?: number; limit?: number } = {},
   ) {
     const row = await this.loadCampaign(user, id);
     const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+    const page = Math.max(opts.page ?? 1, 1);
+    const where = {
+      organisationId: user.organisationId,
+      campaignId: row.id,
+      ...(opts.status ? { status: opts.status } : {}),
+    };
+    const total = await this.prisma.campaignRecipient.count({ where });
     const rows = await this.prisma.campaignRecipient.findMany({
-      where: {
-        organisationId: user.organisationId,
-        campaignId: row.id,
-        ...(opts.status ? { status: opts.status } : {}),
-      },
-      orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
-      take: limit + 1,
-      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
+      where,
+      /*
+       * THE ORDER THE AUDIENCE WAS BUILT IN, not alphabetical by status.
+       *
+       * This used to sort by `status` ascending, which sorts the WORD: dead,
+       * delivered, excluded, failed, pending, queued, read, sent. On the
+       * nails-event broadcast that put all 59 given-up rows first, so every
+       * page the client could reach was made of failures and the 7 sent sat at
+       * rows 198-204 — her words, "I could still see only dead ones". A report
+       * whose default view is sorted to show the worst outcome first is not a
+       * report.
+       *
+       * `createdAt` is the same instant for every row of one audience (they are
+       * written in a single insert), so `id` is what actually orders them —
+       * stable, unique, and the order the list was built in. The status tabs
+       * are there for anyone who does want one outcome at a time.
+       */
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      skip: (page - 1) * limit,
+      take: limit,
     });
-    const page = rows.slice(0, limit);
     return {
-      items: page.map((r) => ({
+      total,
+      page,
+      pageSize: limit,
+      pageCount: Math.max(Math.ceil(total / limit), 1),
+      items: rows.map((r) => ({
         id: r.id,
         partyId: r.partyId,
         contact: maskContact(r.contactValue),
@@ -700,7 +722,6 @@ export class CampaignsService implements OnModuleInit {
         lastError: explainDeliveryError(r.lastError),
         sentAt: r.sentAt,
       })),
-      nextCursor: rows.length > limit ? page[page.length - 1]?.id : null,
     };
   }
 
@@ -998,6 +1019,8 @@ export class CampaignsService implements OnModuleInit {
            * message anybody twice.
            */
           idempotencyKey: recipientSendKey(campaign.id, recipient.id, recipient.attempts + 1),
+          // So the thread can be found by the broadcast that started it.
+          campaignId: campaign.id,
         });
         /*
          * STILL QUEUED. `queueToContact` returns `{ message, job, ... }` — an

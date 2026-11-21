@@ -135,6 +135,20 @@ interface MessageInstructions {
   queuedAt?: string;
   /** On a staff thread: the employee the notice is for, re-read at delivery. */
   staffUserId?: string;
+  /**
+   * The broadcast this message belongs to, when it is one.
+   *
+   * Recorded on the message rather than inferred from the recipient row,
+   * because the inbox reads threads and has no way back to a campaign
+   * otherwise: `CampaignRecipient.messageId` is a plain column with no
+   * relation behind it, so a thread cannot be filtered by the broadcast that
+   * started it without first listing every message id the campaign produced.
+   *
+   * It also answers, on the thread itself, the question a colleague asks when
+   * a customer replies to something nobody at the branch typed: what was this
+   * in reply to.
+   */
+  campaignId?: string;
 }
 
 /** The outcome of queuing a notice to a member of staff. */
@@ -571,6 +585,8 @@ export class OmnichannelService implements OnModuleInit {
       languageCode?: string;
       templateComponents?: unknown[];
       idempotencyKey?: string;
+      /** The broadcast this send belongs to; recorded on the message. */
+      campaignId?: string;
       /**
        * The customer this send is for, when the caller already knows.
        *
@@ -671,7 +687,8 @@ export class OmnichannelService implements OnModuleInit {
       templateAssetId,
       templateComponents: input.templateComponents,
       idempotencyKey: input.idempotencyKey,
-    } as QueueOmnichannelMessageDto, document, opts.recordAuthorised);
+      ...(input.campaignId ? { campaignId: input.campaignId } : {}),
+    } as QueueOmnichannelMessageDto & { campaignId?: string }, document, opts.recordAuthorised);
   }
 
   /**
@@ -773,7 +790,14 @@ export class OmnichannelService implements OnModuleInit {
   async queue(
     user: AuthUser,
     conversationId: string,
-    input: QueueOmnichannelMessageDto,
+    /*
+     * `campaignId` is intersected here rather than added to the DTO itself.
+     * The DTO is the shape of a request body and the pipe rejects unknown
+     * fields, so putting it there would let any caller of the send endpoint
+     * tag a message as part of somebody's broadcast. Only this module's own
+     * callers can pass it.
+     */
+    input: QueueOmnichannelMessageDto & { campaignId?: string },
     document?: QueuedDocument,
     recordAuthorised = false,
   ) {
@@ -825,6 +849,7 @@ export class OmnichannelService implements OnModuleInit {
       ...(template ? { templateAssetId: template.id } : {}),
       ...(input.templateComponents ? { templateComponents: input.templateComponents } : {}),
       ...(document ? { document } : {}),
+      ...(input.campaignId ? { campaignId: input.campaignId } : {}),
       queuedAt: now.toISOString(),
     };
 

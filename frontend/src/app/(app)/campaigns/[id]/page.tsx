@@ -123,13 +123,9 @@ export default function CampaignDetailPage() {
   const [tab, setTab] = useState("all");
 
   const campaign = useCampaign(id);
-  const recipients = useCampaignRecipients(id, tab === "all" ? undefined : tab);
-  /*
-   * Every page loaded so far, as one list. The endpoint pages and the screen
-   * used to ignore that, showing fifty rows and a line saying so — on a
-   * broadcast of 204 that hid three quarters of the people involved.
-   */
-  const recipientRows = recipients.data?.pages.flatMap((p) => p.items) ?? [];
+  const [page, setPage] = useState(1);
+  const recipients = useCampaignRecipients(id, tab === "all" ? undefined : tab, page);
+  const recipientRows = recipients.data?.items ?? [];
   const approve = useApproveCampaign();
   const cancel = useCancelCampaign();
   const retry = useRetryCampaign();
@@ -337,7 +333,15 @@ export default function CampaignDetailPage() {
           <CardTitle className="text-base">Recipients</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <Tabs value={tab} onValueChange={setTab}>
+          {/* Page 1 on every tab change: "Sent" has seven rows and the reader
+              could be on page four of "Everyone" when they switch. */}
+          <Tabs
+            value={tab}
+            onValueChange={(v) => {
+              setTab(v);
+              setPage(1);
+            }}
+          >
             <TabsList>
               {RECIPIENT_TABS.map((t) => (
                 <TabsTrigger key={t.value} value={t.value}>
@@ -412,21 +416,45 @@ export default function CampaignDetailPage() {
                   ))}
                 </TableBody>
               </Table>
-              <div className="flex items-center justify-between gap-3 pt-3">
-                <p className="text-xs text-muted-foreground">
-                  {recipientRows.length} shown
-                  {recipients.hasNextPage ? " so far" : ""}.
+              {/* Numbered pages, because somebody reading this is looking for
+                  one person among a few hundred and needs to get back to the
+                  page they were just on. The range is spelled out so the list
+                  never again hides four fifths of itself behind a count. */}
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3">
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {recipients.data
+                    ? recipients.data.total === 0
+                      ? "None here."
+                      : `${(recipients.data.page - 1) * recipients.data.pageSize + 1}–${Math.min(
+                          recipients.data.page * recipients.data.pageSize,
+                          recipients.data.total,
+                        )} of ${recipients.data.total}`
+                    : ""}
                 </p>
-                {recipients.hasNextPage ? (
+                <div className="flex items-center gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => void recipients.fetchNextPage()}
-                    disabled={recipients.isFetchingNextPage}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}
+                    disabled={page <= 1 || recipients.isFetching}
                   >
-                    {recipients.isFetchingNextPage ? "Loading…" : "Show more"}
+                    Previous
                   </Button>
-                ) : null}
+                  <span className="text-xs text-muted-foreground tabular-nums">
+                    Page {recipients.data?.page ?? page} of {recipients.data?.pageCount ?? 1}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setPage((p) => p + 1)}
+                    disabled={
+                      recipients.isFetching ||
+                      page >= (recipients.data?.pageCount ?? 1)
+                    }
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
             </div>
           )}

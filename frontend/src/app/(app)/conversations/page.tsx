@@ -91,6 +91,7 @@ import { useSession } from "@/store/use-session";
 import { useFillViewport } from "@/lib/use-fill-viewport";
 import { PRODUCT_NAME, TENANT_NAME } from "@/lib/brand";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
+import { useCampaigns } from "@/lib/queries/campaigns";
 
 /**
  * Platform names as a customer would recognise them.
@@ -387,6 +388,15 @@ function ConversationsContent() {
   const channelFilter = searchParams.get("channel") ?? "";
   /** Which Meta surface the AD was tapped on. Empty means all of them. */
   const sourceFilter = searchParams.get("source") ?? "";
+  /*
+   * The broadcast filter. "" is off, "any" is every broadcast, and anything
+   * else is one campaign's id.
+   *
+   * In the URL, like every other filter here, so a manager can send somebody
+   * the link to "the people who got the nails invitation" rather than a
+   * description of which menus to click.
+   */
+  const broadcastFilter = searchParams.get("broadcast") ?? "";
 
   // Whether the Non-ad queue is offered at all. The server refuses it for
   // everyone else regardless, so this only keeps a dead tab off the screen.
@@ -412,6 +422,7 @@ function ConversationsContent() {
     thread?: string | null;
     channel?: string | null;
     source?: string | null;
+    broadcast?: string | null;
   }) => {
     const params = new URLSearchParams(searchParams.toString());
     if (next.queue !== undefined) {
@@ -475,9 +486,25 @@ function ConversationsContent() {
           ...serverQueueParams,
           ...(channelFilter ? { channel: channelFilter } : {}),
           ...(sourceFilter ? { sourcePlatform: sourceFilter } : {}),
+          ...(broadcastFilter === "any"
+            ? { broadcast: true }
+            : broadcastFilter
+              ? { campaignId: broadcastFilter }
+              : {}),
         },
   );
   const counts = useQueueCounts();
+
+  /*
+   * The broadcasts that have actually been sent, for the filter above.
+   *
+   * A draft or an unapproved one has reached nobody, so offering it could only
+   * produce an empty inbox and the question of whether the filter is broken.
+   */
+  const campaigns = useCampaigns();
+  const sentCampaigns = (campaigns.data ?? []).filter((c) =>
+    ["sending", "sent", "partially_failed", "finished"].includes(c.status),
+  );
 
   /*
    * Which platforms actually appear in this inbox.
@@ -779,6 +806,35 @@ function ConversationsContent() {
               <option value="instagram">Instagram ad</option>
               <option value="facebook">Facebook ad</option>
               <option value="unknown">Ad — source unknown</option>
+            </select>
+
+            {/* WHO WAS SENT A BROADCAST.
+
+                A thread is listed here because a broadcast put a message in
+                it, not because the thread belongs to the campaign — the same
+                customer may have been sent three and then written in about
+                something else entirely, and that is still one conversation.
+
+                Only campaigns that actually went out are offered: a draft has
+                reached nobody, so choosing it could only ever show an empty
+                inbox. */}
+            <select
+              aria-label="Show only the customers a broadcast was sent to"
+              value={broadcastFilter}
+              onChange={(e) => navigate({ broadcast: e.target.value || null })}
+              className={`h-8 max-w-[14rem] rounded-md border bg-background px-2 text-xs font-medium ${
+                broadcastFilter
+                  ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
+                  : "border-border text-muted-foreground"
+              }`}
+            >
+              <option value="">All conversations</option>
+              <option value="any">Broadcasts — any</option>
+              {sentCampaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
             </select>
           </div>
           {/* The branch this inbox is showing. Read-only on purpose — it is the
