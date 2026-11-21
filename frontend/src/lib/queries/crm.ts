@@ -405,6 +405,16 @@ export function useConversations(params: {
   sourcePlatform?: string;
   /** Every thread belonging to one customer, newest first. */
   partyId?: string;
+  /**
+   * Threads a BROADCAST started — any of them, or one campaign's.
+   *
+   * A customer who was sent a broadcast and then replied has one thread, which
+   * is theirs; this finds it by the message the broadcast put in it rather
+   * than by labelling the conversation, which would rewrite what that thread
+   * is every time another broadcast touched it.
+   */
+  broadcast?: boolean;
+  campaignId?: string;
 }) {
   // No `storeId` parameter: the branch travels on `X-Store-Id` with every
   // request, and the server narrows the inbox to it. Sending it here as well
@@ -425,6 +435,8 @@ export function useConversations(params: {
             nonAd: params.nonAd ? "true" : undefined,
             sourcePlatform: params.sourcePlatform,
             partyId: params.partyId,
+            broadcast: params.broadcast ? "true" : undefined,
+            campaignId: params.campaignId,
           },
         })
       ).data,

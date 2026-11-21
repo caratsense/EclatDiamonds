@@ -1806,6 +1806,17 @@ export class ConversationsService {
        * hidden tab is a suggestion and a query parameter is a request.
        */
       nonAd?: boolean;
+      /**
+       * Threads a BROADCAST started.
+       *
+       * `true` is any broadcast; a campaign id narrows it to one. Matched on
+       * the message's own stored instruction rather than through
+       * `CampaignRecipient`, which holds `messageId` as a plain column with no
+       * relation behind it — filtering through that would mean listing every
+       * message id a campaign produced and passing them all back as an `IN`.
+       */
+      broadcast?: boolean;
+      campaignId?: string;
     } = {},
   ) {
     const take = Math.min(Math.max(opts.limit ?? 50, 1), 200);
@@ -1826,6 +1837,40 @@ export class ConversationsService {
         ...(opts.routingReview ? { routingReviewRequired: true } : {}),
         ...(opts.unidentified ? { partyId: null } : {}),
         ...(opts.partyId ? { partyId: opts.partyId } : {}),
+        /*
+         * The thread holds a message this broadcast sent. `some` and not the
+         * conversation's own column deliberately: a customer who was sent a
+         * broadcast and then wrote in has ONE thread, which is theirs and not
+         * the campaign's, and tagging the conversation itself would rewrite
+         * what that thread is every time a new broadcast touched it.
+         */
+        ...(opts.campaignId
+          ? {
+              messages: {
+                some: {
+                  direction: 'outbound',
+                  payload: {
+                    path: ['omnichannel', 'campaignId'],
+                    equals: opts.campaignId,
+                  },
+                },
+              },
+            }
+          : opts.broadcast
+            ? {
+                messages: {
+                  some: {
+                    direction: 'outbound',
+                    NOT: {
+                      payload: {
+                        path: ['omnichannel', 'campaignId'],
+                        equals: Prisma.DbNull,
+                      },
+                    },
+                  },
+                },
+              }
+            : {}),
         // "No ad told us where this came from" — never inferred from a missing
         // store, which can also mean a rule simply has not been written yet.
         ...(opts.nonAd ? { sourceAdId: null } : {}),

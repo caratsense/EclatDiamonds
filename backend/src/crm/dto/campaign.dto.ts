@@ -219,10 +219,20 @@ export class ListRecipientsDto {
   @IsIn(['pending', 'excluded', 'queued', 'sent', 'delivered', 'read', 'failed', 'dead', 'cancelled'])
   status?: string;
 
+  /**
+   * Page number, 1-based.
+   *
+   * Offset rather than a cursor, deliberately: this list is read by somebody
+   * looking for a particular person among a few hundred, who needs to know how
+   * many pages there are and to go back to the one they were just on. A cursor
+   * can only ever offer "more", which is what this screen had and why four
+   * fifths of a broadcast was unreachable from it.
+   */
   @IsOptional()
-  @IsString()
-  @Length(1, 40)
-  cursor?: string;
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  page?: number;
 
   @IsOptional()
   @Type(() => Number)
