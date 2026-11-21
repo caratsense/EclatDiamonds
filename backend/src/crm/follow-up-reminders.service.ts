@@ -169,32 +169,70 @@ export class FollowUpRemindersService {
       });
       if (claim.count === 0) continue; // another sweep has it
 
+      // Nothing to remind about: the claim stands so the row is not re-examined
+      // every minute, and the reason is simply that.
+      if (f.lead.outcome !== 'open' || f.lead.party?.archivedAt) {
+        skipped++;
+        continue;
+      }
+
+      /*
+       * WHO HEARS ABOUT IT — and "nobody is named on the lead" is not an answer.
+       *
+       * This used to require an owner and skip the row when there was none.
+       * In this business there almost never is one: 1,278 of 1,279 open leads
+       * carry no owner, so 11,595 follow-ups could never have reached anybody
+       * even once their reminders were set. A customer owed a call on a lead
+       * nobody happens to own is still owed the call.
+       *
+       * The branch takes it instead — the same rule a finished bot script
+       * already follows when it hands a thread over, and the client's own
+       * words there: everybody assigned to that store, store manager, anybody.
+       * The follow-up carries `storeId` for exactly this.
+       *
+       * An owner who has left or been deactivated now falls through here too,
+       * rather than being skipped. A reminder fires once, and sending it into
+       * a closed account is the same as sending it nowhere.
+       */
+      const branch = () =>
+        this.notifications.recipientsFor(
+          f.storeId,
+          Role.store_manager,
+          undefined,
+          f.lead.organisationId,
+        );
+
       const recipient = f.assigneeId ?? f.lead.ownerId;
-      // Nothing to remind about, or nobody to remind: the claim stands so the row
-      // is not re-examined every minute, and the reason is simply that.
-      if (!recipient || f.lead.outcome !== 'open' || f.lead.party?.archivedAt) {
-        skipped++;
-        continue;
-      }
-      const active = await this.prisma.user.findFirst({
-        where: { id: recipient, organisationId: f.lead.organisationId, isActive: true },
-        select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
-      });
-      if (!active) {
-        skipped++;
-        continue;
-      }
+      const active = recipient
+        ? await this.prisma.user.findFirst({
+            where: { id: recipient, organisationId: f.lead.organisationId, isActive: true },
+            select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
+          })
+        : null;
       // Follow-ups are worked from the lead. Somebody who cannot open CRM (the
       // follow-up was booked before their screens changed) can do nothing with
       // the reminder, and it fires only once: the branch's managers get it instead.
-      const theirs = canOpen(active, 'crm');
-      const told = theirs
-        ? [recipient]
-        : await this.notifications.recipientsFor(f.storeId, Role.store_manager, undefined, f.lead.organisationId);
+      const ownerCanWorkIt = !!active && canOpen(active, 'crm');
+      const told = ownerCanWorkIt ? [active!.id] : await branch();
       if (!told.length) {
         skipped++;
         continue;
       }
+
+      /*
+       * Why the branch is hearing about this rather than the owner.
+       *
+       * Without it the manager gets a reminder for a lead that is not theirs
+       * and no way to tell whether they are covering for somebody or whether
+       * the lead is simply unowned — which is the thing worth fixing.
+       */
+      const viaBranch = ownerCanWorkIt
+        ? ''
+        : !recipient
+          ? ' · this lead has no owner'
+          : active
+            ? ` · ${active.name} cannot open it`
+            : ' · its owner is no longer active';
 
       const dedupeKey = `follow-up-reminder:${f.id}`;
       try {
@@ -203,7 +241,7 @@ export class FollowUpRemindersService {
           title: `Follow up with ${f.lead.customerName}`,
           body:
             `Due ${f.dueDate.toISOString().slice(0, 10)}${f.note ? ` · ${f.note.slice(0, 140)}` : ''}` +
-            (theirs ? '' : ` · ${active.name} cannot open it`),
+            viaBranch,
           href: '/reminders',
           storeId: f.storeId,
           entityType: 'LeadFollowUp',

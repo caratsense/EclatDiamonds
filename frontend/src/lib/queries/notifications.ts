@@ -178,6 +178,13 @@ export function useClearNotifications() {
   });
 }
 
+/** Where the tabs of one browser agree which of them holds the stream. */
+const STREAM_CHANNEL = "caratspace:notification-stream";
+const STREAM_LOCK_KEY = "caratspace:notification-stream-leader";
+const STREAM_HEARTBEAT_MS = 2_000;
+/** A lock older than this belonged to a tab that is gone. */
+const STREAM_LOCK_STALE_MS = 7_000;
+
 /**
  * Subscribe to the live notification stream.
  *
@@ -212,6 +219,92 @@ export function useNotificationStream(
     let retryTimer: ReturnType<typeof setTimeout> | null = null;
     let attempt = 0;
 
+    /*
+     * ONE STREAM PER BROWSER, NOT PER TAB.
+     *
+     * This stream is a connection held open for as long as the tab is. A
+     * browser allows six per origin over HTTP/1.1, so six CaratSpace tabs —
+     * an ordinary morning for somebody working the floor — used all six on
+     * notifications and the seventh request, an actual page load, simply
+     * queued until one was closed. The app looked frozen for no reason a
+     * person could see.
+     *
+     * So the tabs elect one leader, which holds the only connection and
+     * repeats what arrives to the rest over a BroadcastChannel. The lock is a
+     * timestamp in localStorage: the leader refreshes it on a heartbeat, and
+     * a lock that has gone stale (the tab was closed, crashed, or the machine
+     * slept) is taken over by whoever notices first.
+     *
+     * A follower is not a degraded tab. It re-renders from the same cache and
+     * fires the same callback; it simply does not hold a socket to do it. And
+     * the pushed row was never the guarantee anyway — the feed query is, which
+     * is why a browser with no BroadcastChannel at all can safely fall through
+     * to the old behaviour of connecting on its own.
+     */
+    const tabId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const channel =
+      typeof BroadcastChannel !== "undefined" ? new BroadcastChannel(STREAM_CHANNEL) : null;
+    let leading = false;
+    let lockTimer: ReturnType<typeof setInterval> | null = null;
+
+    function deliver(n: FeedNotification) {
+      qc.invalidateQueries({ queryKey: [KEY] });
+      handlerRef.current?.(n);
+    }
+
+    if (channel) {
+      channel.onmessage = (e: MessageEvent) => {
+        if (cancelled) return;
+        const msg = e.data as { type?: string; payload?: FeedNotification } | null;
+        if (msg?.type === "notification" && msg.payload) deliver(msg.payload);
+        // The leader is standing down (its tab is closing). Try to take over
+        // now rather than wait for the lock to go stale.
+        if (msg?.type === "leader-released") takeLeadIfFree();
+      };
+    }
+
+    function lockHolder(): { id: string; at: number } | null {
+      try {
+        const raw = window.localStorage.getItem(STREAM_LOCK_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw) as { id?: unknown; at?: unknown };
+        return typeof parsed.id === "string" && typeof parsed.at === "number"
+          ? { id: parsed.id, at: parsed.at }
+          : null;
+      } catch {
+        // A corrupt or unreadable lock is treated as no lock: the worst case
+        // is a second connection, which is what every tab had before.
+        return null;
+      }
+    }
+
+    function writeLock() {
+      try {
+        window.localStorage.setItem(
+          STREAM_LOCK_KEY,
+          JSON.stringify({ id: tabId, at: Date.now() }),
+        );
+      } catch {
+        // Private mode, or storage full. Carry on leading; the lock simply
+        // cannot be seen by anyone else.
+      }
+    }
+
+    function takeLeadIfFree() {
+      if (cancelled || leading) return;
+      const held = lockHolder();
+      const stale = !held || Date.now() - held.at > STREAM_LOCK_STALE_MS;
+      if (!stale && held.id !== tabId) return;
+      writeLock();
+      // Re-read before committing. Two tabs can decide to claim in the same
+      // instant; the one whose write landed last owns it, and the other sees
+      // that here and stays a follower.
+      if (lockHolder()?.id !== tabId) return;
+      leading = true;
+      attempt = 0;
+      connect();
+    }
+
     function handleFrame(frame: string) {
       const lines = frame.split("\n");
       // The frame's discriminator is the `event:` line, NOT a field inside the
@@ -230,8 +323,7 @@ export function useNotificationStream(
       if (!dataLine) return;
       try {
         const n = JSON.parse(dataLine);
-        qc.invalidateQueries({ queryKey: [KEY] });
-        handlerRef.current?.({
+        const notification: FeedNotification = {
           id: n.id,
           kind: n.kind,
           title: n.title,
@@ -245,7 +337,10 @@ export function useNotificationStream(
           read: false,
           dismissed: false,
           createdAt: n.createdAt,
-        });
+        };
+        deliver(notification);
+        // Every other tab of this browser is listening instead of connecting.
+        channel?.postMessage({ type: "notification", payload: notification });
       } catch {
         // A malformed frame is not worth breaking the stream over.
       }
@@ -298,12 +393,37 @@ export function useNotificationStream(
       if (!cancelled) scheduleReconnect();
     }
 
-    connect();
+    // Without BroadcastChannel there is nobody to follow, so behave exactly as
+    // this hook always did rather than leave the tab with no live updates.
+    if (!channel) {
+      leading = true;
+      connect();
+    } else {
+      takeLeadIfFree();
+      lockTimer = setInterval(() => {
+        if (cancelled) return;
+        if (leading) writeLock();
+        else takeLeadIfFree();
+      }, STREAM_HEARTBEAT_MS);
+    }
 
     return () => {
       cancelled = true;
       controller?.abort();
       if (retryTimer) clearTimeout(retryTimer);
+      if (lockTimer) clearInterval(lockTimer);
+      if (leading) {
+        // Hand over deliberately instead of leaving the next tab to wait out a
+        // stale lock, which would be several seconds with no live updates for
+        // anybody.
+        try {
+          if (lockHolder()?.id === tabId) window.localStorage.removeItem(STREAM_LOCK_KEY);
+        } catch {
+          // Nothing to do: the lock expires on its own.
+        }
+        channel?.postMessage({ type: "leader-released" });
+      }
+      channel?.close();
     };
   }, [qc]);
 }

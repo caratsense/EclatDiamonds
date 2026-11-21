@@ -64,17 +64,49 @@ export function addUtcDays(base: Date, days: number): Date {
  * ten rows that are all already overdue, and a manager opening the app to
  * 1,800 late tasks stops opening the app.
  */
+/**
+ * The due days of the SOP cadence, as dates.
+ *
+ * Separated from the rows so a caller can resolve a reminder instant for each
+ * one before writing them — see `sopFollowUps`.
+ */
+export function sopDueDates(from: Date): Date[] {
+  return FOLLOW_UP_CADENCE_DAYS.map((days) => addUtcDays(from, days));
+}
+
 export function sopFollowUps(
   leadId: string,
   storeId: string,
   from: Date,
   note?: string | null,
-): { leadId: string; storeId: string; seq: number; dueDate: Date; note: string | null }[] {
+  /*
+   * WHEN SOMEBODY IS TOLD, one per due day and in the same order.
+   *
+   * `dueDate` is the day the CUSTOMER is owed a call; `reminderAt` is the
+   * instant the EMPLOYEE hears about it, and it is the only field the reminder
+   * sweep looks at. Rows written without one are due forever and announce
+   * themselves to nobody — eleven thousand of them had accumulated that way,
+   * with exactly one reminder set across the whole database.
+   *
+   * Optional because the pure shape of the cadence is still useful to a caller
+   * that has no organisation settings to resolve against; every caller that
+   * writes to the database passes it.
+   */
+  reminders?: (Date | null)[],
+): {
+  leadId: string;
+  storeId: string;
+  seq: number;
+  dueDate: Date;
+  note: string | null;
+  reminderAt: Date | null;
+}[] {
   return FOLLOW_UP_CADENCE_DAYS.map((days, i) => ({
     leadId,
     storeId,
     seq: i + 1,
     dueDate: addUtcDays(from, days),
     note: note ?? null,
+    reminderAt: reminders?.[i] ?? null,
   }));
 }

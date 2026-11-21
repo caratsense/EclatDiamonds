@@ -8,8 +8,9 @@ import { businessDate, resolveTz } from '../common/tz.util';
 import { ActivityService } from './activity.service';
 import { IdentityService, type ContactKind } from './identity.service';
 import { AdvancedCrmService } from './advanced-crm.service';
-import { sopFollowUps } from '../common/follow-up-cadence';
+import { sopDueDates, sopFollowUps } from '../common/follow-up-cadence';
 import { ProvenanceTagsService } from './provenance-tags.service';
+import { FollowUpRemindersService } from './follow-up-reminders.service';
 
 // SOP follow-up cadence lives in common/follow-up-cadence.ts, shared with the
 // manual and QR paths.
@@ -91,6 +92,7 @@ export class LeadIntakeService {
     private readonly sequence: SequenceService,
     private readonly advanced: AdvancedCrmService,
     private readonly provenanceTags: ProvenanceTagsService,
+    private readonly followUpReminders: FollowUpRemindersService,
   ) {}
 
   async capture(input: LeadIntakeInput): Promise<LeadIntakeResult> {
@@ -172,8 +174,20 @@ export class LeadIntakeService {
         // Follow-ups are scheduled in the BRANCH's timezone, not the server's.
         // A lead taken at 11pm in Kolkata is due seven days later there.
         const localDate = businessDate(now, resolveTz(store.timezone));
+        // With the instant somebody is told, not just the day the customer is
+        // owed a call. See sopFollowUps.
+        const dueDates = sopDueDates(localDate);
+        const reminders = await Promise.all(
+          dueDates.map((dueDay) =>
+            this.followUpReminders.resolveReminderAt({
+              organisationId,
+              timezone: store.timezone,
+              dueDay,
+            }),
+          ),
+        );
         await tx.leadFollowUp.createMany({
-          data: sopFollowUps(created.id, store.id, localDate, input.followUpNote),
+          data: sopFollowUps(created.id, store.id, localDate, input.followUpNote, reminders),
         });
 
         await this.activity.record(
