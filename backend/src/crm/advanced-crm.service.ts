@@ -12,7 +12,7 @@ import { createCipheriv, createDecipheriv, createHash, randomBytes, randomUUID }
 import { canOpen, canOpenById } from '../auth/access';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
-import { sopFollowUps } from '../common/follow-up-cadence';
+import { sopDueDates, sopFollowUps } from '../common/follow-up-cadence';
 import { SequenceService } from '../common/sequence.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { businessDate, resolveTz, startOfDayAgoInTz, zonedParts } from '../common/tz.util';
@@ -20,6 +20,7 @@ import { updateOrgSettings, updateOrgSettingsIn, type OrgSettings } from '../con
 import { PrismaService } from '../prisma/prisma.service';
 import { ActivityService } from './activity.service';
 import { IdentityService } from './identity.service';
+import { FollowUpRemindersService } from './follow-up-reminders.service';
 import type {
   CaptureLeadFromQrDto,
   IssueLeadQrDto,
@@ -124,6 +125,7 @@ export class AdvancedCrmService {
     private readonly identity: IdentityService,
     private readonly activity: ActivityService,
     private readonly config: ConfigService,
+    private readonly followUpReminders: FollowUpRemindersService,
   ) {}
 
   // -----------------------------------------------------------------------
@@ -1089,8 +1091,19 @@ export class AdvancedCrmService {
           select: { id: true, ref: true },
         });
         const localDate = businessDate(now, resolveTz(store.timezone));
+        // With the instant somebody is told. See sopFollowUps.
+        const dueDates = sopDueDates(localDate);
+        const reminders = await Promise.all(
+          dueDates.map((dueDay) =>
+            this.followUpReminders.resolveReminderAt({
+              organisationId: payload.organisationId,
+              timezone: store.timezone,
+              dueDay,
+            }),
+          ),
+        );
         await tx.leadFollowUp.createMany({
-          data: sopFollowUps(created.id, store.id, localDate, 'QR enquiry follow-up'),
+          data: sopFollowUps(created.id, store.id, localDate, 'QR enquiry follow-up', reminders),
         });
         await this.activity.record({
           organisationId: payload.organisationId, type: 'lead.created',

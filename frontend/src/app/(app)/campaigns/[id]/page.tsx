@@ -77,13 +77,37 @@ const RECIPIENT_TABS = [
   { value: "dead", label: "Given up" },
 ];
 
-function Stat({ label, value, tone }: { label: string; value: number; tone?: "bad" | "good" }) {
+/**
+ * One figure on the delivery row.
+ *
+ * `muted` is for a figure that is part of another one on the same row — the
+ * readers are also among the reached — so the eye reads the headline number
+ * first and the breakdown as detail under it, rather than as four totals to
+ * add together.
+ */
+function Stat({
+  label,
+  value,
+  tone,
+  muted,
+}: {
+  label: string;
+  value: number;
+  tone?: "bad" | "good";
+  muted?: boolean;
+}) {
+  const colour =
+    tone === "bad" && value > 0
+      ? "text-destructive"
+      : tone === "good" && value > 0
+        ? "text-emerald-600 dark:text-emerald-400"
+        : "";
   return (
-    <div className="rounded-md border border-border p-3">
+    <div className={`rounded-md border p-3 ${muted ? "border-dashed border-border/60" : "border-border"}`}>
       <div
-        className={`font-[family-name:var(--font-display-face)] text-2xl tabular-nums ${
-          tone === "bad" && value > 0 ? "text-destructive" : ""
-        }`}
+        className={`font-[family-name:var(--font-display-face)] tabular-nums ${
+          muted ? "text-xl text-muted-foreground" : "text-2xl"
+        } ${colour}`}
       >
         {value.toLocaleString()}
       </div>
@@ -253,15 +277,46 @@ export default function CampaignDetailPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-7">
+          {/*
+            REACHED FIRST, AND THE READERS COUNTED.
+
+            This row used to run Targeted / Excluded / Queued / Sent /
+            Delivered / Failed / Given up — with no tile for `read`, which the
+            API had been returning all along. On the nails-event broadcast that
+            left 59 of 126 people nowhere on the screen: the tiles added up to
+            67, the customer who had opened and read the invitation was counted
+            as neither delivered nor anything else, and the campaign looked
+            like it had reached a third of the list when it had reached four
+            fifths of it.
+
+            `Reached` leads because it is the question the screen is opened to
+            answer. The three states underneath it are the same people in more
+            detail, which is why they are muted — a reader is also delivered,
+            and showing both as equals invites adding them together.
+          */}
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-8">
             <Stat label="Targeted" value={c.counts.targeted} />
-            <Stat label="Excluded" value={c.counts.excluded} />
+            <Stat
+              label="Reached"
+              value={c.counts.sent + c.counts.delivered + c.counts.read}
+              tone="good"
+            />
+            <Stat label="Read" value={c.counts.read} muted />
+            <Stat label="Delivered" value={c.counts.delivered} muted />
+            <Stat label="Sent" value={c.counts.sent} muted />
             <Stat label="Queued" value={c.counts.queued} />
-            <Stat label="Sent" value={c.counts.sent} />
-            <Stat label="Delivered" value={c.counts.delivered} />
             <Stat label="Failed" value={c.counts.failed} tone="bad" />
             <Stat label="Given up" value={c.counts.dead} tone="bad" />
           </div>
+          <p className="pt-3 text-xs text-muted-foreground">
+            {/* Said plainly, because three of the tiles above are subsets of
+                one another and somebody will otherwise add them up. */}
+            Reached counts everyone the message got to — sent, delivered and
+            read are the same people at different stages.
+            {c.counts.excluded > 0
+              ? ` ${c.counts.excluded} more were not messaged; the reasons are below.`
+              : ""}
+          </p>
         </CardContent>
       </Card>
 

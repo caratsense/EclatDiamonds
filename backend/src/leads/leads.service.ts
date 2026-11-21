@@ -365,17 +365,43 @@ export class LeadsService {
       source: lead.source,
     });
 
-    // Auto follow-ups: SOP defaults +7d (seq 1) and +30d (seq 2) from create date.
+    /*
+     * Auto follow-ups: SOP defaults +7d (seq 1) and +30d (seq 2) from create
+     * date — WITH THE INSTANT SOMEBODY IS ACTUALLY TOLD.
+     *
+     * These rows carried a `dueDate` and nothing else, and `dueDate` is the day
+     * the CUSTOMER is owed a call. `reminderAt` is the moment the EMPLOYEE is
+     * told, and it is the only thing the sweep looks at. So eleven thousand
+     * follow-ups sat due and nobody was ever reminded of one: exactly one row
+     * in the whole database had a reminder on it, set by hand from a check-in.
+     *
+     * Resolved through the same service the check-in screen uses, so the hour
+     * and the days-before come from the tenant's own settings and the instant
+     * is computed in the BRANCH's timezone rather than the server's.
+     */
     const base = todayUtc();
+    const store = await this.prisma.store.findUnique({
+      where: { id: lead.storeId },
+      select: { timezone: true },
+    });
+    const dueDays = FOLLOW_UP_CADENCE_DAYS.map((days) => addDaysUtc(base, days));
+    const reminders = await Promise.all(
+      dueDays.map((dueDay) =>
+        this.followUpReminders.resolveReminderAt({
+          organisationId: user.organisationId,
+          timezone: store?.timezone,
+          dueDay,
+        }),
+      ),
+    );
     await this.prisma.leadFollowUp.createMany({
-      data: [
-        ...FOLLOW_UP_CADENCE_DAYS.map((days, i) => ({
-          leadId: lead.id,
-          storeId: lead.storeId,
-          seq: i + 1,
-          dueDate: addDaysUtc(base, days),
-        })),
-      ],
+      data: dueDays.map((dueDate, i) => ({
+        leadId: lead.id,
+        storeId: lead.storeId,
+        seq: i + 1,
+        dueDate,
+        reminderAt: reminders[i],
+      })),
     });
 
     // CaratOS Phase A6 — give the lead a real customer identity.

@@ -1666,10 +1666,23 @@ export class ConversationsService {
     const storeScope = this.scope.storeFilter(user);
     // Staff notice threads (the morning digest) are the business talking to its
     // own people. They are in the outbox, never in the customer inbox.
-    // A salesperson's inbox is the threads assigned to them. An unassigned or
-    // colleague's thread reaches them by assignment, not by being at the branch.
+    /*
+     * A SALESPERSON SEES THEIR BRANCH'S INBOX (client, 20 November).
+     *
+     * It used to be the threads assigned to them and nothing else. On a floor
+     * where almost nothing is ever assigned, that is an empty inbox beside a
+     * branch full of waiting customers: a salesperson could see a thread only
+     * after somebody else had already noticed it and handed it over, which is
+     * the work the inbox exists to prevent.
+     *
+     * `storeScope` is doing the containing here, and it is the same boundary
+     * as before — a Mumbai salesperson still cannot see a Hyderabad thread.
+     * What changed is only that their own branch is no longer filtered down to
+     * their own name. The `mine` and `assignedToMe` filters below still narrow
+     * it for somebody who wants just their own.
+     */
     if (isSalesScoped(user) && !recordAuthorised) {
-      return { audience: 'customer', ...storeScope, assignedUserId: user.id };
+      return { audience: 'customer', ...storeScope };
     }
     return user.role === 'head_office'
       ? { audience: 'customer', OR: [storeScope, { storeId: null }] }

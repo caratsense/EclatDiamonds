@@ -459,3 +459,51 @@ Owner, 20 Nov: a customer at Bandra wants a piece that is at Borivali, and Bandr
 - **One narrow cross-branch stock read, for the asking only.** `GET /stock-transfers/pullable?fromStoreId=` serves branch staff the available pieces (`in_stock`/`aging`/`dead_stock`) at ONE named trading branch of their own organisation — SKU, design name and number, category, metal, karat, gross weight, status. No tag price, MRP, cost, HUID or certificate number; no sold, reserved or in-transit pieces; not their own branches (the ordinary stock list already shows those), not the import holding pen or an attendance-only office (nobody there could answer), not head office (it already sees everything). Every other stock path — `GET /stock`, the summary, by-store and dead stock — is untouched and stays bounded by `StoreScopeService`.
 - **The approval floors for the movement are unchanged.** Asking and sending the ask sit at `salesperson`, accept/decline at `store_manager` of the holding branch, approve/reject at `head_office`, dispatch/receive/acknowledge at `store_manager` as before. Withdrawing belongs to whichever branch raised it.
 
+
+# 2026-11-20 — marketing consent is implied for this tenant, and silence is not a refusal
+
+Owner, 19 Nov, in her own words: "every customer which comes to the CRM already comes with marketing consent, until they explicitly tell us". A broadcast of 204 had refused 78 of them for having no recorded grant.
+
+- **`Organisation.settings.marketingConsentBasis`**, `explicit` (the platform default, unchanged for every other tenant) or `implied`. It decides **what silence means** and nothing else.
+- **A revocation is refused under either basis.** STOP means STOP, and the opt-out check runs before this one. Turning the basis to `implied` cannot message somebody who asked not to be messaged.
+- **Deliberately a script, not a migration.** Turning permissive marketing on for a business is a decision recorded against a person's name, not something a deploy does quietly to every tenant that happens to upgrade. `scripts/set-marketing-consent-basis.mjs`.
+- **A refusal is only as current as the policy that made it.** Recipients refused under the old basis stay `excluded` with `policy_refused_at_send` until somebody deliberately reclaims them (`scripts/retry-campaign.mjs --include-policy-refused`), and the policy is re-applied at send time, so anyone the current rules still refuse is simply refused again.
+
+# 2026-11-20 — a broadcast from head office does not wait for an approval it would give itself
+
+Owner, 19 Nov: "broadcasts from headoffice account does not have to [go] through approval chain". Submitting as an approver now approves in the same action. Every other author still submits for approval, and the audit records both the submission and the approval as before.
+
+# 2026-11-20 — a broadcast that reached most of its list reads as sent, not failed
+
+- **`partially_failed` is shown as "Sent", in green**, with the number reached beside it. It was reading as a failure on a send that had reached four fifths of its audience, which is both untrue and the kind of thing that stops somebody sending the next one.
+- **Reached is the headline figure**: sent + delivered + read. The delivery row had no tile for `read` at all, so on the nails-event broadcast 59 of 126 people appeared nowhere and the tiles added up to 67 — a campaign that reached four fifths of its list looked like it had reached a third. Sent, delivered and read sit under it as the same people at different stages, muted, because they are subsets and somebody will otherwise add them together.
+- **A failure says whose decision it was.** Meta's numeric codes are what the outbox stores — a provider error echoes request values, and keeping only the code is what keeps customer content out of the row — so they are translated where they are **read**, not where they are written. `131049` is Meta's cap on how much marketing one person receives, with nothing for anybody here to fix; `132012` is our own template in a shape Meta would not take, which is ours. An unrecognised code still says the message was sent and Meta declined it.
+
+# 2026-11-21 — a customer's photograph outlives the deploy that sent it
+
+Private attachments were written to the container's own filesystem while the mounted volume sat unused, so three photographs a store manager sent a customer at 1:34 PM were gone by the afternoon and the thread read "no longer stored".
+
+- **Both upload roots derive from the platform's volume when one is mounted**, public and private as siblings so neither contains the other and the private root stays out of what is served at `/uploads`. `UPLOAD_DIR` and `PRIVATE_UPLOAD_DIR` still win when set.
+- **One owner for that path.** `main.ts` asks `StorageService` for the public root instead of recomputing it from the same variable; two readers falling back differently is how they came to disagree.
+- **The backend says so at boot** when private storage is still ephemeral. The failure is otherwise invisible — the write succeeds, the message sends, the thread shows the photograph — and only becomes a loss after the next deploy, to whoever the customer complains to.
+- **R2 was rejected for this.** That bucket is public-read in this deployment, so an object there has a permanent public URL whether or not we hand it out. A private bucket with signed GETs is the answer when there is more than one instance.
+
+# 2026-11-21 — a campaign is "configured" by any of its own fields, and a retry is a real send
+
+- **The campaign-conversation gate no longer requires `firstReply`.** It was the one field only the new editor wrote, and a fair proxy for "configured deliberately" until three live bridal campaigns were configured with **only a closing message**. All three were read as unconfigured, so customers who tapped those adverts fell through to the legacy button questionnaire — a script removed months before — after already filling in a lead form. Any of first reply, questions or closing message is the opt-in now; a rule that genuinely predates the editor carries none of them and is untouched. The walk-in conversation carried the same gate and the same fix.
+- **A campaign with no questions sends its closing message and hands the thread to that branch**, which is what it already did once the gate let it through: the branch's manager, or a salesperson there when the branch has no manager.
+- **A send's idempotency key carries the attempt number.** Keyed on campaign and recipient alone, the key stopped a job that died mid-chunk from messaging somebody twice — and also swallowed every deliberate retry, handing back the message the provider had already refused so the loop recorded an hour-old failure as the new outcome. One broadcast was re-sent three times after its cause was fixed and reached nobody, with no new message row and nothing in the logs.
+
+# 2026-11-21 — a salesperson sees their branch's inbox
+
+Previously the threads assigned to them and nothing else, which on a floor where almost nothing is ever assigned is an empty inbox beside a branch full of waiting customers. `StoreScopeService` is still the boundary — a Mumbai salesperson cannot see a Hyderabad thread — and the "mine" filter still narrows it for somebody who wants only their own.
+
+# 2026-11-21 — a follow-up reminder reaches the branch when the lead has no owner
+
+- **An automatic follow-up is written with the instant somebody is told, not only the day the customer is owed a call.** `dueDate` is the customer's day; `reminderAt` is the employee's moment and the only field the sweep reads. Every SOP follow-up was written without one, so 11,622 of 11,623 could never fire.
+- **"Nobody is named on the lead" is not an answer.** 1,278 of 1,279 open leads carry no owner, so the reminders would still have reached nobody. The branch takes it instead — the same rule a finished bot script already follows when it hands a thread over — and the notification says why it came to them: the lead has no owner, or its owner can no longer open it.
+- **The historical 11,597 are deliberately NOT backfilled.** The cadence is ten steps per lead, so switching them on means 120–180 notifications a day to store managers, for leads nobody owns. That is a decision about somebody's working day, not a data fix. `scripts/backfill-followup-reminders.mjs` is written and dry-run; it waits for the owner's word.
+
+# 2026-11-21 — one live-updates stream per browser, not per tab
+
+The notification stream holds a connection open for the life of a tab. A browser allows six per origin over HTTP/1.1, so six CaratSpace tabs used all six and the seventh request — an actual page load — queued until a tab was closed, which looks like the app freezing for no visible reason. Tabs now elect a leader through a heartbeat lock in `localStorage`; the leader holds the only connection and repeats what arrives over a `BroadcastChannel`. A stale lock (tab closed, crashed, machine slept) is taken over by whoever notices first, and a browser without `BroadcastChannel` falls back to connecting on its own. The pushed row was never the guarantee — the feed query is.

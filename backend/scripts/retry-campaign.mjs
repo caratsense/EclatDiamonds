@@ -37,6 +37,23 @@ const ACTOR = arg('actor');
  * message and answers the same question.
  */
 const LIMIT = arg('limit') ? Number(arg('limit')) : null;
+/*
+ * Reclaim the people a RULE refused, when the rule has since changed.
+ *
+ * `excluded` normally means a refusal that still stands, and the retry leaves
+ * it alone for good reason: re-sending to somebody who replied STOP is the
+ * worst thing this script could do. But a refusal is only as current as the
+ * policy that made it. When the owner changed the marketing basis to implied,
+ * 78 people who had been refused for "no recorded consent" an hour earlier
+ * stayed frozen at that moment, excluded from a rule that no longer existed.
+ *
+ * Only `policy_refused_at_send` rows are reclaimed — never a blocked customer,
+ * never an unusable number, and never a STOP. And the policy runs AGAIN at
+ * send time for every one of them, so anyone the current rules still refuse is
+ * simply refused again. This widens who gets re-examined, not who gets sent to.
+ */
+const INCLUDE_REFUSED = process.argv.includes('--include-policy-refused');
+const RECLAIMABLE = 'policy_refused_at_send';
 if (LIMIT !== null && (!Number.isInteger(LIMIT) || LIMIT < 1)) {
   throw new Error(`--limit must be a whole number of people, not "${arg('limit')}".`);
 }
@@ -69,16 +86,32 @@ console.log(`  ${counts.map((c) => `${c.status}=${c._count._all}`).join(', ')}`)
  * thoroughly the cause has been fixed since. The app's own retry draws the
  * line at `failed` for that reason and would leave these 125 stranded.
  */
+const reclaimable = INCLUDE_REFUSED
+  ? await prisma.campaignRecipient.count({
+      where: {
+        organisationId: campaign.organisationId,
+        campaignId: campaign.id,
+        status: 'excluded',
+        exclusionReason: RECLAIMABLE,
+      },
+    })
+  : 0;
+
 const failed =
   (counts.find((c) => c.status === 'failed')?._count._all ?? 0) +
-  (counts.find((c) => c.status === 'dead')?._count._all ?? 0);
+  (counts.find((c) => c.status === 'dead')?._count._all ?? 0) +
+  reclaimable;
 const alreadySent = (counts.find((c) => c.status === 'sent')?._count._all ?? 0)
   + (counts.find((c) => c.status === 'delivered')?._count._all ?? 0)
   + (counts.find((c) => c.status === 'read')?._count._all ?? 0);
 console.log(`
   would re-send to : ${LIMIT === null ? failed : `${Math.min(LIMIT, failed)} of ${failed} (--limit)`}`);
+const excluded = counts.find((c) => c.status === 'excluded')?._count._all ?? 0;
+if (reclaimable) {
+  console.log(`  of those, ${reclaimable} were refused by a rule that has since changed`);
+}
 console.log(`  left alone       : ${alreadySent} already received it, ` +
-  `${counts.find((c) => c.status === 'excluded')?._count._all ?? 0} have no number we can message`);
+  `${excluded - reclaimable} refused for a reason that still stands`);
 
 /*
  * The template's picture, checked BEFORE the re-send rather than discovered
@@ -130,7 +163,12 @@ if (!failed) {
         where: {
           organisationId: campaign.organisationId,
           campaignId: campaign.id,
-          status: { in: ['failed', 'dead'] },
+          OR: [
+            { status: { in: ['failed', 'dead'] } },
+            ...(INCLUDE_REFUSED
+              ? [{ status: 'excluded', exclusionReason: RECLAIMABLE }]
+              : []),
+          ],
         },
         orderBy: { createdAt: 'asc' },
         take: LIMIT,
@@ -141,7 +179,12 @@ if (!failed) {
     where: {
       organisationId: campaign.organisationId,
       campaignId: campaign.id,
-      status: { in: ['failed', 'dead'] },
+      OR: [
+        { status: { in: ['failed', 'dead'] } },
+        ...(INCLUDE_REFUSED
+          ? [{ status: 'excluded', exclusionReason: RECLAIMABLE }]
+          : []),
+      ],
       ...(picked ? { id: { in: picked.map((r) => r.id) } } : {}),
     },
     /*
@@ -152,7 +195,7 @@ if (!failed) {
      * nails-event broadcast reached nobody. A row that fails again from here
      * lands on 'dead', which is the honest outcome for a second failure.
      */
-    data: { status: 'pending', lastError: null, messageId: null },
+    data: { status: 'pending', lastError: null, messageId: null, exclusionReason: null },
   });
   await prisma.messagingCampaign.update({
     where: { id: campaign.id },
