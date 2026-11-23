@@ -1256,7 +1256,23 @@ export class ConversationsService {
       where: { id: organisationId },
       select: { country: true },
     });
-    return this.identity.normalize(msg.senderKind, msg.senderValue, org?.country ?? 'IN');
+    /*
+     * A SENDER'S NUMBER ARRIVES ALREADY INTERNATIONAL.
+     *
+     * The provider tells us who wrote in; it does not hand us something a
+     * person typed. WhatsApp's `from` is the full international number with
+     * the '+' stripped, so the country code is already in those digits and
+     * applying the tenant's default country on top of it invents an address.
+     *
+     * A customer wrote in from +65 9383 5143. Stored as `916593835143`, two
+     * replies went to a number that does not exist, and the thread showed
+     * "This number cannot receive WhatsApp messages" — on a conversation the
+     * customer had started. The tenant's country still applies to numbers
+     * somebody TYPES, which is every other caller of normalize().
+     */
+    return this.identity.normalize(msg.senderKind, msg.senderValue, org?.country ?? 'IN', {
+      alreadyInternational: msg.senderKind === 'whatsapp' || msg.senderKind === 'phone',
+    });
   }
 
   /**
