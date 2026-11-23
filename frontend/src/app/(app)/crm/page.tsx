@@ -86,6 +86,7 @@ import {
 import { apiErrorMessage, customerPhoneInputValue, normalizeCustomerPhone } from "@/lib/utils";
 import { useDownloadLeadExport } from "@/lib/queries/lead-export";
 import { ROLE_RANK } from "@/lib/types";
+import { WhatsAppCta } from "@/components/crm/whatsapp-cta";
 
 const nav = getNavItem("crm")!;
 
@@ -748,31 +749,23 @@ function CrmView() {
                             <Phone className="h-4 w-4" />
                           )}
                         </Button>
-                        <Button
+                        {/*
+                          THE SAME DOOR THE LEAD CARDS USE.
+
+                          This row opened wa.me, which sends from the staff
+                          member's OWN phone: no message row, no SLA clock, no
+                          audit, and the next colleague has no idea the customer
+                          was contacted. The cards beside this table were routed
+                          through the product months ago; the table was missed.
+                        */}
+                        <WhatsAppCta
+                          phone={lead.phone}
+                          name={lead.customer}
+                          size="icon"
                           variant="ghost"
-                          size="sm"
-                          className="h-8 w-8 p-0"
-                          disabled={!dialable}
-                          title="Open WhatsApp"
-                          aria-label={`WhatsApp ${lead.customer}`}
-                          onClick={() => {
-                            // No industry noun in the fallback. This text is sent
-                            // to a real customer, and "your enquiry for jewellery"
-                            // is wrong for every tenant that is not a jeweller \u2014
-                            // and wrong for a jeweller too, whenever the interest
-                            // was simply never recorded. Naming nothing is always
-                            // true.
-                            const about = lead.interest ? ` for ${lead.interest}` : "";
-                            window.open(
-                              `https://wa.me/${dialable}?text=${encodeURIComponent(
-                                `Hello ${lead.customer}, following up regarding your enquiry${about}.`,
-                              )}`,
-                              "_blank",
-                            );
-                          }}
-                        >
-                          <MessageSquare className="h-4 w-4" />
-                        </Button>
+                          label={null}
+                          stopPropagation
+                        />
                       </div>
                     </TableCell>
                   </TableRow>

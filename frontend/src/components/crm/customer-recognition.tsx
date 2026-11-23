@@ -27,16 +27,29 @@ import { normalizeCustomerPhone } from "@/lib/utils";
 export function CustomerRecognition({
   phone,
   onRecognised,
+  kind = "phone",
 }: {
   phone: string;
   /** Called with the matched customer, so a form can prefill their name. */
   onRecognised?: (customer: NonNullable<LookupResult["customer"]>) => void;
+  /**
+   * Which identity to ask about — 'phone' for the counter, 'whatsapp' for a
+   * send door.
+   *
+   * It has to be the same kind the caller will go on to RESOLVE with, because a
+   * number held as a phone and the same number held on WhatsApp are two
+   * separate ContactPoint rows: answering "new to us" from one namespace while
+   * the next call creates in the other is how a duplicate customer gets made
+   * with a reassuring message on screen.
+   */
+  kind?: "phone" | "whatsapp";
 }) {
   const normalized = normalizeCustomerPhone(phone);
 
   // One lookup implementation, in the queries module — this component renders
   // the answer, it does not own a second way of asking the question.
   const { data: result, isFetching } = useCustomerLookup(normalized, {
+    kind,
     onFound: onRecognised,
   });
 

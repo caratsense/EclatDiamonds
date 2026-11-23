@@ -36,11 +36,11 @@ import {
 } from "@/lib/queries/tenant-config";
 import { AttributionPanel } from "@/components/crm/attribution-panel";
 import { ArchiveContactButton } from "@/components/crm/archive-contact-button";
+import { CustomerWhatsAppButton } from "@/components/crm/customer-whatsapp-button";
 import { DeleteContactButton } from "@/components/crm/delete-contact-button";
 import { RequestDeletionButton } from "@/components/crm/request-deletion-button";
 import { PartyTagsField } from "@/components/crm/lead-tags-field";
 import { QualificationPanel } from "@/components/crm/qualification-panel";
-import { TENANT_NAME } from "@/lib/brand";
 import { formatINR } from "@/lib/format";
 
 /**
@@ -162,23 +162,14 @@ export default function Customer360Page({
 
           {customer.phone && (
             <div className="flex items-center gap-1.5 ml-2">
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1.5 border-emerald-500/30 text-emerald-600 hover:bg-emerald-500/10"
-                onClick={() => {
-                  const dialable = customer.phone?.replace(/[^0-9]/g, "");
-                  if (dialable) {
-                    window.open(
-                      `https://wa.me/${dialable}?text=${encodeURIComponent(`Hello ${customer.name}, following up from ${TENANT_NAME}.`)}`,
-                      "_blank",
-                    );
-                  }
-                }}
-              >
-                <MessageSquare className="h-3.5 w-3.5 fill-emerald-600/20" />
-                WhatsApp
-              </Button>
+              {/* Into our own inbox, never into the staff member's WhatsApp —
+                  see `CustomerWhatsAppButton` for why that distinction is the
+                  whole point of the control. */}
+              <CustomerWhatsAppButton
+                partyId={customer.id}
+                name={customer.name}
+                phone={customer.phone}
+              />
               <Button
                 size="sm"
                 variant="outline"

@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { apiErrorMessage } from "@/lib/utils";
 import { useStoreKey } from "@/lib/queries/keys";
 import { useNotificationStream } from "@/lib/queries/notifications";
 import { LEAD_STAGES, type LeadStage } from "@/lib/mock/crm";
@@ -683,6 +684,74 @@ export function useAttachPhoto(conversationId: string) {
  *
  * Returns the conversation it started so the caller can open the thread.
  */
+/**
+ * The two ContactPoint namespaces a WhatsApp send matches, in the order this
+ * dialog asks about them.
+ *
+ * A number held as a customer's phone and the same number held on their
+ * WhatsApp are SEPARATE rows: `ContactPoint` is unique on
+ * (organisation, kind, normalised value), so resolving 'whatsapp' alone cannot
+ * see a customer the showroom created from the counter — every lead, check-in,
+ * quote and invoice resolves as 'phone' (`IdentityService.resolveForRecord`).
+ * `sendToContact` matches `kind in ('whatsapp','phone')`, so asking about only
+ * one of them would create a SECOND customer carrying the typed name, the
+ * chosen branch and the chosen tags, while the thread that was actually opened
+ * stayed headed by the original. 'whatsapp' leads because this is a WhatsApp
+ * door and that is the kind a new record is created under.
+ */
+const SEND_MATCHES_KINDS = ["whatsapp", "phone"] as const;
+
+/**
+ * Add tags without removing any.
+ *
+ * `PUT /lead-tags/party/:id` REPLACES the set — which is right where a person
+ * is editing a customer's chips and can see what they are removing, and wrong
+ * here: this dialog knows only what the sender just picked, and a tag a
+ * colleague recorded is not theirs to drop. Same principle as the name.
+ *
+ * Order is kept so the chips do not reshuffle: what the customer already had,
+ * then what was just added.
+ */
+export function mergeTagIds(existing: string[], picked: string[]): string[] {
+  return [...new Set([...existing, ...picked])];
+}
+
+/**
+ * The send failed, and the sentence has to say what DID happen first.
+ *
+ * The customer record is written before the message goes (see below for why),
+ * so a refused send can leave a customer saved and no message sent. "Could not
+ * start that conversation" on its own sends somebody back to retype a name
+ * that is already on file.
+ *
+ * The known cause, stated because the message alone is baffling: a SALESPERSON
+ * naming a brand-new customer is refused with "Customer not found", because
+ * `assertPartyAccess` reads the new party through `readableParty` — the
+ * customers that salesperson is already working with — and a record created a
+ * second ago is not one of them yet. Every other role goes through.
+ */
+export class ThreadStartError extends Error {
+  constructor(
+    message: string,
+    /** What the identity step managed to do before the send was refused. */
+    readonly customer?: ResolvedCustomer,
+  ) {
+    super(message);
+    this.name = "ThreadStartError";
+  }
+}
+
+/** What happened to the tags the sender picked. */
+export interface AppliedTags {
+  /** Names now on the customer because of this send. Empty when they all were. */
+  added: string[];
+  /**
+   * Set when the tags could not be written. The message still went — tagging is
+   * the recoverable half, and the customer screen can finish the job.
+   */
+  failed?: string;
+}
+
 export function useStartWhatsAppThread() {
   const qc = useQueryClient();
   return useMutation({
@@ -693,14 +762,22 @@ export function useStartWhatsAppThread() {
        * customer — see below for why it can never rename an existing one.
        */
       name?: string;
+      /**
+       * Which branch a NEW customer belongs to; "" or absent files them at no
+       * branch, which is the head-office queue and a real answer.
+       */
+      storeId?: string;
+      /** Existing tag ids to put on the customer, added to whatever they have. */
+      tagIds?: string[];
       purpose?: "service" | "marketing";
       body?: string;
       templateName?: string;
       languageCode?: string;
       templateComponents?: unknown[];
     }): Promise<StartedThread> => {
-      const { name, ...send } = input;
+      const { name, storeId, tagIds, ...send } = input;
       const typed = name?.trim();
+      const picked = tagIds ?? [];
 
       /*
        * THE CUSTOMER RECORD IS CREATED FIRST, AND THAT ORDER IS LOAD-BEARING.
@@ -712,41 +789,125 @@ export function useStartWhatsAppThread() {
        * number — which is the whole complaint this field answers. Created
        * before, the send finds it.
        *
-       * `createIfMissing` is what makes the name stick, and `resolve` is what
-       * makes it safe: a number already on file comes back `matched` and its
-       * customer's name is NOT touched. That is the same rule the inbound path
-       * follows with a WhatsApp profile name (`resolveInbound` names a record
-       * it creates and never one it matched) — a name a colleague took the
-       * trouble to record outranks one typed into a compose box.
-       *
-       * No `storeId`: the branch in the top bar may be head office, an import
-       * holding area or a closed branch, all of which the server refuses as a
-       * customer's home — and refusing to message somebody because of the
-       * branch selector would be a worse bug than the one being fixed. The
-       * thread's own branch still comes from the routing rules.
+       * `resolve` is asked to MATCH before it is ever asked to create, across
+       * both kinds the send matches (see SEND_MATCHES_KINDS). A match is left
+       * exactly as it is: its customer's name, branch and tags are NOT touched.
+       * That is the same rule the inbound path follows with a WhatsApp profile
+       * name (`resolveInbound` names a record it creates and never one it
+       * matched) — a name a colleague took the trouble to record outranks one
+       * typed into a compose box, and so does the branch they filed them at.
        */
-      const customer = typed
-        ? (
+      let customer: ResolvedCustomer | undefined;
+      if (typed || picked.length) {
+        for (const kind of SEND_MATCHES_KINDS) {
+          const { data } = await api.post<ResolvedCustomer>("/crm/customers/resolve", {
+            kind,
+            value: input.to,
+          });
+          if (data.outcome === "matched") {
+            customer = data;
+            break;
+          }
+          // Keep the last answer: its `reason` is what explains an unusable
+          // number to the sender if nothing is created either.
+          customer = data;
+        }
+
+        /*
+         * Only a name creates a customer — tags alone cannot, because
+         * `IdentityService.resolve` refuses to create a record it would have to
+         * call "9876543210".
+         *
+         * `storeId` is now sent, and sending it is a FIX rather than a detail.
+         * A customer created with no branch is refused by the send itself:
+         * `assertPartyAccess` rejects a storeless party for anybody but head
+         * office, and `visibility()` hides a storeless THREAD from everybody
+         * but head office — so naming a new customer used to turn the send
+         * into "Customer not found" for every store manager and marketing user
+         * in the building. It is the sender's own choice, intersected with
+         * their scope by `assertStore` on the server; the branch picker never
+         * offers one they do not hold.
+         */
+        if (customer?.outcome !== "matched" && typed) {
+          customer = (
             await api.post<ResolvedCustomer>("/crm/customers/resolve", {
               kind: "whatsapp",
               value: input.to,
               name: typed,
+              ...(storeId ? { storeId } : {}),
               createIfMissing: true,
             })
-          ).data
-        : undefined;
+          ).data;
+        }
+      }
 
-      const { data } = await api.post<Omit<StartedThread, "customer">>(
-        "/omnichannel/messages",
-        { purpose: "service", ...send },
-      );
-      return { ...data, customer };
+      let data: Omit<StartedThread, "customer" | "tags">;
+      try {
+        data = (
+          await api.post<Omit<StartedThread, "customer" | "tags">>("/omnichannel/messages", {
+            purpose: "service",
+            ...send,
+          })
+        ).data;
+      } catch (err) {
+        const why = apiErrorMessage(err, "Could not start that conversation.");
+        throw new ThreadStartError(
+          customer?.outcome === "created"
+            ? `${why} ${typed} was saved as a customer, but the message was not sent.`
+            : why,
+          customer,
+        );
+      }
+
+      /*
+       * TAGS GO ON LAST, AFTER THE SEND, and that order is load-bearing too.
+       *
+       * `/lead-tags/party/:id` reaches a customer through `readableParty`,
+       * which for a SALESPERSON means the customers they are working with —
+       * by an owned lead, a visit they served, or a thread assigned to them. A
+       * customer created a moment ago by this dialog is none of those yet. The
+       * send is what links them: `findOrCreateContactThread` assigns the new
+       * thread to the sender, so by the time these two calls run the customer
+       * is theirs to label.
+       *
+       * It is also the right way round if something fails: a tag that did not
+       * stick can be applied from the customer screen, a message that did not
+       * go cannot be un-sent.
+       */
+      let tags: AppliedTags | undefined;
+      if (picked.length && customer?.partyId) {
+        const partyId = customer.partyId;
+        try {
+          const existing = (await api.get<{ id: string; name: string }[]>(
+            `/lead-tags/party/${partyId}`,
+          )).data;
+          const merged = mergeTagIds(
+            existing.map((t) => t.id),
+            picked,
+          );
+          const after =
+            merged.length === existing.length
+              ? existing
+              : (await api.put<{ id: string; name: string }[]>(`/lead-tags/party/${partyId}`, {
+                  tagIds: merged,
+                })).data;
+          const had = new Set(existing.map((t) => t.id));
+          tags = { added: after.filter((t) => !had.has(t.id)).map((t) => t.name) };
+        } catch (err) {
+          tags = { added: [], failed: apiErrorMessage(err, "The tags could not be applied.") };
+        }
+      }
+
+      return { ...data, customer, tags };
     },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["crm", "conversations"] });
       // The thread it just created is headed by a customer the directory and
       // Customer 360 have not seen yet.
       void qc.invalidateQueries({ queryKey: ["parties"] });
+      // And that customer may have just been labelled, which the directory's
+      // chips and the tag counts in Settings both read.
+      void qc.invalidateQueries({ queryKey: ["lead-tags"] });
     },
   });
 }
@@ -771,10 +932,12 @@ export interface StartedThread {
   deduplicated: boolean;
   policy?: { mode?: string };
   /**
-   * What happened to the customer record. Absent when no name was given,
-   * because then no record was touched.
+   * What happened to the customer record. Absent when neither a name nor a tag
+   * was given, because then no record was touched.
    */
   customer?: ResolvedCustomer;
+  /** What happened to the tags. Absent when none were picked. */
+  tags?: AppliedTags;
 }
 
 /**

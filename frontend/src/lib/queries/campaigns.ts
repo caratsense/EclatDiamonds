@@ -408,6 +408,8 @@ export function useCampaignRecipients(
   status?: string,
   page = 1,
   pageSize = 10,
+  /** The broadcast is still going out, so these rows are still changing. */
+  inFlight = false,
 ) {
   return useQuery({
     queryKey: [...keys.recipients(id ?? "", status), page, pageSize],
@@ -415,6 +417,17 @@ export function useCampaignRecipients(
     // The page the reader is on stays on screen while the next one loads,
     // instead of collapsing to a skeleton and jumping them back to the top.
     placeholderData: (prev) => prev,
+    /**
+     * Follows the send, on the same five seconds the campaign's own figures
+     * poll on.
+     *
+     * Only the campaign row polled, so pressing "Send again" moved the tiles
+     * and the tab counts while the list underneath went on showing the same
+     * people as Failed with the old refusal against each name. The one screen
+     * that had to say what the re-send did was the one asking her to refresh
+     * and guess.
+     */
+    refetchInterval: inFlight ? 5000 : false,
     queryFn: async () => {
       const { data } = await api.get<{
         items: CampaignRecipientRow[];

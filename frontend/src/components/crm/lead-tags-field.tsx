@@ -36,24 +36,69 @@ import { apiErrorMessage } from "@/lib/utils";
 export function LeadTagsField({ leadId }: { leadId: string }) {
   const current = useLeadTagsFor(leadId);
   const save = useSetLeadTags(leadId);
-  return <TagsField id={leadId} current={current.data} save={save} />;
+  return <TagsField id={leadId} value={current.data} busy={save.isPending} onChange={saver(save)} />;
 }
 
 /** The same chips on a CUSTOMER (client, 9 Oct) — one vocabulary, two targets. */
 export function PartyTagsField({ partyId }: { partyId: string }) {
   const current = usePartyTagsFor(partyId);
   const save = useSetPartyTags(partyId);
-  return <TagsField id={partyId} current={current.data} save={save} />;
+  return <TagsField id={partyId} value={current.data} busy={save.isPending} onChange={saver(save)} />;
+}
+
+/**
+ * The same chips BEFORE there is a customer to hang them on.
+ *
+ * "Message someone on WhatsApp" tags a person who may not exist yet, so there
+ * is nothing to PUT to while the dialog is open: the choice is held in the
+ * caller's state and written once the customer record has been created or
+ * matched. Sharing `TagsField` rather than drawing a second row of chips keeps
+ * one answer to "who may invent a new tag" — a manager, enforced on the server
+ * — and one answer to what a tag looks like.
+ */
+export function TagsPicker({
+  value,
+  onChange,
+  disabled,
+  id = "new-customer",
+}: {
+  /** Tag ids, in the order they were picked. */
+  value: string[];
+  onChange: (tagIds: string[]) => void;
+  disabled?: boolean;
+  id?: string;
+}) {
+  const all = useLeadTags();
+  const byId = new Map((all.data ?? []).map((t) => [t.id, t]));
+  // An id with no tag behind it is dropped rather than drawn as a blank chip:
+  // the only way to get one is a tag retired in another tab since this opened.
+  const chosen = value.flatMap((tagId) => {
+    const tag = byId.get(tagId);
+    return tag ? [tag] : [];
+  });
+  return <TagsField id={id} value={chosen} busy={disabled} onChange={onChange} />;
+}
+
+/** Report a failed write where the person who clicked is looking. */
+function saver(save: {
+  mutate: (ids: string[], opts: { onError: (e: unknown) => void }) => void;
+}) {
+  return (tagIds: string[]) =>
+    save.mutate(tagIds, {
+      onError: (e) => toast.error(apiErrorMessage(e, "Could not update the tags.")),
+    });
 }
 
 function TagsField({
   id,
-  current,
-  save,
+  value,
+  onChange,
+  busy,
 }: {
   id: string;
-  current: { id: string; name: string; colour: string | null }[] | undefined;
-  save: { isPending: boolean; mutate: (ids: string[], opts: { onError: (e: unknown) => void }) => void };
+  value: { id: string; name: string; colour: string | null }[] | undefined;
+  onChange: (tagIds: string[]) => void;
+  busy?: boolean;
 }) {
   const all = useLeadTags();
   const create = useCreateLeadTag();
@@ -63,14 +108,11 @@ function TagsField({
   const canCreate = ROLE_RANK[role] >= ROLE_RANK.store_manager;
   const [newTag, setNewTag] = useState("");
 
-  const on = current ?? [];
+  const on = value ?? [];
   const onIds = new Set(on.map((t) => t.id));
   const available = (all.data ?? []).filter((t) => !onIds.has(t.id));
 
-  const write = (tagIds: string[]) =>
-    save.mutate(tagIds, {
-      onError: (e) => toast.error(apiErrorMessage(e, "Could not update the tags.")),
-    });
+  const write = onChange;
 
   return (
     <div>
@@ -92,7 +134,7 @@ function TagsField({
             <button
               type="button"
               aria-label={`Remove tag ${t.name}`}
-              disabled={save.isPending}
+              disabled={busy}
               onClick={() => write(on.filter((x) => x.id !== t.id).map((x) => x.id))}
               className="rounded-full p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
             >
@@ -103,7 +145,7 @@ function TagsField({
         {available.length > 0 ? (
           <Select
             value=""
-            disabled={save.isPending}
+            disabled={busy}
             onValueChange={(id) => write([...on.map((t) => t.id), id])}
           >
             <SelectTrigger id={`lead-tag-add-${id}`} className="h-7 w-auto gap-1 px-2 text-xs">
@@ -157,7 +199,7 @@ function TagsField({
             />
             <button
               type="submit"
-              disabled={!newTag.trim() || create.isPending || save.isPending}
+              disabled={!newTag.trim() || create.isPending || busy}
               className="h-7 rounded-md border px-2 text-xs font-medium text-muted-foreground hover:bg-muted/60 disabled:opacity-50"
             >
               {create.isPending ? "…" : "Tag"}
