@@ -214,13 +214,44 @@ function Stat({
  * retries were debugging a delivery bug and they made the delivery worse. So
  * anyone messaged in the last day is held back, the screen says how many and
  * why, and including them is a deliberate tick rather than a default.
+ *
+ * While the broadcast is still going out it SAYS SO instead of rendering
+ * nothing. Re-sending to a recipient the outbox is still working through would
+ * double-message them, so the button genuinely has to wait — but a tab holding
+ * a hundred people who did not get it, with no button and no sentence
+ * explaining the absence, is indistinguishable from the button never having
+ * been built. That is exactly what it was reported as.
  */
-function RetrySection({ id }: { id: string }) {
-  const plan = useCampaignRetryPlan(id);
+function RetrySection({
+  id,
+  inFlight,
+}: {
+  id: string;
+  /** The broadcast is still being sent, so a re-send has to wait its turn. */
+  inFlight: boolean;
+}) {
+  const plan = useCampaignRetryPlan(id, !inFlight);
   const retry = useRetryCampaign();
   const [override, setOverride] = useState(false);
 
+  if (inFlight) {
+    return (
+      <p className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+        This broadcast is still going out. Sending again becomes available here once it has
+        finished, so nobody is messaged twice over.
+      </p>
+    );
+  }
   if (plan.isLoading) return <Skeleton className="h-20 w-full" />;
+  if (plan.isError) {
+    // Said out loud rather than rendered as an empty space. A section that
+    // vanishes when its one read fails reads as a missing feature.
+    return (
+      <p className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground">
+        {apiErrorMessage(plan.error, "Could not work out who sending again would go to.")}
+      </p>
+    );
+  }
   if (!plan.data || plan.data.retryable === 0) return null;
 
   const p = plan.data;
@@ -449,8 +480,14 @@ export default function CampaignDetailPage() {
   const [tab, setTab] = useState("all");
 
   const campaign = useCampaign(id);
+  /*
+   * Read before the early returns because the recipient list needs it: a send
+   * in progress rewrites those rows, so the list has to keep up with it rather
+   * than hold the state it was first opened on.
+   */
+  const inFlight = ["expanding", "queued", "sending"].includes(campaign.data?.status ?? "");
   const [page, setPage] = useState(1);
-  const recipients = useCampaignRecipients(id, tab === "all" ? undefined : tab, page);
+  const recipients = useCampaignRecipients(id, tab === "all" ? undefined : tab, page, 10, inFlight);
   const recipientRows = recipients.data?.items ?? [];
   const approve = useApproveCampaign();
   const cancel = useCancelCampaign();
@@ -472,6 +509,15 @@ export default function CampaignDetailPage() {
   const allOnPageSelected = allTaggableSelected(recipientRows, selected);
 
   const canApprove = ROLE_RANK[role] >= ROLE_RANK.area_manager;
+  /*
+   * Sending marketing to customers is not a salesperson's call.
+   *
+   * Store manager and up, which is the same line CampaignsService.assertManager
+   * draws on the re-send itself — so the only people who see the button are the
+   * people whose click will work. Hidden rather than disabled, exactly as
+   * "Approve and send" is, because a salesperson has nothing to do about it.
+   */
+  const canRetry = ROLE_RANK[role] >= ROLE_RANK.store_manager;
 
   if (campaign.isLoading) {
     return (
@@ -499,7 +545,6 @@ export default function CampaignDetailPage() {
   }
 
   const c = campaign.data;
-  const inFlight = ["expanding", "queued", "sending"].includes(c.status);
   const stoppable = [
     "draft",
     "awaiting_approval",
@@ -695,7 +740,9 @@ export default function CampaignDetailPage() {
 
           {/* The re-send sits on the tab it acts on, so "that group" is the
               group on screen rather than a word in a button. */}
-          {tab === "not_reached" && !inFlight ? <RetrySection id={id} /> : null}
+          {tab === "not_reached" && canRetry ? (
+            <RetrySection id={id} inFlight={inFlight} />
+          ) : null}
 
           <TagSelectedBar
             id={id}
