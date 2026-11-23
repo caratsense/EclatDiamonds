@@ -51,6 +51,7 @@ import {
   CustomerDetailsDialog,
   primaryContactValue,
 } from "@/components/crm/customer-details-dialog";
+import { QuickReplyBar } from "@/components/crm/quick-reply-bar";
 import { StartWhatsAppDialog } from "@/components/crm/start-whatsapp-dialog";
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
@@ -96,7 +97,7 @@ import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { useFillViewport } from "@/lib/use-fill-viewport";
-import { PRODUCT_NAME, TENANT_NAME } from "@/lib/brand";
+import { PRODUCT_NAME } from "@/lib/brand";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
 import { useCampaigns } from "@/lib/queries/campaigns";
 
@@ -1899,54 +1900,25 @@ function ThreadView({
 
         {/* WhatsApp Web Input Dock & Quick Templates */}
         <div className="border-t border-border/70 bg-card p-3 space-y-2">
-          {windowOpen ? (
-            /*
-              Quick replies, with no emoji.
+          {/*
+            Quick replies, as data rather than as three buttons in this file.
 
-              The chips carried a gem, a pin and a scroll. They had already been
-              through one cp1252 round-trip and rendered as mojibake in
-              production, and a decorative glyph on an internal shortcut is not
-              worth a second encoding incident. The words say what each one is.
-            */
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
-              <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground whitespace-nowrap pl-1">
-                Quick replies:
-              </span>
-              <button
-                type="button"
-                onClick={() =>
-                  setDraft(
-                    `Hello${party?.name ? ` ${party.name}` : ""}! Would you like us to reserve a 0.50 ct solitaire ring for your visit this Saturday?`,
-                  )
-                }
-                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-              >
-                Confirm Saturday Visit
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setDraft(
-                    `Our ${conversation.store?.name ?? TENANT_NAME} showroom is open 10:30 AM to 8:30 PM. Shall I send you the address?`,
-                  )
-                }
-                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-              >
-                Store Location
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setDraft(
-                    "All solitaires come with certified IGI laser-inscribed documentation and lifetime buyback guarantee.",
-                  )
-                }
-                className="inline-flex items-center gap-1 rounded-full border border-border/80 bg-muted/50 px-2.5 py-0.5 text-[11px] text-foreground hover:bg-muted hover:border-[#25D366]/40 transition-colors whitespace-nowrap"
-              >
-                IGI Certificate Info
-              </button>
-            </div>
-          ) : (
+            They used to be hardcoded here — the Saturday visit, the showroom's
+            hours, the certificate line — and they rendered ONLY inside the
+            24-hour window, so the state the client actually asked about ("if
+            anybody missed their message so they can contact after that") was
+            the state with no shortcuts at all. The bar now asks the server
+            which replies can reach THIS customer right now: wording inside the
+            window, approved templates at any time. The three originals are
+            seeded rows, so nothing was lost and all of them are hers to edit.
+
+            Rendered in both states on purpose. Outside the window the notice
+            below explains why the box is shut, and the template-backed chips
+            above it are the thing that still works.
+          */}
+          <QuickReplyBar conversationId={conversation.id} onPickWording={setDraft} />
+
+          {windowOpen ? null : (
             /*
               The 24-hour customer-care window has closed.
 

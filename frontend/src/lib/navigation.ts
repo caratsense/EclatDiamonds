@@ -1111,6 +1111,25 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "settings/lead-tags",
   "settings/product-groups",
   "settings/export-formats",
+  /*
+   * Settings › Quick replies — the chips above the message box in the inbox.
+   *
+   * Core rather than jewellery-only, for the same reason `bot-script` is: every
+   * vertical with the CRM has staff typing the same three answers all day.
+   *
+   * DELIBERATELY NOT A `NAV_ITEMS` ENTRY YET, and that is the one thing to know
+   * before adding one. This list is only half the entitlement — the half that
+   * decides the no-skeleton fast path. The list the gate actually obeys comes
+   * from the server's industry pack (`backend/src/config/industry-packs/
+   * packs.ts`, its own CORE_NAVIGATION), and a slug missing THERE means both
+   * "not in the sidebar" and "the page refuses to open". NPS and the templates
+   * screen each shipped invisible that way. So the screen is reached from the
+   * link beside the quick-reply chips in Conversations — which is where a
+   * manager is standing when they think "that answer needs changing" — until
+   * the matching line exists in the pack. Add `'settings/quick-replies'` there
+   * and a NAV_ITEMS entry here together, or not at all.
+   */
+  "settings/quick-replies",
   "settings/messaging-routes",
   "settings/channels",
   "data",

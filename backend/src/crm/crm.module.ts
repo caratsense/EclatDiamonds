@@ -62,6 +62,8 @@ import {
 } from './crm.controller';
 import { CrmQualificationController, CrmAttributionController } from './crm-ai.controller';
 import { ProvenanceTagsService } from './provenance-tags.service';
+import { QuickRepliesController } from './quick-replies.controller';
+import { QuickRepliesService } from './quick-replies.service';
 
 /**
  * The CRM spine (CaratOS Phase A3). Every service is exported: other modules
@@ -119,9 +121,11 @@ import { ProvenanceTagsService } from './provenance-tags.service';
     StaffDigestController,
     ResponseSlaController,
     FollowUpRemindersController,
+    QuickRepliesController,
   ],
   providers: [ProvenanceTagsService, 
     BotScriptService,
+    QuickRepliesService,
     IdentityService,
     ActivityService,
     LeadTagsService,

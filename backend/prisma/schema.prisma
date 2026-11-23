@@ -619,6 +619,7 @@ model Organisation {
   campaignRecipients           CampaignRecipient[]
   leadTags                     LeadTag[]
   leadTagAssignments           LeadTagAssignment[]
+  quickReplies                 QuickReply[]
   staffDigestSettings          StaffDigestSettings?
   quoteApprovalSettings        QuoteApprovalSettings?
   staffDigestRuns              StaffDigestRun[]
@@ -869,6 +870,7 @@ model Store {
   leadForms             LeadForm[]
   loyaltyAccounts       LoyaltyAccount[]
   loyaltyLedgerEntries  LoyaltyLedgerEntry[]
+  quickReplies          QuickReply[]
   messagingRoutes       StoreMessagingRoute[]
 
   @@unique([organisationId, legacyId])
@@ -1303,6 +1305,7 @@ model Party {
   birthday    DateTime? @db.Date
   anniversary DateTime? @db.Date
 
+
   creditLimit   Decimal? @db.Decimal(14, 2)
   isBlacklisted Boolean  @default(false)
 
@@ -1598,6 +1601,74 @@ model LeadTagAssignment {
   @@unique([leadId, tagId])
   @@index([organisationId])
   @@index([tagId])
+}
+
+/// One tap in the inbox: words a salesperson sends without typing them again.
+///
+/// A TABLE rather than a bag on the organisation's settings, because the three
+/// things this has to do are all row-shaped: they are ordered (the chip row is
+/// read left to right), they are scoped to one branch or to all of them, and
+/// they are edited one at a time by different people. The three chips that
+/// shipped hardcoded in the inbox — a Saturday visit, the showroom's hours, the
+/// certificate line — are seeded as rows by this model's migration, so the
+/// client can reword or delete them instead of asking for a deployment.
+///
+/// `kind` is the whole point of the feature. WhatsApp has two kinds of send:
+/// free text, allowed only inside the 24-hour customer-care window, and an
+/// approved template, allowed at any time. A 'free_text' reply fills the
+/// composer; a 'template' reply is what reaches somebody whose message was
+/// missed yesterday, which is the case the client asked about.
+model QuickReply {
+  organisationId String
+  organisation   Organisation @relation(fields: [organisationId], references: [id])
+  id             String       @id @default(cuid())
+
+  /// Which branch this belongs to. NULL = every branch.
+  ///
+  /// Nullable rather than a join table: a quick reply belongs to one branch or
+  /// to the whole business, and nothing in between has ever been asked for.
+  /// The null is also the permission boundary — only head office may write a
+  /// row every branch reads (quick-replies.service.ts).
+  storeId String?
+  store   Store?  @relation(fields: [storeId], references: [id])
+
+  /// What the chip says. Never the message itself: a chip has to be readable at
+  /// 11px on a tablet, and "Confirm Saturday Visit" is not a sentence anybody
+  /// would send.
+  label String
+
+  /// 'free_text' | 'template'. A string, not an enum, for the same reason
+  /// `IntegrationAsset.kind` is one: these arrive from product decisions rather
+  /// than from a migration, and a new kind should not need a database change.
+  kind String
+
+  /// The words, with `{customer}`-style placeholders filled in when the chip is
+  /// used. NULL on a template-backed reply, where Meta holds the wording.
+  body String?
+
+  /// The approved template this reply sends: `IntegrationAsset.id` of a
+  /// `message_template` row.
+  ///
+  /// A scalar, deliberately NOT a foreign key. Template rows are written by
+  /// template synchronisation against what Meta reports, and a cascade from
+  /// there would silently delete the quick reply (or block the sync) the first
+  /// time a template was retired at Meta. Resolution happens on every read
+  /// anyway — approval status and the age of that verdict are checked before a
+  /// chip is offered — so a template that has gone away degrades into a
+  /// warning on the management screen rather than a vanished row.
+  templateAssetId String?
+
+  /// Left to right in the chip row, and top to bottom on the management screen.
+  sortOrder Int     @default(0)
+  isActive  Boolean @default(true)
+
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  /// The chip row's own query: this tenant, still switched on, in order.
+  @@index([organisationId, isActive, sortOrder])
+  @@index([organisationId, storeId])
 }
 
 /// When a quote needs a manager's decision before it can leave the building.
