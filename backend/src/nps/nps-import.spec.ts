@@ -236,24 +236,68 @@ interface Stored {
   [key: string]: unknown;
 }
 
+/** `findMany` as the importer calls it, looking for the same submission. */
+interface FindWhere {
+  organisationId?: string;
+  submittedAt?: Date;
+  id?: { notIn: string[] };
+}
+
 /**
  * Enough Prisma to answer the question that matters: does a second upload of
- * the same file create a second row? The store is keyed by `importKey`, exactly
- * as the unique index is.
+ * the same file create a second row?
+ *
+ * Keyed by ID, with `importKey` as a FIELD under the unique index it really
+ * has. The first version of this fake keyed the store BY `importKey`, which is
+ * why it passed while the duplicate bug was live: a row whose number had been
+ * corrected has a different key, so storing by key made it a different row —
+ * the fake agreed with the defect instead of catching it.
  */
 function fakePrisma(visits: { id: string; partyId: string | null; timeIn: Date; phone: string }[]) {
   const responses = new Map<string, Stored>();
   const followups = new Map<string, Stored>();
-  const collection = (store: Map<string, Stored>) => ({
-    findUnique: async ({ where }: { where: { importKey: string } }) =>
-      store.has(where.importKey) ? { id: where.importKey } : null,
-    update: async ({ where, data }: { where: { importKey: string }; data: Stored }) => {
-      store.set(where.importKey, { ...data, importKey: where.importKey });
-    },
-    create: async ({ data }: { data: Stored }) => {
-      store.set(data.importKey, data);
-    },
-  });
+  let seq = 0;
+  const collection = (store: Map<string, Stored>) => {
+    const idOf = (importKey: string) =>
+      [...store.entries()].find(([, r]) => r.importKey === importKey)?.[0] ?? null;
+    return {
+      findUnique: async ({ where }: { where: { importKey: string } }) => {
+        const id = idOf(where.importKey);
+        return id ? { id } : null;
+      },
+      findMany: async ({ where, take }: { where: FindWhere; take?: number }) => {
+        const hits = [...store.entries()]
+          .filter(
+            ([id, r]) =>
+              (where.organisationId == null || r.organisationId === where.organisationId) &&
+              (where.submittedAt == null ||
+                (r.submittedAt as Date).getTime() === where.submittedAt.getTime()) &&
+              !(where.id?.notIn ?? []).includes(id),
+          )
+          .map(([id]) => ({ id }));
+        return take == null ? hits : hits.slice(0, take);
+      },
+      update: async ({
+        where,
+        data,
+      }: {
+        where: { id?: string; importKey?: string };
+        data: Stored;
+      }) => {
+        const id = where.id ?? (where.importKey ? idOf(where.importKey) : null);
+        if (!id || !store.has(id)) throw new Error('update of a row that is not there');
+        store.set(id, { ...data, importKey: data.importKey ?? store.get(id)!.importKey });
+      },
+      create: async ({ data }: { data: Stored }) => {
+        // The real column is `@unique`; a second insert on the same key is a
+        // crash in production, not a silent overwrite as the old fake had it.
+        if (idOf(data.importKey)) throw new Error(`duplicate importKey ${data.importKey}`);
+        const id = `row-${++seq}`;
+        store.set(id, data);
+        return { id };
+      },
+    };
+  };
 
   const prisma = {
     npsResponse: collection(responses),
@@ -317,6 +361,55 @@ describe('uploading the sheet', () => {
     expect(responses.size).toBe(1);
   });
 
+  it('updates the same answer when a corrected number changes the row identity', async () => {
+    // Correcting a mis-keyed Number cell and re-sending the file is the normal
+    // reason she re-uploads. The import key is built from the number, so this
+    // used to create a SECOND record for one answer and count that customer
+    // twice in every average.
+    const { prisma, responses } = fakePrisma([visit]);
+    const corrected = [...RONIT];
+    corrected[2] = '9876543210';
+    const asSent = await workbook([sheet(NPS_RESPONSES_SHEET, RESPONSE_HEADERS, [RONIT])]);
+    const asFixed = await workbook([sheet(NPS_RESPONSES_SHEET, RESPONSE_HEADERS, [corrected])]);
+
+    await upload(prisma, asSent);
+    const second = await upload(prisma, asFixed);
+
+    expect(second.responses).toMatchObject({ created: 0, updated: 1 });
+    expect(responses.size).toBe(1);
+    expect([...responses.values()][0].phoneE164).toBe('919876543210');
+
+    // And the corrected row's identity is now what is stored, so the NEXT
+    // upload of the same file matches on the key rather than on the fallback.
+    const third = await upload(prisma, asFixed);
+    expect(third.responses).toMatchObject({ created: 0, updated: 1 });
+    expect(responses.size).toBe(1);
+  });
+
+  it('keeps two people who answered in the same second apart', async () => {
+    // The fallback identity is the submission instant, which is unique in
+    // practice and not declared unique. Two submissions sharing a second must
+    // stay two answers — silently overwriting one of them would be worse than
+    // the duplicate the fallback exists to prevent.
+    const other = [...RONIT];
+    other[1] = 'Someone Else';
+    other[2] = '9999999999';
+    const { prisma, responses } = fakePrisma([visit]);
+    const buffer = await workbook([sheet(NPS_RESPONSES_SHEET, RESPONSE_HEADERS, [RONIT, other])]);
+
+    const first = await upload(prisma, buffer);
+    expect(first.responses).toMatchObject({ received: 2, created: 2, updated: 0 });
+    expect(responses.size).toBe(2);
+
+    const again = await upload(prisma, buffer);
+    expect(again.responses).toMatchObject({ created: 0, updated: 2 });
+    expect(responses.size).toBe(2);
+    expect([...responses.values()].map((r) => r.rawName).sort()).toEqual([
+      'Ronit Gurav',
+      'Someone Else',
+    ]);
+  });
+
   it('counts a response it cannot match, rather than hiding it', async () => {
     // The number of rows that reached nobody is the point of the screen.
     const stranger = [...RONIT];
@@ -352,6 +445,40 @@ describe('uploading the sheet', () => {
       created: 1,
       matched: 1,
     });
+    expect(followups.size).toBe(1);
+  });
+
+  it('updates the same follow-up when a corrected number changes its identity', async () => {
+    /*
+     * The follow-up tab carries the identical fault the responses tab had, and
+     * was fixed separately because it is a separate upsert. The import key is
+     * built from the number, so correcting a mis-keyed Number cell and
+     * re-sending the file used to create a SECOND follow-up for one answer.
+     *
+     * Pinned here rather than assumed from the responses test: two code paths
+     * that look alike are exactly the pair where one gets fixed and the other
+     * does not.
+     */
+    const FOLLOWUP_HEADERS = ['Timestamp', 'Followup Date', 'Name', 'Number', 'Followup Response'];
+    const sent = ['15/11/2026 12:21:53', '15/11/2026', 'Ronit Gurav', '8888155700', 'Will visit again'];
+    const corrected = [...sent];
+    corrected[3] = '9876543210';
+
+    const { prisma, followups } = fakePrisma([visit]);
+    const asSent = await workbook([sheet(NPS_FOLLOWUPS_SHEET, FOLLOWUP_HEADERS, [sent])]);
+    const asFixed = await workbook([sheet(NPS_FOLLOWUPS_SHEET, FOLLOWUP_HEADERS, [corrected])]);
+
+    await upload(prisma, asSent);
+    const second = await upload(prisma, asFixed);
+
+    expect(second.followups).toMatchObject({ created: 0, updated: 1 });
+    expect(followups.size).toBe(1);
+    expect([...followups.values()][0].phoneE164).toBe('919876543210');
+
+    // The stored key is the corrected one, so the next upload matches on the
+    // key rather than falling back every time.
+    const third = await upload(prisma, asFixed);
+    expect(third.followups).toMatchObject({ created: 0, updated: 1 });
     expect(followups.size).toBe(1);
   });
 

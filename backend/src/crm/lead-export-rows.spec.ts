@@ -126,7 +126,7 @@ describe('the walk-in register’s own answers', () => {
 
   it('leaves them blank for a lead that never came in', () => {
     // Blank, not "N/A" — "N/A" reads as an answer somebody gave.
-    const row = leadRow(lead({ visits: [] }), 0);
+    const row = leadRow(lead({ visits: [], party: null }), 0);
     expect(row.customerType).toBe('');
     expect(row.productCategory).toBe('');
     expect(row.occasion).toBe('');
@@ -141,6 +141,58 @@ describe('the walk-in register’s own answers', () => {
       0,
     );
     expect(row.customerType).toBe('');
+  });
+
+  it('answers from the same visits the Visits count counts', () => {
+    /*
+     * The RULE, not the plumbing: a row that says the customer has been in may
+     * not leave the four register columns blank when one of those very visits
+     * carries the answers.
+     *
+     * It was broken in exactly that way — the count came from the customer
+     * while the answers came from check-ins filed against this lead row, and in
+     * the live database not one check-in of 622 carries a `leadId`. So every
+     * row with a visit count showed it beside four blanks, which the client
+     * reads as data we failed to capture rather than as a join that missed.
+     */
+    const row = leadRow(
+      lead({
+        visits: [],
+        party: {
+          _count: { checkIns: 3 },
+          checkIns: [
+            {
+              metadata: { customerType: 'Repeat', productCategory: 'Rings', occasion: 'Wedding' },
+              store: { name: 'Indore' },
+            },
+          ],
+        },
+      }),
+      0,
+    );
+    expect(row.visitCount).toBe(3);
+    expect(row.storeVisited).toBe('Indore');
+    expect(row.customerType).toBe('Repeat');
+    expect(row.productCategory).toBe('Rings');
+    expect(row.occasion).toBe('Wedding');
+  });
+
+  it('prefers the visit filed against this enquiry over the customer’s latest', () => {
+    // A check-in attached to this enquiry describes THIS enquiry's visit. The
+    // customer's own latest may belong to a different enquiry entirely — it is
+    // the fallback, not the answer.
+    const row = leadRow(
+      lead({
+        visits: [{ metadata: { customerType: 'New' }, store: { name: 'Bandra' } }],
+        party: {
+          _count: { checkIns: 4 },
+          checkIns: [{ metadata: { customerType: 'Repeat' }, store: { name: 'Indore' } }],
+        },
+      }),
+      0,
+    );
+    expect(row.customerType).toBe('New');
+    expect(row.storeVisited).toBe('Bandra');
   });
 });
 

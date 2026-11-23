@@ -476,11 +476,35 @@ export class ScheduledReportsService {
         report.kind === 'walkins'
           ? await this.checkins.exportXlsx(actor, report.storeId ?? undefined, {
               from: period.from,
-              to: period.to,
+              /*
+               * ONE MILLISECOND BACK, because the two contracts disagree.
+               *
+               * `ReportPeriod.to` is EXCLUSIVE (see the interface above);
+               * `checkins.exportXlsx` applies its `to` as `lte`, inclusive,
+               * which is right for the manual picker where somebody chooses a
+               * last day and means that whole day. Handing the exclusive
+               * instant straight to an inclusive bound puts a walk-in recorded
+               * at exactly 00:00 on the 1st into BOTH the October file and the
+               * November one — double-counted in the one figure a month-end
+               * report exists to state.
+               */
+              to: new Date(period.to.getTime() - 1),
+              /*
+               * The period in the workbook's own words. Without it the About
+               * tab fell back to "Covers: All time" on a file whose rows are
+               * one month — the same claim on every scheduled workbook, and
+               * the opposite of what the tab exists to answer.
+               */
+              label: period.label,
             })
           : await this.exports.build(actor, {
               fromInstant: period.from,
+              // Exclusive on both sides here: `build` applies `toInstant` with
+              // `lt`, so the period's own exclusive end is already correct.
               toInstant: period.to,
+              // The same period label the walk-ins workbook carries, so a
+              // scheduled leads file stops claiming it covers all time.
+              rangeLabel: period.label,
               storeId: report.storeId ?? undefined,
               columns: (report.columns.length
                 ? report.columns

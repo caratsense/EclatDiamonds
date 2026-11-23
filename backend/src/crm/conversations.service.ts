@@ -544,6 +544,7 @@ export class ConversationsService {
      */
     if (conversation.partyId) {
       try {
+        const at = msg.sentAt ?? new Date();
         await this.prisma.feedbackRequest.updateMany({
           where: {
             organisationId,
@@ -551,8 +552,29 @@ export class ConversationsService {
             sentAt: { not: null },
             respondedAt: null,
             repliedAt: null,
+            /*
+             * A REPLY ANSWERS AN ASK THAT IS STILL OPEN, not every ask this
+             * customer has ever been sent.
+             *
+             * Without these two conditions the write matched any request that
+             * had ever gone out and never been answered — unbounded in time.
+             * A customer writing in today about a new enquiry would retro-stamp
+             * a survey from March as replied-to: the NPS export then prints
+             * "replied 23 Nov" against a May survey nobody engaged with, and
+             * that survey's chaser is suppressed for good. Two reviewers found
+             * it independently, which is how much it stood out.
+             *
+             * `status` and `expiresAt` are the same liveness test the rest of
+             * this module already applies — feedback.service.ts:658 and
+             * visit-feedback.service.ts:103 — so a reply is read against the
+             * ask that is actually waiting on one.
+             */
+            status: { in: ['pending', 'sent'] },
+            OR: [{ expiresAt: null }, { expiresAt: { gt: at } }],
           },
-          data: { repliedAt: msg.sentAt ?? new Date() },
+          // The message's own time, not the clock, so a webhook replayed an
+          // hour later still records when the customer actually wrote.
+          data: { repliedAt: at },
         });
       } catch (err) {
         this.logger.warn(

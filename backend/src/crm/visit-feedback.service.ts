@@ -14,10 +14,12 @@ import {
   afterVisitStepDueAt,
   secondAskOutcome,
   secondAskStep,
+  stepOffsetMinutes,
 } from './feedback.service';
 
 const DAY_MS = 86_400_000;
 const HOUR_MS = 3_600_000;
+const MINUTE_MS = 60_000;
 /** A visit ask whose dispatch keeps throwing is given up on, and says so. */
 const MAX_DISPATCH_ATTEMPTS = 5;
 /** How long the response link stays open after it is due. */
@@ -765,8 +767,17 @@ export class VisitFeedbackService {
     if (!closedAt) return null;
 
     const fromVisit = afterVisitStepDueAt(closedAt, visit?.store?.timezone, step);
-    const gapHours = Math.max(1, step.delayHours - policy.steps[0].delayHours);
-    const notBefore = new Date(firstSentAt.getTime() + gapHours * HOUR_MS);
+    /*
+     * Measured in the same offset the ordering guard uses, not in `delayHours`:
+     * the hours choose only the local DAY and `sendTimeLocal` chooses the hour.
+     * 24h at 09:00 then 48h at 18:00 sets the two asks 33 hours apart, and 24h
+     * at 18:00 then 48h at 09:00 sets them 15 — both read as "24 hours" from
+     * the delays alone. So a late first request let the chaser follow most of a
+     * day sooner than the tenant arranged, or held it back past an hour they
+     * never set.
+     */
+    const gapMinutes = Math.max(60, stepOffsetMinutes(step) - stepOffsetMinutes(policy.steps[0]));
+    const notBefore = new Date(firstSentAt.getTime() + gapMinutes * MINUTE_MS);
     return fromVisit > notBefore ? fromVisit : notBefore;
   }
 

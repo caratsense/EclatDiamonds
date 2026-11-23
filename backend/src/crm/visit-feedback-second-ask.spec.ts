@@ -45,6 +45,29 @@ const BOTH_STEPS: AfterVisitPolicy = readAfterVisit({
   },
 });
 
+/**
+ * A morning first ask and an evening chaser: 24h at 09:00, then 48h at 18:00.
+ *
+ * The delay hours differ by 24, the two asks are really 33 hours apart. The
+ * hours choose the local DAY and `sendTimeLocal` chooses the clock, which is
+ * exactly why `afterVisitStepsAreOrdered` compares offsets rather than hours —
+ * and this policy is one a tenant may legitimately save.
+ */
+const MORNING_THEN_EVENING: AfterVisitPolicy = readAfterVisit({
+  enabled: true,
+  delayHours: 24,
+  sendTimeLocal: '09:00',
+  templateName: 'visit_feedback',
+  templateLanguage: 'en',
+  second: {
+    enabled: true,
+    delayHours: 48,
+    sendTimeLocal: '18:00',
+    templateName: 'visit_feedback_reminder',
+    templateLanguage: 'en',
+  },
+});
+
 /** Exactly what an organisation that configured one request has stored today. */
 const ONE_STEP_ONLY: AfterVisitPolicy = readAfterVisit({
   enabled: true,
@@ -457,6 +480,25 @@ describe('booking the requests when a visit closes', () => {
      * that is what is kept: the 18th at 05:40, not the 17th at 05:30.
      */
     expect((rows[0].reminderDueAt as Date | null)?.toISOString()).toBe('2026-11-18T05:40:00.000Z');
+  });
+
+  it('keeps the gap the two asks are really set apart by, not the gap in delay hours', async () => {
+    const { service, rows } = harness({
+      rows: [waitingToSend()],
+      policy: MORNING_THEN_EVENING,
+    });
+
+    // The same day-late first request as above.
+    await service.sweep(AT('2026-11-17T05:40:00Z'));
+
+    /*
+     * 09:00 on the day after the visit to 18:00 on the day after that is 33
+     * hours, not the 24 the delay hours differ by. Measured in hours alone the
+     * chaser was free to go 33 minus 9 hours after the first one reached the
+     * customer — a courtesy follow-up arriving most of a day earlier than the
+     * tenant arranged, which is the complaint nobody can trace to a setting.
+     */
+    expect((rows[0].reminderDueAt as Date | null)?.toISOString()).toBe('2026-11-18T14:40:00.000Z');
   });
 
   it('plans nothing when the organisation has configured only one request', async () => {

@@ -15,18 +15,25 @@ import { Prisma } from '@prisma/client';
  */
 
 /** The `where` ingestInbound uses, kept here so the conditions are testable. */
-function repliedStampWhere(organisationId: string, partyId: string): Prisma.FeedbackRequestWhereInput {
+function repliedStampWhere(
+  organisationId: string,
+  partyId: string,
+  at: Date,
+): Prisma.FeedbackRequestWhereInput {
   return {
     organisationId,
     partyId,
     sentAt: { not: null },
     respondedAt: null,
     repliedAt: null,
+    status: { in: ['pending', 'sent'] },
+    OR: [{ expiresAt: null }, { expiresAt: { gt: at } }],
   };
 }
 
 describe('marking a feedback request as replied to', () => {
-  const where = repliedStampWhere('org_eclat', 'party_1');
+  const at = new Date('2026-11-23T10:00:00.000Z');
+  const where = repliedStampWhere('org_eclat', 'party_1', at);
 
   it('is scoped to one tenant and one customer', () => {
     // Without both, one customer's reply would silence another's chaser.
@@ -55,10 +62,30 @@ describe('marking a feedback request as replied to', () => {
     expect(where.repliedAt).toBeNull();
   });
 
-  it('does not filter on status, deliberately', () => {
-    // `sentAt` is the fact that it left; `status` is bookkeeping that varies by
-    // path. Narrowing on status would miss replies to requests in a state this
-    // rule was never told about.
-    expect('status' in where).toBe(false);
+  it('only answers an ask that is still open', () => {
+    /*
+     * THE BUG THIS REPLACES. The first version of this test asserted the
+     * opposite — that `status` was deliberately absent — which pinned the
+     * implementation that had just been written rather than the rule that
+     * mattered. It passed while the code retro-stamped every survey the
+     * customer had ever been sent.
+     *
+     * A reply answers the ask that is waiting on one. A survey already closed,
+     * expired or abandoned is not answered by somebody writing in months later
+     * about something else.
+     */
+    expect(where.status).toEqual({ in: ['pending', 'sent'] });
+  });
+
+  it('ignores an ask that has already expired', () => {
+    // Same liveness test the rest of the module uses: a request with no expiry
+    // stays open, one whose expiry has passed does not.
+    expect(where.OR).toEqual([{ expiresAt: null }, { expiresAt: { gt: at } }]);
+  });
+
+  it('records the time the customer wrote, not the time we processed it', () => {
+    // A webhook replayed an hour later must not claim they answered an hour late.
+    const replayed = repliedStampWhere('org_eclat', 'party_1', at);
+    expect((replayed.OR as { expiresAt: { gt: Date } }[])[1].expiresAt.gt).toBe(at);
   });
 });

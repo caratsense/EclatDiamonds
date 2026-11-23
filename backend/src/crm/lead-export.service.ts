@@ -68,6 +68,16 @@ export interface LeadExportFilters {
    */
   fromInstant?: Date;
   toInstant?: Date;
+  /**
+   * The period in the caller's own words, for the About tab.
+   *
+   * A scheduled report knows it is "October 2026"; `from`/`to` are instants it
+   * computed in the branch's timezone and would describe back as a pair of
+   * dates. Without this the tab fell back to "All time" on a file whose rows
+   * are one month — the same claim on every scheduled workbook, and the
+   * opposite of what that tab exists to answer.
+   */
+  rangeLabel?: string;
   storeId?: string;
   ownerId?: string;
   source?: string;
@@ -261,8 +271,31 @@ export class LeadExportService {
           take: 1,
           select: { dueDate: true },
         },
-        party: { select: { _count: { select: { checkIns: true } } } },
-        // The walk-in register's answers come from the lead's most recent visit.
+        /*
+         * The visit COUNT and the register's ANSWERS now come off the same
+         * relation — the customer's own check-ins.
+         *
+         * They used to disagree: the count was read from the party while
+         * "Store Visited", "Customer Type", "Product Catergory" and "Purchase
+         * Ocassion" were read from `visits`, the check-ins whose `leadId`
+         * points at this lead. On the live database not one of 622 check-ins
+         * carries a `leadId`, so a row could only ever read "Visits: 3" beside
+         * four blank cells. The client reconciles this sheet against her own
+         * Master Leads workbook by hand, where a blank cell reads as data we
+         * failed to capture, not as a join that did not match.
+         */
+        party: {
+          select: {
+            _count: { select: { checkIns: true } },
+            checkIns: {
+              orderBy: { timeIn: 'desc' },
+              take: 1,
+              select: { metadata: true, store: { select: { name: true } } },
+            },
+          },
+        },
+        // Still preferred over the customer's latest when it exists: a check-in
+        // filed against THIS enquiry describes this enquiry's visit.
         visits: {
           orderBy: { timeIn: 'desc' },
           take: 1,
@@ -303,6 +336,7 @@ export class LeadExportService {
       rangedOn: 'The day the lead arrived',
       from: f.from,
       to: f.to,
+      label: f.rangeLabel,
       rows: leads.length,
       notes: [['Columns', format.map((c) => c.header).join(' | ')]],
     });
@@ -379,6 +413,12 @@ export class LeadExportService {
  * an open lead counted as a non-purchase, or a sales column that sums to more
  * than was actually sold.
  */
+/** One check-in, in the shape the register's answers are read off it. */
+export type VisitRecord = {
+  metadata: Prisma.JsonValue | null;
+  store: { name: string } | null;
+};
+
 export type LeadRecord = {
   ref: string;
   customerName: string;
@@ -397,8 +437,8 @@ export type LeadRecord = {
   owner: { name: string } | null;
   tagAssignments?: { tag: { name: string } }[];
   followUps?: { dueDate: Date | null }[];
-  party?: { _count: { checkIns: number } } | null;
-  visits?: { metadata: Prisma.JsonValue | null; store: { name: string } | null }[];
+  party?: { _count: { checkIns: number }; checkIns?: VisitRecord[] } | null;
+  visits?: VisitRecord[];
   notes?: { text: string }[];
 };
 
@@ -420,7 +460,14 @@ export function transactionChannel(source: string): string {
 export function leadRow(lead: LeadRecord, index: number): Record<string, unknown> {
   const tz = resolveTz(lead.store?.timezone);
   const attrs = (lead.attributes ?? {}) as Record<string, unknown>;
-  const visit = lead.visits?.[0];
+  /*
+   * The visit these four columns answer from, and the one the "Visits" count
+   * further down counts: the customer's latest, unless a check-in was filed
+   * against this very enquiry. Reading the answers from the lead alone while
+   * counting from the customer is what produced "Visits: 3" beside four blank
+   * cells — no check-in in the live database carries a `leadId`.
+   */
+  const visit = lead.visits?.[0] ?? lead.party?.checkIns?.[0];
   const survey = (visit?.metadata ?? {}) as Record<string, unknown>;
   const won = lead.outcome === 'won';
   const str = (v: unknown) => (typeof v === 'string' ? v : '');
@@ -440,8 +487,8 @@ export function leadRow(lead: LeadRecord, index: number): Record<string, unknown
     adId: str(attrs.adId),
     channel: transactionChannel(lead.source),
     location: lead.location ?? '',
-    // The walk-in register's own answers, read through the most recent visit.
-    // Blank when they have never been in — the register is where these are
+    // The walk-in register's own answers, read through that same visit. Blank
+    // when the customer has never been in — the register is where these are
     // asked, so there is nowhere else they could have come from.
     customerType: str(survey.customerType),
     productCategory: str(survey.productCategory),

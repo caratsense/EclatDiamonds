@@ -4,6 +4,7 @@ import { Prisma } from '@prisma/client';
 import { AuthUser } from '../common/auth-user';
 import { exportFieldWidth, readExportFormat } from '../common/export-formats';
 import {
+  ExportRange,
   addExportAboutSheet,
   rangeFilename,
   rangeWhere,
@@ -11,6 +12,7 @@ import {
 } from '../common/export-range';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
+import { instantFromLocalTime, zonedParts } from '../common/tz.util';
 import { NPS_STAGE_LABELS, NpsStage, npsReplyState, npsStage } from './nps-stage';
 import {
   MatchCandidate,
@@ -365,11 +367,14 @@ export class NpsService {
    * client's explicit instruction and also the only safe default — a bulk
    * import that messaged 1,900 historical walk-ins would be unrecoverable.
    *
-   * Idempotent by `importKey`, so re-running the same sheet updates rather
-   * than duplicates.
+   * Idempotent by `importKey`, falling back to the submission's own instant
+   * (see `sameSubmission`) so that re-running the sheet updates rather than
+   * duplicates even when a cell in the row has since been corrected.
    */
   async importResponses(organisationId: string, rows: NpsResponseRow[]) {
     const summary = { received: rows.length, created: 0, updated: 0, matched: 0, ambiguous: 0, unmatched: 0 };
+    /** Records this upload has already written — see `sameSubmission`. */
+    const claimed = new Set<string>();
 
     for (const row of rows) {
       const phoneE164 = normaliseNpsPhone(row.number);
@@ -398,12 +403,22 @@ export class NpsService {
         checkInId: match.checkInId,
       };
 
-      const existing = await this.prisma.npsResponse.findUnique({ where: { importKey }, select: { id: true } });
+      const existing =
+        (await this.prisma.npsResponse.findUnique({ where: { importKey }, select: { id: true } })) ??
+        (await this.sameSubmission(organisationId, row.submittedAt, claimed));
       if (existing) {
-        await this.prisma.npsResponse.update({ where: { importKey }, data });
+        // By id, and carrying the key: a corrected number means the row's
+        // `importKey` has changed, and leaving the old one in place would make
+        // the NEXT upload miss it the same way.
+        await this.prisma.npsResponse.update({ where: { id: existing.id }, data: { ...data, importKey } });
+        claimed.add(existing.id);
         summary.updated++;
       } else {
-        await this.prisma.npsResponse.create({ data: { ...data, importKey } });
+        const created = await this.prisma.npsResponse.create({
+          data: { ...data, importKey },
+          select: { id: true },
+        });
+        claimed.add(created.id);
         summary.created++;
       }
       summary[match.state === 'matched' ? 'matched' : match.state === 'ambiguous' ? 'ambiguous' : 'unmatched']++;
@@ -415,11 +430,52 @@ export class NpsService {
     return summary;
   }
 
+  /**
+   * The record of the same submission, found WITHOUT the phone number.
+   *
+   * `npsImportKey` folds the normalised number into the row's identity, so
+   * correcting a Number cell in the sheet and re-uploading used to change what
+   * the row IS: the key missed, a second record was created, and one customer's
+   * answer was counted twice in every average. Correcting a mis-keyed number is
+   * the ordinary reason she re-sends the file, so this was the common path.
+   *
+   * The submission's own instant is the fallback identity. It is the one column
+   * Google writes itself, it is never the column being corrected, and it is
+   * already half of the import key. It is NOT declared unique, though, so it is
+   * trusted only where it actually is unique: if two records share the instant
+   * — two people submitting within the same second, rare but possible — neither
+   * is touched, because overwriting the wrong answer is worse than the
+   * duplicate this is here to prevent. Records written earlier in THIS upload
+   * are excluded for the same reason: a second sheet row at the same instant is
+   * a different submission, not a correction of the first.
+   */
+  private async sameSubmission(
+    organisationId: string,
+    submittedAt: Date,
+    claimed: Set<string>,
+    // Both sheets carry the same defect and take the same cure, so the table is
+    // a parameter rather than this being written twice and drifting.
+    table: 'response' | 'followup' = 'response',
+  ): Promise<{ id: string } | null> {
+    const where = {
+      organisationId,
+      submittedAt,
+      ...(claimed.size ? { id: { notIn: [...claimed] } } : {}),
+    };
+    const rows =
+      table === 'response'
+        ? await this.prisma.npsResponse.findMany({ where, select: { id: true }, take: 2 })
+        : await this.prisma.npsFollowup.findMany({ where, select: { id: true }, take: 2 });
+    return rows.length === 1 ? rows[0] : null;
+  }
+
   async importFollowups(organisationId: string, rows: NpsFollowupRow[]) {
     // Ambiguous and unmatched are counted as well as matched, so a follow-up
     // sheet reports in the same three terms as the responses one: "40 of 50
     // reached nobody" is the number the screen exists to show.
     const summary = { received: rows.length, created: 0, updated: 0, matched: 0, ambiguous: 0, unmatched: 0 };
+    /** Records this upload has already written — see `sameSubmission`. */
+    const claimed = new Set<string>();
     for (const row of rows) {
       const phoneE164 = normaliseNpsPhone(row.number);
       const importKey = npsImportKey(organisationId, row.submittedAt, phoneE164, 'followup');
@@ -437,12 +493,33 @@ export class NpsService {
         partyId: match.partyId,
         checkInId: match.checkInId,
       };
-      const existing = await this.prisma.npsFollowup.findUnique({ where: { importKey }, select: { id: true } });
+      /*
+       * The SAME correction-makes-a-duplicate fault the responses sheet had.
+       *
+       * `npsImportKey` folds the phone number into the row's identity, so
+       * correcting a Number cell and re-uploading changed the key and created a
+       * second record — the customer's follow-up counted twice. The fallback
+       * adopts the record that shares this submission instant and rewrites its
+       * key, so the next upload matches on the key again.
+       */
+      const existing =
+        (await this.prisma.npsFollowup.findUnique({ where: { importKey }, select: { id: true } })) ??
+        (await this.sameSubmission(organisationId, row.submittedAt, claimed, 'followup'));
       if (existing) {
-        await this.prisma.npsFollowup.update({ where: { importKey }, data });
+        // By id, with the new key in the data, so the identity is corrected
+        // rather than left to go stale again on the next upload.
+        await this.prisma.npsFollowup.update({
+          where: { id: existing.id },
+          data: { ...data, importKey },
+        });
+        claimed.add(existing.id);
         summary.updated++;
       } else {
-        await this.prisma.npsFollowup.create({ data: { ...data, importKey } });
+        const created = await this.prisma.npsFollowup.create({
+          data: { ...data, importKey },
+          select: { id: true },
+        });
+        claimed.add(created.id);
         summary.created++;
       }
       summary[match.state === 'matched' ? 'matched' : match.state === 'ambiguous' ? 'ambiguous' : 'unmatched']++;
@@ -516,7 +593,32 @@ export class NpsService {
    * she maintains by hand, so there is nothing for a format to line up with.
    */
   async exportXlsx(user: AuthUser, opts: { storeId?: string; from?: string; to?: string } = {}) {
-    const range = resolveExportRange(opts.from, opts.to);
+    /*
+     * ## The zone, and why it is applied here rather than in the shared helper
+     *
+     * Every instant in this workbook is rendered — and every range bound is
+     * resolved — as the BRANCH's own wall clock.
+     *
+     * The importer stores a sheet timestamp as the shop's wall clock (see
+     * `parseNpsTimestamp`), so a submission the customer made at 09:00 IST is
+     * held as 03:30 UTC. This export read both ends in UTC, which cost two
+     * different things: every rendered time came out 5h30m early, so a row
+     * compared against the Google Sheet it was reconciled with disagreed on
+     * principle; and each day's window slid 5h30m earlier, so a 1 December
+     * 04:00 IST submission landed inside a "to 30 November" file while a
+     * 1 November 02:00 one fell out of "from 1 November".
+     *
+     * `resolveExportRange` keeps its UTC-day reading — leads, customers and
+     * quotations are ranged through it and are not wall-clock data — so the
+     * correction is local to this export.
+     */
+    const tz = await this.scope.resolveTimezone(user, opts.storeId);
+    const utcDays = resolveExportRange(opts.from, opts.to);
+    // Each UTC-midnight bound re-read as midnight AT THE BRANCH.
+    const range: ExportRange = {
+      from: utcDays.from ? instantFromLocalTime(utcDays.from, 0, tz) : undefined,
+      to: utcDays.to ? instantFromLocalTime(utcDays.to, 0, tz) : undefined,
+    };
     /*
      * `updates()` takes an INCLUSIVE upper bound (`lte` on `timeIn`), and the
      * resolved range's is exclusive. Handing it straight over would pull in a
@@ -563,7 +665,18 @@ export class NpsService {
 
     const { Workbook } = await import('exceljs');
     const wb = new Workbook();
-    const iso = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 16).replace('T', ' ') : '');
+    const pad = (n: number) => String(n).padStart(2, '0');
+    /**
+     * An instant as the branch reads it off the wall, not as UTC. Every dated
+     * cell in all three sheets goes through this one lambda — including
+     * `followupDate`, which is a local midnight and so rendered the PREVIOUS
+     * day under the old UTC slicing.
+     */
+    const local = (d: Date | null | undefined) => {
+      if (!d) return '';
+      const p = zonedParts(d, tz);
+      return `${p.year}-${pad(p.month)}-${pad(p.day)} ${pad(p.hour)}:${pad(p.minute)}`;
+    };
 
     const ws = wb.addWorksheet('NPS Updates');
     ws.columns = [
@@ -588,13 +701,13 @@ export class NpsService {
     for (const r of all) {
       ws.addRow({
         ...r,
-        visitAt: iso(r.visitAt),
-        initialSentAt: iso(r.initialSentAt),
-        reminderDueAt: iso(r.reminderDueAt),
-        reminderSentAt: iso(r.reminderSentAt),
-        repliedAt: iso(r.repliedAt),
-        submittedAt: iso(r.submittedAt),
-        followup: r.followups.map((f) => `${iso(f.date ?? f.at)}: ${f.response ?? ''}`).join(' | '),
+        visitAt: local(r.visitAt),
+        initialSentAt: local(r.initialSentAt),
+        reminderDueAt: local(r.reminderDueAt),
+        reminderSentAt: local(r.reminderSentAt),
+        repliedAt: local(r.repliedAt),
+        submittedAt: local(r.submittedAt),
+        followup: r.followups.map((f) => `${local(f.date ?? f.at)}: ${f.response ?? ''}`).join(' | '),
       });
     }
 
@@ -607,7 +720,7 @@ export class NpsService {
     rs.getRow(1).font = { bold: true };
     for (const r of responses) {
       const row: Record<string, unknown> = {
-        submittedAt: iso(r.submittedAt),
+        submittedAt: local(r.submittedAt),
         rawName: r.rawName ?? '',
         rawNumber: r.rawNumber ?? '',
         firstPurchase: r.firstPurchase ?? '',
@@ -626,7 +739,7 @@ export class NpsService {
         matchNote: r.matchNote ?? '',
         customer: r.party?.name ?? '',
         store: r.checkIn?.store?.name ?? '',
-        visitAt: iso(r.checkIn?.timeIn),
+        visitAt: local(r.checkIn?.timeIn),
       };
       rs.addRow(Object.fromEntries(responseFormat.map((c) => [c.field, row[c.field] ?? ''])));
     }
@@ -642,7 +755,7 @@ export class NpsService {
     ];
     fs.getRow(1).font = { bold: true };
     for (const f of followups) {
-      fs.addRow({ ...f, submittedAt: iso(f.submittedAt), followupDate: iso(f.followupDate) });
+      fs.addRow({ ...f, submittedAt: local(f.submittedAt), followupDate: local(f.followupDate) });
     }
 
     addExportAboutSheet(wb, {
@@ -656,6 +769,9 @@ export class NpsService {
       notes: [
         ['Responses', String(responses.length)],
         ['Followup answers', String(followups.length)],
+        // Named, because the About tab's "Taken" row is stamped in UTC and a
+        // reader comparing the two must not read the rows as UTC as well.
+        ['Times shown in', tz],
       ],
     });
 

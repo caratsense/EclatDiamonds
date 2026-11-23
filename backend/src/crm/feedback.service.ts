@@ -336,8 +336,15 @@ export function afterVisitStepDueAt(
   return instantFromLocalTime(day, parseHHMM(step.sendTimeLocal), tz);
 }
 
-/** Minutes from the visit's local midnight to when a step goes out. */
-function stepOffsetMinutes(step: AfterVisitStep): number {
+/**
+ * Minutes from the visit's local midnight to when a step goes out.
+ *
+ * Exported because the gap BETWEEN the two requests has to be measured in the
+ * same units the ordering guard uses. `delayHours` alone chooses only the local
+ * day, so a 24h/18:00 then 48h/09:00 pair reads as 24 hours apart in hours and
+ * is really 15 — and the chaser landed closer to the first ask than arranged.
+ */
+export function stepOffsetMinutes(step: AfterVisitStep): number {
   return (
     Math.floor(step.delayHours / HOURS_PER_DAY) * HOURS_PER_DAY * 60 + parseHHMM(step.sendTimeLocal)
   );
