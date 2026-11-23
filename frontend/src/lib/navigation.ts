@@ -32,6 +32,7 @@ import {
   Megaphone,
   MessageSquareHeart,
   MessageSquarePlus,
+  MessageSquareReply,
   PackageX,
   Percent,
   PhoneCall,
@@ -52,9 +53,9 @@ import {
   Target,
   Timer,
   Trophy,
+  type LucideIcon,
   Users,
   UsersRound,
-  type LucideIcon,
 } from "lucide-react";
 
 import type { AccessMap, Role } from "@/lib/types";
@@ -778,6 +779,27 @@ export const NAV_ITEMS: NavItem[] = [
     group: "Setup",
     rank: 56,
     roles: ["head_office"],
+  },
+  {
+    /*
+     * The shortcuts the floor sends all day, which until now were three
+     * buttons compiled into the inbox with their wording fixed.
+     *
+     * A store manager's screen, not head office's: the wording is the branch's
+     * own and the person who notices it is wrong is the person using it. The
+     * roles below match that; `HEAD_OFFICE_DELEGABLE` in the backend's
+     * access.ts is what actually decides.
+     */
+    module: 1,
+    slug: "settings/quick-replies",
+    title: "Quick Replies",
+    purpose:
+      "The one-tap replies in Conversations, and which of them still work after 24 hours.",
+    primaryAction: "",
+    icon: MessageSquareReply,
+    group: "Setup",
+    rank: 57,
+    roles: ["head_office", "store_manager"],
   },
   {
     module: 2,
