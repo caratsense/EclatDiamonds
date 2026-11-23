@@ -48,6 +48,7 @@ export const MODULES = [
   'settings/onboarding', 'settings/stores', 'new-store', 'settings/configuration', 'settings/rates',
   'settings/integrations', 'settings/integrations/templates',
   'data', 'settings/audit', 'settings/staff-digest', 'settings/lead-tags', 'settings/product-groups',
+  'settings/export-formats', 'settings/quick-replies',
   'data/images', 'settings/messaging-routes', 'settings/channels', 'settings/access',
 ] as const;
 
@@ -110,6 +111,25 @@ const STORE_MANAGER: ModuleSlug[] = [
    * that endpoint away from roles that hold 'hrms' but not this screen.
    */
   'hrms/employees',
+  /*
+   * The inbox's quick replies, at STORE level.
+   *
+   * Deliberately NOT in HEAD_OFFICE_ONLY / HEAD_OFFICE_DELEGABLE, which is
+   * where the other "one tenant-wide decision" settings screens sit. Those are
+   * global masters — what a design code means, which columns an export carries
+   * — and a quick reply is not: it is scoped to one branch or to all of them,
+   * and the branch-scoped case is the whole reason the client wanted a table.
+   * With eleven shops, a manager who cannot add a shortcut for their own
+   * counter means the per-branch half of the feature never gets used.
+   *
+   * Delegating it would also have been actively wrong. A delegable module
+   * raises its holder to HEAD OFFICE for every route under the matched prefix
+   * (ModuleAccessGuard), so granting the screen would have let a branch manager
+   * write replies every branch reads — the exact split the API enforces at
+   * `QuickRepliesService.assertScope`, undone by the mechanism meant to make
+   * the screen usable.
+   */
+  'settings/quick-replies',
   'approvals',
 ];
 
@@ -186,6 +206,12 @@ export const HEAD_OFFICE_DELEGABLE: ModuleSlug[] = [
   // owner's. Head office should be able to hand the screen over without
   // handing over head office.
   'settings/product-groups',
+  // Which columns the Leads and NPS sheets come out with is the subject of
+  // whoever reconciles those sheets against the client's own workbook — a
+  // branch manager, not the owner. Delegable for the same reason product
+  // groups are: handing the screen over should not mean handing over head
+  // office.
+  'settings/export-formats',
 ];
 
 /** The roles in use. Area manager and storeperson are retired: nobody can be given them. */
@@ -412,6 +438,20 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
   ['crm/lead-forms', 'lead-forms'],
   ['lead-tags', 'settings/lead-tags'],
   /*
+   * Quick replies, mapped exactly as lead tags are and for the same reason:
+   * one screen owns the vocabulary, while the inbox reads it all day.
+   *
+   * SOFT is load-bearing here. The two `conversation/...` routes are
+   * @Roles('salesperson') because the person tapping a chip is the person with
+   * the customer; a hard mapping would refuse them for not holding a settings
+   * screen, and the chip row would come back empty for everybody on the floor.
+   * Somebody who DOES hold the screen is served at their own level, so a
+   * salesperson head office granted it edits as a store manager would.
+   *
+   * Longer prefixes win in BY_LENGTH, so this beats ['crm/conversations', …].
+   */
+  ['crm/quick-replies', 'settings/quick-replies'],
+  /*
    * Mapped to the TEMPLATES screen, not to Conversations.
    *
    * The controller is @Roles('head_office') as a whole, and the templates page
@@ -477,6 +517,17 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
    * page and be refused by it.
    */
   ['product-groups', 'settings/product-groups'],
+  /*
+   * The export-format screen's own API — and ONLY it.
+   *
+   * Deliberately `crm/exports/formats` and not `crm/exports`. The prefix is
+   * shared with `crm/exports/leads.xlsx`, and because a delegable module raises
+   * the holder to head office for the whole matched prefix, the wider mapping
+   * would have let somebody granted a column-layout screen download every
+   * branch's leads — `LeadExportService` scopes that file from `user.role`.
+   * Longer prefixes win in BY_LENGTH, so the download keeps its CRM scoping.
+   */
+  ['crm/exports/formats', 'settings/export-formats'],
 ];
 
 type Route = { module: ModuleSlug | null; soft: boolean };

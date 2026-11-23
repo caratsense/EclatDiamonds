@@ -16,6 +16,7 @@ import {
   buildTemplatePayload,
   placeholdersIn,
   previewOf,
+  variableDefaultsMetadata,
   type TemplateDraft,
 } from './template-draft';
 
@@ -898,6 +899,16 @@ function templateShapeMetadata(draft: TemplateDraft): Record<string, unknown> {
     // read. See TemplatePreview.bodySource for why the preview will not do.
     bodySource: draft.body,
     bodyExamples: draft.examples?.length ? draft.examples : null,
+    /*
+     * What normally fills each `{{n}}` on a broadcast. Nothing Meta ever sees —
+     * the sample values above are for its reviewer, and this is the answer to
+     * the client asking where she says that `{{1}}` is a customer's name.
+     *
+     * `null` rather than an omitted key, like the others here, because an edit
+     * MERGES over the stored metadata: leaving the key out would keep the old
+     * defaults after she had just cleared them.
+     */
+    variableDefaults: variableDefaultsMetadata(draft),
     isCarousel: Boolean(draft.cards?.length),
     headerFormat: format,
     headerText: format !== 'IMAGE' && header ? header : null,

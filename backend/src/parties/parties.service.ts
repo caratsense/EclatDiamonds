@@ -5,6 +5,7 @@ import { SpecialRequestsService } from '../special-requests/special-requests.ser
 import { ROLE_LABELS } from '../common/role.util';
 import { describeHistory, partyHistory, removalOutcome } from './party-history';
 import { AuditService } from '../common/audit.service';
+import { addExportAboutSheet, rangeWhere, resolveExportRange } from '../common/export-range';
 import { StoreScopeService } from '../common/store-scope.service';
 import { AuthUser } from '../common/auth-user';
 import { isSalesScoped, partyWorkedBy } from '../common/sales-scope';
@@ -445,8 +446,19 @@ export class PartiesService {
     return storeId == null || user.storeIds.includes(storeId);
   }
 
-  /** The customer directory as a workbook — same scope as the list. */
-  async exportXlsx(user: AuthUser, headerStore?: string): Promise<{ buffer: Buffer; rows: number }> {
+  /**
+   * The customer directory as a workbook — same scope as the list.
+   *
+   * The range filters on `createdAt`, the "Added" column: the day the customer
+   * entered the directory. Neither bound given is all time, which is what the
+   * Excel button did before it asked.
+   */
+  async exportXlsx(
+    user: AuthUser,
+    headerStore?: string,
+    window: { from?: string; to?: string } = {},
+  ): Promise<{ buffer: Buffer; rows: number }> {
+    const range = resolveExportRange(window.from, window.to);
     const rows = await this.prisma.party.findMany({
       where: {
         organisationId: user.organisationId,
@@ -455,6 +467,7 @@ export class PartiesService {
           ...(isSalesScoped(user) ? [partyWorkedBy(user.id)] : []),
         ],
         archivedAt: null,
+        ...rangeWhere('createdAt', range),
       },
       // The workbook reads in the same order as the screen it came from.
       orderBy: [{ nameGroup: 'asc' }, { name: 'asc' }],
@@ -484,6 +497,16 @@ export class PartiesService {
         birthday: day(r.birthday), anniversary: day(r.anniversary), createdAt: day(r.createdAt),
       });
     }
+    // What the file covers, in the file. Archived customers are stated too: the
+    // row count will not reconcile against the directory's own total without it.
+    addExportAboutSheet(wb, {
+      what: 'Customers',
+      rangedOn: 'The day the customer was added',
+      from: window.from,
+      to: window.to,
+      rows: rows.length,
+      notes: [['Excludes', 'Archived customers']],
+    });
     const buffer = Buffer.from(await wb.xlsx.writeBuffer());
     return { buffer, rows: rows.length };
   }

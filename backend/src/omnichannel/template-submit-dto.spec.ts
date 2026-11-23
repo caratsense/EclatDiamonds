@@ -1,3 +1,12 @@
+/*
+ * `@Type()` on the DTO's nested `variableDefaults` reads design-time metadata,
+ * which does not exist until this shim is loaded. The unit suite boots no Nest
+ * container, so nothing loads it for us: without this line the whole file fails
+ * to even run, with "Reflect.getMetadata is not a function" pointing at an
+ * import rather than at the decorator that needs it.
+ */
+import 'reflect-metadata';
+
 import { plainToInstance } from 'class-transformer';
 import { validateSync } from 'class-validator';
 
@@ -78,6 +87,62 @@ describe('SubmitMessageTemplateDto', () => {
     expect(
       errorsFor({ ...draft, headerFormat: 'IMAGE', headerHandle: '4::aW1hZ2UvanBlZw==' }),
     ).toEqual([]);
+  });
+
+  /*
+   * The default mapping is the next field to arrive on this class, and it
+   * arrives the same way `buttons` did: the composer sends it before anything
+   * here declares it. Declared loosely it would be worse than missing -- an
+   * unchecked `source` would validate, store, pre-select on a broadcast, and
+   * fail at the provider with the recipients already queued.
+   */
+  it('accepts a default mapping for each variable', () => {
+    expect(
+      errorsFor({
+        ...draft,
+        variableDefaults: [
+          { slot: 1, source: 'customer_first_name', fallback: 'there' },
+          { slot: 2, source: 'branch_name', fallback: 'our store' },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it('accepts the same wording for everyone', () => {
+    expect(
+      errorsFor({
+        ...draft,
+        variableDefaults: [{ slot: 1, source: 'fixed', text: 'Diwali collection' }],
+      }),
+    ).toEqual([]);
+  });
+
+  it('refuses a source nothing on the send path can resolve', () => {
+    // resolveVariables is handed {name, branchName} only. A source outside
+    // that list sends the fallback to everybody and looks like it worked.
+    expect(
+      errorsFor({ ...draft, variableDefaults: [{ slot: 1, source: 'customer_gender' }] }),
+    ).toContain('variableDefaults');
+  });
+
+  it('refuses a slot no template could have', () => {
+    expect(
+      errorsFor({ ...draft, variableDefaults: [{ slot: 0, source: 'customer_name' }] }),
+    ).toContain('variableDefaults');
+    expect(
+      errorsFor({ ...draft, variableDefaults: [{ slot: 11, source: 'customer_name' }] }),
+    ).toContain('variableDefaults');
+  });
+
+  it('refuses a field nobody declared inside a row', () => {
+    // The nested rows are whitelisted too, not merely the top level -- which
+    // is the half of `forbidNonWhitelisted` a bare @IsArray() would skip.
+    expect(
+      errorsFor({
+        ...draft,
+        variableDefaults: [{ slot: 1, source: 'customer_name', fallback: 'there', partyId: 'p1' }],
+      }),
+    ).toContain('variableDefaults');
   });
 
   it('accepts a carousel', () => {

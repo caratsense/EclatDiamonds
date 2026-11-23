@@ -135,7 +135,14 @@ export default function FeedbackPage() {
               ? "Who was asked, who replied, who filled the form."
               : "The submissions still waiting to be matched to a customer."
           }
-          actions={<ExcelExportButton path="/crm/nps/export" fallbackName="nps.xlsx" />}
+          actions={
+            <ExcelExportButton
+              path="/crm/nps/export"
+              fallbackName="nps.xlsx"
+              rangedOn="the day the response was submitted (visits by the day of the visit)"
+              formatNote="The Responses tab uses your own column format — Settings › Export formats."
+            />
+          }
         />
         <ViewTabs view={view} onChange={setView} />
         {view === "nps-updates" ? <NpsUpdates /> : <NpsResponses />}

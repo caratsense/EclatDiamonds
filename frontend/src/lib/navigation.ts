@@ -15,6 +15,7 @@ import {
   Contact,
   Database,
   DoorOpen,
+  FileSpreadsheet,
   FileText,
   Fingerprint,
   Gauge,
@@ -31,6 +32,7 @@ import {
   Megaphone,
   MessageSquareHeart,
   MessageSquarePlus,
+  MessageSquareReply,
   PackageX,
   Percent,
   PhoneCall,
@@ -51,9 +53,9 @@ import {
   Target,
   Timer,
   Trophy,
+  type LucideIcon,
   Users,
   UsersRound,
-  type LucideIcon,
 } from "lucide-react";
 
 import type { AccessMap, Role } from "@/lib/types";
@@ -758,6 +760,48 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ["head_office"],
   },
   {
+    /*
+     * What shape the downloaded sheets come out in.
+     *
+     * The client reconciles our Leads and NPS downloads against her own Master
+     * Leads workbook by eye, so the headings and their order are hers to
+     * declare — down to her spellings. Beside Product Groups because it is the
+     * same kind of screen: one tenant-wide decision about how data is named,
+     * taken once and then forgotten about.
+     */
+    module: 10,
+    slug: "settings/export-formats",
+    title: "Export Formats",
+    purpose:
+      "Which columns the Leads and NPS downloads carry, in which order, under your own headings.",
+    primaryAction: "",
+    icon: FileSpreadsheet,
+    group: "Setup",
+    rank: 56,
+    roles: ["head_office"],
+  },
+  {
+    /*
+     * The shortcuts the floor sends all day, which until now were three
+     * buttons compiled into the inbox with their wording fixed.
+     *
+     * A store manager's screen, not head office's: the wording is the branch's
+     * own and the person who notices it is wrong is the person using it. The
+     * roles below match that; `HEAD_OFFICE_DELEGABLE` in the backend's
+     * access.ts is what actually decides.
+     */
+    module: 1,
+    slug: "settings/quick-replies",
+    title: "Quick Replies",
+    purpose:
+      "The one-tap replies in Conversations, and which of them still work after 24 hours.",
+    primaryAction: "",
+    icon: MessageSquareReply,
+    group: "Setup",
+    rank: 57,
+    roles: ["head_office", "store_manager"],
+  },
+  {
     module: 2,
     slug: "settings/rates",
     title: "Gold Rate",
@@ -1088,6 +1132,26 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "settings/staff-digest",
   "settings/lead-tags",
   "settings/product-groups",
+  "settings/export-formats",
+  /*
+   * Settings › Quick replies — the chips above the message box in the inbox.
+   *
+   * Core rather than jewellery-only, for the same reason `bot-script` is: every
+   * vertical with the CRM has staff typing the same three answers all day.
+   *
+   * DELIBERATELY NOT A `NAV_ITEMS` ENTRY YET, and that is the one thing to know
+   * before adding one. This list is only half the entitlement — the half that
+   * decides the no-skeleton fast path. The list the gate actually obeys comes
+   * from the server's industry pack (`backend/src/config/industry-packs/
+   * packs.ts`, its own CORE_NAVIGATION), and a slug missing THERE means both
+   * "not in the sidebar" and "the page refuses to open". NPS and the templates
+   * screen each shipped invisible that way. So the screen is reached from the
+   * link beside the quick-reply chips in Conversations — which is where a
+   * manager is standing when they think "that answer needs changing" — until
+   * the matching line exists in the pack. Add `'settings/quick-replies'` there
+   * and a NAV_ITEMS entry here together, or not at all.
+   */
+  "settings/quick-replies",
   "settings/messaging-routes",
   "settings/channels",
   "data",

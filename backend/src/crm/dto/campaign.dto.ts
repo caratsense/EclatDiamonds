@@ -147,6 +147,19 @@ export class CreateCampaignDto {
   @IsString()
   @Length(1, 40)
   marketingCampaignId?: string;
+
+  /**
+   * The answer to "these many people have already received this template, do
+   * you want to send again? If no, exclude them."
+   *
+   * A flag rather than a list of people, because the list is resolved at
+   * expansion from the recipient history — a list posted from a browser would
+   * be hours stale by the time a scheduled broadcast actually ran, and it would
+   * let a caller name anybody they liked as "already messaged".
+   */
+  @IsOptional()
+  @IsBoolean()
+  excludeAlreadyReceivedTemplate?: boolean;
 }
 
 export class UpdateCampaignDto {
@@ -204,6 +217,11 @@ export class UpdateCampaignDto {
   @IsOptional()
   @IsISO8601()
   scheduledAt?: string;
+
+  /** See CreateCampaignDto. Carried across any other edit when not given. */
+  @IsOptional()
+  @IsBoolean()
+  excludeAlreadyReceivedTemplate?: boolean;
 }
 
 export class CancelCampaignDto {
@@ -211,6 +229,60 @@ export class CancelCampaignDto {
   @IsString()
   @Length(0, 500)
   reason?: string;
+}
+
+/**
+ * How many of an audience have already had one template.
+ *
+ * Carries the same audience payload as the preview — the question is only
+ * answerable once both halves are known, and the rule tree is a body for the
+ * same reason the preview's is.
+ */
+export class TemplateOverlapDto extends SegmentDefinitionCarrierDto {
+  @IsString()
+  @Length(1, 512)
+  templateName!: string;
+}
+
+export class RetryCampaignDto {
+  /**
+   * Include the people messaged inside the cooldown.
+   *
+   * Meta caps marketing per recipient (error 131049), and on the nails-event
+   * broadcast the outcome tracked attempts almost exactly: 80% of those tried
+   * twice were reached, 9% of those tried three times, none of those tried four
+   * times. So this is a deliberate override of a rule that exists to protect
+   * delivery, never a default — the screen names the number it is holding back
+   * before anybody can set it.
+   */
+  @IsOptional()
+  @IsBoolean()
+  includeRecentlyMessaged?: boolean;
+}
+
+/**
+ * Put one tag on the customers behind the ticked recipient rows.
+ *
+ * Either an existing tag id or a name. A name that already exists is reused
+ * rather than refused: somebody typing "VIP" on a broadcast screen means the
+ * VIP tag the tenant already has, and they cannot see the vocabulary from here
+ * to pick it instead.
+ */
+export class TagRecipientsDto {
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  recipientIds!: string[];
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 40)
+  tagId?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 40)
+  tagName?: string;
 }
 
 export class ListRecipientsDto {

@@ -62,7 +62,12 @@ export default function NpsPage() {
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
-            <ExcelExportButton path="/crm/nps/export" fallbackName="nps.xlsx" />
+            <ExcelExportButton
+              path="/crm/nps/export"
+              fallbackName="nps.xlsx"
+              rangedOn="the day the response was submitted (visits by the day of the visit)"
+              formatNote="The Responses tab uses your own column format — Settings › Export formats."
+            />
           </div>
         }
       />

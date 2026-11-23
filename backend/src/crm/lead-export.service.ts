@@ -5,6 +5,24 @@ import { Workbook } from 'exceljs';
 import { AuthUser } from '../common/auth-user';
 import { AuditService } from '../common/audit.service';
 import { PRODUCT_NAME } from '../common/brand';
+import {
+  type ExportColumnFormat,
+  type ExportFormatKind,
+  LEAD_EXPORT_FIELDS,
+  defaultExportFormat,
+  exportFieldCatalogue,
+  exportFieldWidth,
+  readExportFormat,
+  sanitiseExportFormat,
+  withExportFormat,
+} from '../common/export-formats';
+import {
+  addExportAboutSheet,
+  rangeFilename,
+  rangeWhere,
+  resolveExportRange,
+} from '../common/export-range';
+import { updateOrgSettings } from '../config/org-settings';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { businessDate, resolveTz } from '../common/tz.util';
@@ -21,53 +39,17 @@ import { leadSearchWhere, leadTagWhere } from '../leads/lead-filters';
  */
 export const EXPORT_ROW_LIMIT = 50_000;
 
-/** Every column the export can carry, in the order a person reads them. */
-export const EXPORT_COLUMNS = [
-  'customerName',
-  'phone',
-  'ref',
-  'store',
-  'owner',
-  'source',
-  'campaign',
-  'adId',
-  'tags',
-  'stage',
-  'outcome',
-  'createdAt',
-  'lastActivity',
-  'nextFollowUp',
-  'visitCount',
-  'value',
-] as const;
+/**
+ * Every column the export can carry.
+ *
+ * The list itself now lives in `common/export-formats.ts`, beside the field
+ * catalogue the chooser is built from, so the two cannot drift: a column offered
+ * in Settings that the builder below cannot fill would reach a person only as a
+ * blank column in a file they have already forwarded.
+ */
+export const EXPORT_COLUMNS = LEAD_EXPORT_FIELDS.map((f) => f.field) as readonly string[];
 
-export type ExportColumn = (typeof EXPORT_COLUMNS)[number];
-
-const HEADINGS: Record<ExportColumn, string> = {
-  customerName: 'Customer',
-  phone: 'Phone',
-  ref: 'Lead ref',
-  store: 'Store',
-  owner: 'Owner',
-  source: 'Source',
-  campaign: 'Campaign',
-  adId: 'Ad ID',
-  tags: 'Tags',
-  stage: 'Stage',
-  outcome: 'Outcome',
-  createdAt: 'Created',
-  lastActivity: 'Last activity',
-  nextFollowUp: 'Next follow-up',
-  visitCount: 'Visits',
-  value: 'Value',
-};
-
-/** Widths chosen so the common case needs no manual resizing in Excel. */
-const WIDTHS: Record<ExportColumn, number> = {
-  customerName: 26, phone: 16, ref: 14, store: 20, owner: 20, source: 14,
-  campaign: 26, adId: 20, tags: 28, stage: 14, outcome: 12, createdAt: 12,
-  lastActivity: 12, nextFollowUp: 14, visitCount: 8, value: 14,
-};
+export type ExportColumn = (typeof LEAD_EXPORT_FIELDS)[number]['field'];
 
 export interface LeadExportFilters {
   from?: string;
@@ -86,6 +68,16 @@ export interface LeadExportFilters {
    */
   fromInstant?: Date;
   toInstant?: Date;
+  /**
+   * The period in the caller's own words, for the About tab.
+   *
+   * A scheduled report knows it is "October 2026"; `from`/`to` are instants it
+   * computed in the branch's timezone and would describe back as a pair of
+   * dates. Without this the tab fell back to "All time" on a file whose rows
+   * are one month — the same claim on every scheduled workbook, and the
+   * opposite of what that tab exists to answer.
+   */
+  rangeLabel?: string;
   storeId?: string;
   ownerId?: string;
   source?: string;
@@ -115,6 +107,11 @@ export class LeadExportService {
    * LAST, so a `storeId` in the query can only ever narrow what the token already
    * allows — never widen it. `storeFilter` throws if the requested store is not
    * theirs, which is what stops a salesperson exporting the whole chain.
+   *
+   * The range goes on `createdAt` because that is the column the client's own
+   * sheet calls "Date": she means the leads that CAME IN during the window, not
+   * the ones touched during it. Ranging on `lastActivity` would put an August
+   * lead in a November file the moment somebody rang them.
    */
   private where(user: AuthUser, f: LeadExportFilters): Prisma.LeadWhereInput {
     const and: Prisma.LeadWhereInput[] = [];
@@ -127,12 +124,7 @@ export class LeadExportService {
       if (f.toInstant) createdAt.lt = f.toInstant;
       and.push({ createdAt });
     } else if (f.from || f.to) {
-      const createdAt: Prisma.DateTimeFilter = {};
-      if (f.from) createdAt.gte = new Date(`${f.from}T00:00:00.000Z`);
-      // Inclusive of the end date: a person asking for 1–30 September means the
-      // whole of the 30th, not up to midnight at its start.
-      if (f.to) createdAt.lt = new Date(new Date(`${f.to}T00:00:00.000Z`).getTime() + 86_400_000);
-      and.push({ createdAt });
+      and.push(rangeWhere('createdAt', resolveExportRange(f.from, f.to)));
     }
     if (f.ownerId) and.push({ ownerId: f.ownerId });
     if (f.source) and.push({ source: f.source as Prisma.EnumLeadSourceFilter['equals'] });
@@ -155,6 +147,82 @@ export class LeadExportService {
     return this.prisma.lead.count({ where: this.where(user, f) });
   }
 
+  // ================================================== per-tenant sheet format
+
+  /**
+   * The tenant's chosen columns for one export, or the default.
+   *
+   * Lives on this service rather than a service of its own because it reads one
+   * key off `Organisation.settings` and both call sites are export call sites.
+   * The NPS export reads the same key through `readExportFormat` directly — it
+   * needs no injection to do it, and inventing a provider for one `findUnique`
+   * would mean registering it in four modules.
+   */
+  async format(user: AuthUser, kind: ExportFormatKind): Promise<readonly ExportColumnFormat[]> {
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: user.organisationId },
+      select: { settings: true },
+    });
+    return readExportFormat(org?.settings, kind);
+  }
+
+  /** What the chooser offers, and what this tenant currently has. */
+  async formats(user: AuthUser) {
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: user.organisationId },
+      select: { settings: true },
+    });
+    return {
+      leads: this.describeFormat(org?.settings, 'leads'),
+      nps: this.describeFormat(org?.settings, 'nps'),
+    };
+  }
+
+  private describeFormat(settings: unknown, kind: ExportFormatKind) {
+    const columns = readExportFormat(settings, kind);
+    const theDefault = defaultExportFormat(kind);
+    return {
+      kind,
+      columns,
+      /*
+       * Whether this is OUR default or THEIRS. The screen needs to be able to
+       * say so: a tenant looking at the client's twenty columns cannot otherwise
+       * tell whether somebody here chose them or whether they shipped that way,
+       * and "Reset to the standard format" is a frightening button if you cannot
+       * see that you are already on it.
+       */
+      isDefault: columns === theDefault,
+      fields: exportFieldCatalogue(kind),
+      defaultColumns: theDefault,
+    };
+  }
+
+  /** Save a format, or pass `null` to go back to the default. */
+  async saveFormat(
+    user: AuthUser,
+    kind: ExportFormatKind,
+    columns: unknown[] | null,
+  ): Promise<readonly ExportColumnFormat[]> {
+    const next = columns === null ? null : sanitiseExportFormat(kind, columns);
+    await updateOrgSettings(this.prisma, user.organisationId, (current) =>
+      withExportFormat(current, kind, next),
+    );
+    await this.audit.record(user, {
+      action: 'exports.format.changed',
+      entityType: 'export_format',
+      entityId: `${user.organisationId}:${kind}`,
+      storeId: null,
+      summary:
+        next === null
+          ? `Put the ${kind} sheet back to the standard format`
+          : `Set the ${kind} sheet to ${next.length} column(s)`,
+      metadata: { kind, columns: next },
+    });
+    return next ?? defaultExportFormat(kind);
+  }
+
+  // ========================================================== the workbook
+
   /**
    * Build the workbook.
    *
@@ -166,10 +234,8 @@ export class LeadExportService {
     user: AuthUser,
     f: LeadExportFilters,
   ): Promise<{ buffer: Buffer; filename: string; rows: number }> {
-    const columns = (f.columns?.length ? f.columns : EXPORT_COLUMNS).filter(
-      (c): c is ExportColumn => (EXPORT_COLUMNS as readonly string[]).includes(c),
-    );
-    if (!columns.length) throw new BadRequestException('Choose at least one column to export.');
+    const format = await this.resolveFormat(user, f);
+    if (!format.length) throw new BadRequestException('Choose at least one column to export.');
 
     const where = this.where(user, f);
     const total = await this.prisma.lead.count({ where });
@@ -184,9 +250,20 @@ export class LeadExportService {
       orderBy: { createdAt: 'desc' },
       select: {
         ref: true, customerName: true, phone: true, source: true, stage: true,
-        outcome: true, value: true, createdAt: true, lastActivity: true, attributes: true,
+        outcome: true, value: true, createdAt: true, closedAt: true, lastActivity: true,
+        location: true, interest: true, attributes: true,
         store: { select: { name: true, timezone: true } },
         owner: { select: { name: true } },
+        /*
+         * Fetched whether or not the chosen columns read them.
+         *
+         * Gating each relation on `format` was tried and reverted: a conditional
+         * value inside a Prisma `select` collapses the inferred payload back to
+         * the whole row, so the saving cost the one thing that makes the builder
+         * below safe — the compiler knowing exactly which fields were asked for.
+         * Each of these is one `take: 1` sub-select bounded by EXPORT_ROW_LIMIT,
+         * and the first three were always fetched anyway.
+         */
         tagAssignments: { select: { tag: { select: { name: true } } } },
         followUps: {
           where: { done: false },
@@ -194,7 +271,37 @@ export class LeadExportService {
           take: 1,
           select: { dueDate: true },
         },
-        party: { select: { _count: { select: { checkIns: true } } } },
+        /*
+         * The visit COUNT and the register's ANSWERS now come off the same
+         * relation — the customer's own check-ins.
+         *
+         * They used to disagree: the count was read from the party while
+         * "Store Visited", "Customer Type", "Product Catergory" and "Purchase
+         * Ocassion" were read from `visits`, the check-ins whose `leadId`
+         * points at this lead. On the live database not one of 622 check-ins
+         * carries a `leadId`, so a row could only ever read "Visits: 3" beside
+         * four blank cells. The client reconciles this sheet against her own
+         * Master Leads workbook by hand, where a blank cell reads as data we
+         * failed to capture, not as a join that did not match.
+         */
+        party: {
+          select: {
+            _count: { select: { checkIns: true } },
+            checkIns: {
+              orderBy: { timeIn: 'desc' },
+              take: 1,
+              select: { metadata: true, store: { select: { name: true } } },
+            },
+          },
+        },
+        // Still preferred over the customer's latest when it exists: a check-in
+        // filed against THIS enquiry describes this enquiry's visit.
+        visits: {
+          orderBy: { timeIn: 'desc' },
+          take: 1,
+          select: { metadata: true, store: { select: { name: true } } },
+        },
+        notes: { orderBy: { createdAt: 'desc' }, take: 1, select: { text: true } },
       },
     });
 
@@ -205,52 +312,51 @@ export class LeadExportService {
       views: [{ state: 'frozen', ySplit: 1 }],
     });
 
-    ws.columns = columns.map((c) => ({
-      header: HEADINGS[c],
-      key: c,
-      width: WIDTHS[c],
+    ws.columns = format.map((c) => ({
+      header: c.header,
+      key: c.field,
+      width: exportFieldWidth('leads', c.field),
     }));
     ws.getRow(1).font = { bold: true };
 
-    for (const lead of leads) {
-      const tz = resolveTz(lead.store?.timezone);
-      const attrs = (lead.attributes ?? {}) as Record<string, unknown>;
-      const row: Record<string, unknown> = {
-        customerName: lead.customerName,
-        phone: lead.phone ?? '',
-        ref: lead.ref,
-        store: lead.store?.name ?? '',
-        owner: lead.owner?.name ?? '',
-        source: lead.source,
-        // Campaign and ad id exist only for leads that actually came from an ad.
-        // Blank is the honest answer for a walk-in, not "N/A" or "Organic".
-        campaign: typeof attrs.campaignName === 'string' ? attrs.campaignName : '',
-        adId: typeof attrs.adId === 'string' ? attrs.adId : '',
-        tags: lead.tagAssignments.map((a) => a.tag.name).join(', '),
-        stage: lead.stage,
-        outcome: lead.outcome,
-        createdAt: businessDate(lead.createdAt, tz),
-        lastActivity: lead.lastActivity ? businessDate(lead.lastActivity, tz) : '',
-        nextFollowUp: lead.followUps[0]?.dueDate
-          ? businessDate(lead.followUps[0].dueDate, tz)
-          : '',
-        visitCount: lead.party?._count.checkIns ?? 0,
-        value: lead.value ? Number(lead.value) : '',
-      };
-      ws.addRow(Object.fromEntries(columns.map((c) => [c, row[c]])));
-    }
+    leads.forEach((lead, index) => {
+      const row = leadRow(lead, index);
+      ws.addRow(Object.fromEntries(format.map((c) => [c.field, row[c.field] ?? ''])));
+    });
 
     ws.autoFilter = {
       from: { row: 1, column: 1 },
-      to: { row: 1, column: columns.length },
+      to: { row: 1, column: format.length },
     };
+
+    // What this file covers, inside the file. Two downloads with the same name
+    // and different row counts is the next question we get asked.
+    addExportAboutSheet(wb, {
+      what: 'Leads',
+      rangedOn: 'The day the lead arrived',
+      from: f.from,
+      to: f.to,
+      label: f.rangeLabel,
+      rows: leads.length,
+      notes: [['Columns', format.map((c) => c.header).join(' | ')]],
+    });
 
     const buffer = Buffer.from(await wb.xlsx.writeBuffer());
     const stamp = new Date().toISOString().slice(0, 10);
-    // A scheduled report names the period it covers; a manual one names the day
-    // it was taken. "leads-2026-08.xlsx" in an inbox answers a question that
-    // "leads-2026-09-01.xlsx" makes somebody open the file to answer.
-    const filename = f.filenameStem ? `${f.filenameStem}.xlsx` : `leads-${stamp}.xlsx`;
+    /*
+     * The name says what is inside.
+     *
+     * A scheduled report names the period it covers. A manual one names the
+     * RANGE when there is one — "leads-2026-11-01-to-2026-11-30.xlsx" in an
+     * inbox answers a question that "leads-2026-11-21.xlsx" makes somebody open
+     * the file to answer — and falls back to the day it was taken for an
+     * all-time download, which is the name that has always been used.
+     */
+    const filename = f.filenameStem
+      ? `${f.filenameStem}.xlsx`
+      : f.from || f.to
+        ? rangeFilename('leads', f.from, f.to)
+        : `leads-${stamp}.xlsx`;
 
     /*
      * Exports are audited because the file leaves the system carrying customer
@@ -271,10 +377,144 @@ export class LeadExportService {
           ownerId: f.ownerId ?? null, source: f.source ?? null, stage: f.stage ?? null,
           outcome: f.outcome ?? null, tagIds: f.tagIds ?? [],
         },
-        columns,
+        columns: format.map((c) => c.field),
       },
     });
 
     return { buffer, filename, rows: leads.length };
   }
+
+  /**
+   * Which columns this workbook gets.
+   *
+   * An explicit `columns=` in the query still wins, because the scheduled
+   * reports and the CRM board's own chooser pass one and must keep producing the
+   * sheet they were configured for. Everything else gets the tenant's format.
+   */
+  private async resolveFormat(
+    user: AuthUser,
+    f: LeadExportFilters,
+  ): Promise<readonly ExportColumnFormat[]> {
+    if (!f.columns?.length) return this.format(user, 'leads');
+    const catalogue = exportFieldCatalogue('leads');
+    return f.columns
+      .map((field) => catalogue.find((spec) => spec.field === field))
+      .filter((spec): spec is (typeof LEAD_EXPORT_FIELDS)[number] => spec != null)
+      .map((spec) => ({ field: spec.field, header: spec.label }));
+  }
 }
+
+/**
+ * The lead as Prisma hands it back, with every gated relation optional.
+ *
+ * `leadRow` and `transactionChannel` below are exported only so their rules can
+ * be asserted directly (see `lead-export-rows.spec.ts`). Both decide something
+ * whose failure reaches a person as a wrong spreadsheet rather than as an error:
+ * an open lead counted as a non-purchase, or a sales column that sums to more
+ * than was actually sold.
+ */
+/** One check-in, in the shape the register's answers are read off it. */
+export type VisitRecord = {
+  metadata: Prisma.JsonValue | null;
+  store: { name: string } | null;
+};
+
+export type LeadRecord = {
+  ref: string;
+  customerName: string;
+  phone: string | null;
+  source: string;
+  stage: string;
+  outcome: string;
+  value: Prisma.Decimal | null;
+  createdAt: Date;
+  closedAt: Date | null;
+  lastActivity: Date | null;
+  location: string | null;
+  interest: string | null;
+  attributes: Prisma.JsonValue | null;
+  store: { name: string; timezone: string | null } | null;
+  owner: { name: string } | null;
+  tagAssignments?: { tag: { name: string } }[];
+  followUps?: { dueDate: Date | null }[];
+  party?: { _count: { checkIns: number }; checkIns?: VisitRecord[] } | null;
+  visits?: VisitRecord[];
+  notes?: { text: string }[];
+};
+
+/**
+ * Where the transaction happened, read off the source rather than guessed.
+ *
+ * Only two sources say it: a website lead transacted on the website, a walk-in
+ * transacted in the shop. A Meta ad says where the lead CAME FROM and nothing
+ * about where it closed, so it stays blank — the client's own column has two
+ * values in it, and filling a third in for her would put a number in a count she
+ * reconciles by hand.
+ */
+export function transactionChannel(source: string): string {
+  if (source === 'website') return 'Website';
+  if (source === 'walk_in') return 'Store';
+  return '';
+}
+
+export function leadRow(lead: LeadRecord, index: number): Record<string, unknown> {
+  const tz = resolveTz(lead.store?.timezone);
+  const attrs = (lead.attributes ?? {}) as Record<string, unknown>;
+  /*
+   * The visit these four columns answer from, and the one the "Visits" count
+   * further down counts: the customer's latest, unless a check-in was filed
+   * against this very enquiry. Reading the answers from the lead alone while
+   * counting from the customer is what produced "Visits: 3" beside four blank
+   * cells — no check-in in the live database carries a `leadId`.
+   */
+  const visit = lead.visits?.[0] ?? lead.party?.checkIns?.[0];
+  const survey = (visit?.metadata ?? {}) as Record<string, unknown>;
+  const won = lead.outcome === 'won';
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+
+  return {
+    serial: index + 1,
+    customerName: lead.customerName,
+    phone: lead.phone ?? '',
+    ref: lead.ref,
+    store: lead.store?.name ?? '',
+    storeVisited: visit?.store?.name ?? '',
+    owner: lead.owner?.name ?? '',
+    source: lead.source,
+    // Campaign and ad id exist only for leads that actually came from an ad.
+    // Blank is the honest answer for a walk-in, not "N/A" or "Organic".
+    campaign: str(attrs.campaignName),
+    adId: str(attrs.adId),
+    channel: transactionChannel(lead.source),
+    location: lead.location ?? '',
+    // The walk-in register's own answers, read through that same visit. Blank
+    // when the customer has never been in — the register is where these are
+    // asked, so there is nowhere else they could have come from.
+    customerType: str(survey.customerType),
+    productCategory: str(survey.productCategory),
+    interest: lead.interest ?? '',
+    occasion: str(survey.occasion),
+    tags: (lead.tagAssignments ?? []).map((a) => a.tag.name).join(', '),
+    stage: lead.stage,
+    outcome: lead.outcome,
+    /*
+     * The client's words, not ours. Her sheet has three states in this column
+     * and the third one is empty: a lead still being worked is neither a
+     * purchase nor a non-purchase, and calling it "Non-purchase" today would
+     * overstate every branch's loss rate in her Summary tab.
+     */
+    purchaseStatus: won ? 'Purchase' : lead.outcome === 'lost' ? 'Non-purchase' : '',
+    value: lead.value ? Number(lead.value) : '',
+    // Only on a won lead, so a column of these sums to money that came in.
+    salesValue: won && lead.value ? Number(lead.value) : '',
+    createdAt: businessDate(lead.createdAt, tz),
+    saleDate: won && lead.closedAt ? businessDate(lead.closedAt, tz) : '',
+    lastActivity: lead.lastActivity ? businessDate(lead.lastActivity, tz) : '',
+    nextFollowUp: lead.followUps?.[0]?.dueDate
+      ? businessDate(lead.followUps[0].dueDate as Date, tz)
+      : '',
+    visitCount: lead.party?._count.checkIns ?? 0,
+    remarks: lead.notes?.[0]?.text ?? '',
+  };
+}
+

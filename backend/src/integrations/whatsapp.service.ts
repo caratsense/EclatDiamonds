@@ -182,6 +182,49 @@ export class WhatsAppService {
     );
   }
 
+  /**
+   * Tell WhatsApp a customer's message has been READ — the blue ticks on their
+   * phone (client, Nov 2026: "there is no read receipt... the customer is not
+   * able to see whether we have seen it or not").
+   *
+   * ## Why it goes through `send`
+   *
+   * This is not a message to the customer, but it IS something the customer
+   * sees, so it belongs behind the same door as everything else that reaches
+   * them: `senderFor` decides WHICH of the tenant's numbers claims the read
+   * (Graph only accepts the receipt on the number that received the message),
+   * and MESSAGING_RECIPIENT_ALLOWLIST still decides whether this environment
+   * may touch that person at all.
+   *
+   * A second path with its own copy of the allowlist check would be a blast
+   * door with a second entrance. Copies drift, and the day the copy drifts is
+   * the day staging ticks a real customer's message.
+   *
+   * ## Why `to` is unset in the body
+   *
+   * The Cloud API's read receipt takes only `{messaging_product, status,
+   * message_id}` — there is no recipient field, because the message id already
+   * names the thread. `send` builds `{messaging_product, to, ...body}`, and
+   * `JSON.stringify` drops a key whose value is `undefined`, so this sends
+   * exactly the documented body while still passing the number through `send`
+   * for the allowlist check and the masked logging.
+   */
+  async markRead(
+    organisationId: string,
+    /** The customer's number. Used for the allowlist and the log, not the body. */
+    to: string,
+    /** The provider's id for THEIR message — what is being acknowledged. */
+    providerMessageId: string,
+    route?: SenderRoute,
+  ): Promise<WhatsAppSendResult> {
+    return this.send(
+      organisationId,
+      to,
+      { to: undefined, status: 'read', message_id: providerMessageId },
+      route,
+    );
+  }
+
   /** Send a pre-approved template message — the only way to *start* a conversation. */
   async sendTemplate(
     organisationId: string,

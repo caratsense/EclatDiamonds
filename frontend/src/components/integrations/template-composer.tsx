@@ -31,7 +31,18 @@ import {
   type TemplateButtonInput,
   type TemplateCardInput,
   type TemplateDraftInput,
+  type TemplateVariableDefault,
 } from "@/lib/queries/meta-admin";
+/*
+ * The broadcast's own list of sources, not a second copy of the same four
+ * strings. These choices are pre-selected straight into a campaign's variable
+ * mapping, so two lists would eventually disagree and the one that was wrong
+ * would be the one deciding what a customer reads.
+ */
+import {
+  CAMPAIGN_VARIABLE_SOURCES,
+  type CampaignVariableSource,
+} from "@/lib/queries/campaigns";
 import { Badge } from "@/components/ui/badge";
 import { WhatsAppPreview } from "@/components/integrations/whatsapp-preview";
 import { TENANT_NAME } from "@/lib/brand";
@@ -113,7 +124,92 @@ export interface TemplateEditSeed {
   header: string | null;
   footer: string | null;
   buttons: TemplateButtonInput[];
+  /**
+   * What was recorded as normally filling each variable.
+   *
+   * Carried through the edit because the submission REPLACES the stored
+   * defaults rather than merging into them: opening an approved template to fix
+   * a typo and saving it would otherwise quietly forget that `{{1}}` is a
+   * customer's first name, and the next broadcast would ask again.
+   */
+  variableDefaults: TemplateVariableDefault[];
 }
+
+/**
+ * What normally fills one `{{n}}`, as the composer holds it while typing.
+ *
+ * Kept in a record keyed by SLOT rather than in an array, so adding or deleting
+ * a variable in the middle of the body cannot shift somebody's choice onto a
+ * different placeholder. A slot with no entry has no default, which is not the
+ * same as having a wrong one.
+ */
+export interface VariableDefaultRow {
+  source: CampaignVariableSource;
+  /** The wording itself, when the source is "fixed". */
+  text?: string;
+  /** What to send when the customer record is empty. */
+  fallback?: string;
+}
+
+/**
+ * The rows a submission carries, out of what the composer is holding.
+ *
+ * A variable left on "decide on each broadcast" sends NOTHING, rather than a
+ * row naming a source nobody picked: a stored default is pre-selected on every
+ * future send, so inventing one here would put words in her mouth for as long
+ * as the template exists.
+ *
+ * A "fixed" row carries its wording and no stand-in — its own text is the
+ * stand-in, which the server fills in. Sending both would be sending a
+ * fallback that can never be reached.
+ */
+export function variableDefaultsFor(
+  used: number[],
+  rows: Record<number, VariableDefaultRow>,
+): TemplateVariableDefault[] {
+  return used.flatMap((n) => {
+    const row = rows[n];
+    if (!row) return [];
+    return [
+      row.source === "fixed"
+        ? { slot: n, source: row.source, text: row.text?.trim() }
+        : { slot: n, source: row.source, fallback: row.fallback?.trim() },
+    ];
+  });
+}
+
+/**
+ * The first variable whose default was started and not finished.
+ *
+ * Both halves matter at send time, not at submission: Meta refuses a parameter
+ * that is an empty string, so a broadcast pre-selecting a row with no stand-in
+ * would fail on exactly the customers who have no name recorded — per
+ * recipient, after the campaign was already running.
+ */
+export function incompleteDefaultSlot(
+  used: number[],
+  rows: Record<number, VariableDefaultRow>,
+): number | undefined {
+  return used.find((n) => {
+    const row = rows[n];
+    if (!row) return false;
+    return row.source === "fixed" ? !row.text?.trim() : !row.fallback?.trim();
+  });
+}
+
+/** The stand-in offered the moment a customer value is chosen, as the wizard does. */
+const SUGGESTED_FALLBACK = "there";
+
+/**
+ * The "decide it on each broadcast" row in the dropdown.
+ *
+ * A Radix select item cannot have the empty string as its value, so the absence
+ * of a default needs a word of its own. Nothing is stored for a variable left on
+ * this, and the campaign wizard goes on asking exactly as it did before — which
+ * is the honest state for the templates that already exist, rather than handing
+ * every one of them a choice nobody made.
+ */
+const NO_DEFAULT = "per_broadcast";
 
 export function TemplateComposer({
   integrationId,
@@ -145,6 +241,20 @@ export function TemplateComposer({
   const [body, setBody] = useState(editing?.body ?? "");
   const [footer, setFooter] = useState(editing?.footer ?? "");
   const [examples, setExamples] = useState<string[]>(editing?.examples ?? []);
+  /*
+   * What each variable normally is. Seeded from the template being edited, so
+   * fixing a typo does not quietly forget that {{1}} is a customer's first
+   * name — the submission replaces the stored defaults rather than merging.
+   */
+  const [variableDefaults, setVariableDefaults] = useState<Record<number, VariableDefaultRow>>(
+    () =>
+      Object.fromEntries(
+        (editing?.variableDefaults ?? []).map((d) => [
+          d.slot,
+          { source: d.source, text: d.text, fallback: d.fallback },
+        ]),
+      ),
+  );
 
   /*
    * A picture above the message, and/or a row of product cards.
@@ -289,6 +399,34 @@ export function TemplateComposer({
   const gap = used.find((n, i) => n !== i + 1);
   const missingExamples = used.filter((n) => !examples[n - 1]?.trim());
 
+  /**
+   * The defaults to store, in slot order.
+   *
+   * Only the variables the body still has, and only the ones somebody actually
+   * chose. A row for a deleted `{{3}}` would be refused by the server with a
+   * sentence about a variable that is no longer on the screen.
+   */
+  const chosenDefaults = variableDefaultsFor(used, variableDefaults);
+
+  /*
+   * A default that was half chosen.
+   *
+   * The server refuses both of these with the same sentences, because a blank
+   * value is one Meta rejects per recipient rather than at submission — so a
+   * broadcast would pre-select the row, send to several thousand people, and
+   * fail on the ones with no name recorded. Asked for here while the cursor is
+   * still in the box.
+   */
+  const incompleteDefault = incompleteDefaultSlot(used, variableDefaults);
+  const patchDefault = (slot: number, change: Partial<VariableDefaultRow> | null) =>
+    setVariableDefaults((prev) => {
+      if (!change) {
+        const { [slot]: _cleared, ...rest } = prev;
+        return rest;
+      }
+      return { ...prev, [slot]: { ...(prev[slot] ?? { source: "customer_first_name" }), ...change } };
+    });
+
   const preview = body.replace(PLACEHOLDER_RE, (whole, digits: string) => {
     const value = examples[Number(digits) - 1];
     return value?.trim() ? value.trim() : whole;
@@ -337,13 +475,18 @@ export function TemplateComposer({
             ? `Placeholders must run 1, 2, 3 with no gaps — this jumps to {{${gap}}}.`
             : missingExamples.length
               ? `Give a sample value for ${missingExamples.map((n) => `{{${n}}}`).join(", ")}.`
-              : pictureProblem;
+              : incompleteDefault !== undefined
+                ? variableDefaults[incompleteDefault]?.source === "fixed"
+                  ? `Type the wording that goes in {{${incompleteDefault}}} for everyone.`
+                  : `Say what {{${incompleteDefault}}} should read when a customer has no name on record.`
+                : pictureProblem;
 
   const reset = () => {
     setName("");
     setBody("");
     setFooter("");
     setExamples([]);
+    setVariableDefaults({});
     setCategory("UTILITY");
     setLanguageCode("en_US");
     setHeaderTypeState("NONE");
@@ -381,6 +524,13 @@ export function TemplateComposer({
             }
           : {}),
         ...(used.length ? { examples: used.map((n) => examples[n - 1]?.trim() ?? "") } : {}),
+        /*
+         * Sent on every edit, even when empty, so clearing a default actually
+         * clears it. The server REPLACES the stored mapping with this; an
+         * omitted field there keeps the old one, which would go on
+         * pre-selecting a choice she had just removed.
+         */
+        variableDefaults: chosenDefaults,
         // A carousel replaces the template's own header, so the two are
         // mutually exclusive here exactly as they are at Meta.
         ...(isCarousel
@@ -546,36 +696,132 @@ export function TemplateComposer({
             />
             <p className="text-[11px] text-muted-foreground">
               {used.length
-                ? `${used.length} variable${used.length === 1 ? "" : "s"} — give each a sample below. `
+                ? `${used.length} variable${used.length === 1 ? "" : "s"} — say what fills each below. `
                 : "Add a variable for anything that changes per customer, like their name. "}
               {body.length}/1024
             </p>
           </div>
 
+          {/*
+            WHAT THE SAMPLE IS FOR, AND WHERE THE REAL VALUE IS CHOSEN.
+
+            The client wrote a template whose whole body was `{{1}}`, put
+            "Priya" in the sample box, and asked: "how does the backend know
+            when I'm sending that message that a customer name has to be added?
+            There should be an option that you want to match this variable to
+            customer's name or their gender or something like that. There is no
+            such option."
+
+            There was one, and it was on the BROADCAST — which is the right
+            place for it to be overridable and the wrong place for it to be
+            discovered. From this screen the sample looked like the answer, so
+            the honest reading of her template was that every customer would be
+            greeted as Priya.
+
+            So both questions are asked here, in one box, in the order she
+            thinks about them: what fills this normally, and what Meta's
+            reviewer should see. The sample's own line says it is never sent.
+          */}
           {used.length > 0 && (
             <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
-              <Label className="text-xs">Sample values</Label>
+              <Label className="text-xs">What fills each variable</Label>
               <p className="text-[11px] text-muted-foreground">
-                Meta refuses a template with variables and no examples. These are only for the
-                reviewer; real values are filled in per customer at send time.
+                Meta needs a sample to review a variable and nobody is ever sent it — what each
+                customer reads is what you choose here, and any broadcast can still override it.
               </p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {used.map((n) => (
-                  <div key={n} className="flex items-center gap-2">
-                    <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">
-                      {`{{${n}}}`}
-                    </span>
-                    <Input
-                      value={examples[n - 1] ?? ""}
-                      placeholder={n === 1 ? "Priya" : "Bandra"}
-                      onChange={(e) => {
-                        const next = [...examples];
-                        next[n - 1] = e.target.value;
-                        setExamples(next);
-                      }}
-                    />
-                  </div>
-                ))}
+              <div className="space-y-2">
+                {used.map((n) => {
+                  const row = variableDefaults[n];
+                  return (
+                    <div key={n} className="space-y-1.5 rounded-md border bg-background p-2.5">
+                      <div className="flex items-center gap-2">
+                        <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">
+                          {`{{${n}}}`}
+                        </span>
+                        <Select
+                          value={row?.source ?? NO_DEFAULT}
+                          onValueChange={(next) =>
+                            next === NO_DEFAULT
+                              ? patchDefault(n, null)
+                              : /*
+                                 * Switching to a fixed wording drops a stand-in
+                                 * that no longer applies; switching away from
+                                 * one offers a usable stand-in rather than
+                                 * leaving the field empty and the form invalid.
+                                 */
+                                patchDefault(
+                                  n,
+                                  next === "fixed"
+                                    ? { source: next, fallback: "" }
+                                    : {
+                                        source: next as CampaignVariableSource,
+                                        text: "",
+                                        fallback: row?.fallback || SUGGESTED_FALLBACK,
+                                      },
+                                )
+                          }
+                        >
+                          <SelectTrigger className="h-8 text-xs">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value={NO_DEFAULT}>Decide on each broadcast</SelectItem>
+                            {CAMPAIGN_VARIABLE_SOURCES.map((s) => (
+                              <SelectItem key={s.value} value={s.value}>
+                                {s.label}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {row ? (
+                          <div className="space-y-1">
+                            <p className="text-[11px] text-muted-foreground">
+                              {row.source === "fixed"
+                                ? "The wording everyone gets"
+                                : "If we don't know it"}
+                            </p>
+                            {row.source === "fixed" ? (
+                              <Input
+                                className="h-8 text-xs"
+                                value={row.text ?? ""}
+                                placeholder="Diwali collection"
+                                onChange={(e) => patchDefault(n, { text: e.target.value })}
+                              />
+                            ) : (
+                              <Input
+                                className="h-8 text-xs"
+                                value={row.fallback ?? ""}
+                                placeholder={SUGGESTED_FALLBACK}
+                                onChange={(e) => patchDefault(n, { fallback: e.target.value })}
+                              />
+                            )}
+                          </div>
+                        ) : (
+                          <p className="self-end text-[11px] text-muted-foreground">
+                            Whoever sends the broadcast will be asked what goes here.
+                          </p>
+                        )}
+                        <div className="space-y-1">
+                          <p className="text-[11px] text-muted-foreground">
+                            Sample for Meta&apos;s reviewer — never sent
+                          </p>
+                          <Input
+                            className="h-8 text-xs"
+                            value={examples[n - 1] ?? ""}
+                            placeholder={n === 1 ? "Priya" : "Bandra"}
+                            onChange={(e) => {
+                              const next = [...examples];
+                              next[n - 1] = e.target.value;
+                              setExamples(next);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )}
@@ -984,6 +1230,21 @@ export function TemplateComposer({
                   buttons: c.buttons.map((b) => ({ type: b.type, text: b.text })),
                 }))}
               />
+              {used.length > 0 ? (
+                /*
+                  Said under the preview because the preview is the thing that
+                  misled her. It fills the variables with the samples, and the
+                  panel above it is headed "What the customer sees" — so a
+                  template whose body was `{{1}}` and whose sample was "Priya"
+                  read, on this screen, as a message that greets every customer
+                  as Priya. The samples are the only concrete values available
+                  here, so they stay; the sentence that was missing is whose
+                  they are.
+                */
+                <p className="text-[11px] text-muted-foreground">
+                  Drawn with your sample values. Each customer gets their own.
+                </p>
+              ) : null}
               {cards.length > 1 ? (
                 <p className="text-[11px] text-muted-foreground">
                   Swipe the cards sideways — that is how the customer sees them.

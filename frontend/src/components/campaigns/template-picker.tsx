@@ -7,7 +7,11 @@ import { AlertCircle, Check, MessageSquareText } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useMessageTemplates, isTemplateSendable } from "@/lib/queries/meta-admin";
+import {
+  isTemplateSendable,
+  useMessageTemplates,
+  type TemplateVariableDefault,
+} from "@/lib/queries/meta-admin";
 import { cn } from "@/lib/utils";
 
 /**
@@ -52,6 +56,14 @@ export interface PickedTemplate {
    * with a single variable was refused on every recipient.
    */
   variableCount: number;
+  /**
+   * What the TEMPLATE says normally fills each variable, when its author said so.
+   *
+   * Carried through so the wizard can pre-select it instead of assuming the
+   * first name for every slot. Empty for a template whose author left the
+   * choice to each broadcast, which is the default and keeps today's behaviour.
+   */
+  variableDefaults: TemplateVariableDefault[];
   /** The wording with its placeholders intact, for showing the mapping against. */
   source: string;
 }
@@ -128,6 +140,7 @@ export function TemplatePicker({
                         languageCode: language,
                         preview: preview ?? "",
                         variableCount: row.metadata.variables?.length ?? 0,
+                        variableDefaults: row.metadata.variableDefaults ?? [],
                         source: row.metadata.bodySource ?? "",
                       },
                 )

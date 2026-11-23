@@ -163,6 +163,16 @@ const CORE_NAVIGATION = [
   'hrms/payroll',
   'settings/staff-digest',
   'settings/lead-tags',
+  /*
+   * Which columns the Leads and NPS sheets come out with.
+   *
+   * CORE rather than jewellery-only: the two exports it shapes (`crm` and
+   * `nps`) are both in this list, so every vertical that can take the download
+   * has to be able to say what shape it arrives in. In this list or it does
+   * not exist — the pack is the entitlement AND the navigation, which is how
+   * NPS itself shipped invisible the first time.
+   */
+  'settings/export-formats',
   'settings/messaging-routes',
   'settings/channels',
   'data/images',

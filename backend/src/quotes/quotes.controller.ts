@@ -29,6 +29,7 @@ import {
   UpdateQuoteDto,
 } from './dto/quote.dto';
 import { CurrentUser, AuthUser } from '../common/auth-user';
+import { rangeFilename } from '../common/export-range';
 import { StoreHeader } from '../common/store-header.decorator';
 import { Roles } from '../auth/roles.decorator';
 
@@ -39,16 +40,29 @@ export class QuotesController {
     private readonly approval: QuoteApprovalService,
   ) {}
 
-  /** The quote book as Excel — same scope as the list; kaccha never exports. */
+  /**
+   * The quote book as Excel — same scope as the list; kaccha never exports.
+   *
+   * `from`/`to` are the Excel dialog's range, filtering on the day the quote was
+   * RAISED — which is the "Date" column in the sheet and the date written on the
+   * quotation itself. Not the day it was last touched: a quote re-sent in
+   * November is still an August quotation, and the quote book is numbered and
+   * reconciled in the order quotes were raised.
+   *
+   * Both absent is all time, which is what this did before the dialog existed.
+   */
   @Get('export.xlsx')
   @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   async exportXlsx(
     @CurrentUser() user: AuthUser,
     @Res({ passthrough: true }) res: Response,
     @StoreHeader() store?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    const { buffer, rows } = await this.quotes.exportXlsx(user, store);
-    res.setHeader('Content-Disposition', 'attachment; filename="quotations.xlsx"');
+    const { buffer, rows } = await this.quotes.exportXlsx(user, store, { from, to });
+    const filename = from || to ? rangeFilename('quotations', from, to) : 'quotations.xlsx';
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('X-Export-Rows', String(rows));
     return new StreamableFile(buffer);
   }

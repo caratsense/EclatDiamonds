@@ -8,6 +8,7 @@ import {
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
+import { addExportAboutSheet } from '../common/export-range';
 import { StoreScopeService } from '../common/store-scope.service';
 import { ActivityService } from '../crm/activity.service';
 import { IdentityService } from '../crm/identity.service';
@@ -153,13 +154,34 @@ export class CheckinsService {
   async exportXlsx(
     user: AuthUser,
     headerStore?: string,
-    // Scheduled walk-ins reports bound the workbook to a completed period;
-    // the page's own export button stays unbounded, exactly as before.
-    range?: { from: Date; to: Date },
+    /*
+     * The window, on `timeIn` — the day the customer walked in, not the day the
+     * row was written. A visit logged the morning after a late closing is still
+     * yesterday's footfall, and this register is what head office reconciles
+     * against a branch's own day book.
+     *
+     * Both ends are OPTIONAL. Scheduled walk-ins reports pass both to bound a
+     * completed period; the Excel dialog may pass one, or neither for all time —
+     * which is what this did before the dialog existed. A closed interval here
+     * would have forced the controller to invent a 1970 or a 9999 to stand in
+     * for "no bound", and an invented bound is a bound somebody later debugs.
+     *
+     * `to` is INCLUSIVE, which is why callers resolving a calendar range hand
+     * over `inclusiveTo(range)` rather than the exclusive instant.
+     */
+    range?: { from?: Date; to?: Date; label?: string },
   ): Promise<{ buffer: Buffer; rows: number }> {
+    const bounded = range?.from || range?.to;
     const where: Prisma.CheckInWhereInput = {
       ...this.scope.storeFilter(user, headerStore),
-      ...(range ? { timeIn: { gte: range.from, lte: range.to } } : {}),
+      ...(bounded
+        ? {
+            timeIn: {
+              ...(range?.from ? { gte: range.from } : {}),
+              ...(range?.to ? { lte: range.to } : {}),
+            },
+          }
+        : {}),
     };
     if (user.role === 'salesperson') {
       where.OR = [{ repId: user.id }, { attendedById: user.id }];
@@ -249,6 +271,15 @@ export class CheckinsService {
         remark: r.remark ?? '',
       });
     }
+    // What this file covers, inside the file. A 40-row walk-ins sheet is either
+    // a quiet fortnight or a narrow range, and nothing else in the workbook says
+    // which — which is the question asked of the second copy on the desk.
+    addExportAboutSheet(wb, {
+      what: 'Walk-ins',
+      rangedOn: 'The day the customer walked in',
+      rows: rows.length,
+      label: range?.label,
+    });
     const buffer = Buffer.from(await wb.xlsx.writeBuffer());
     return { buffer, rows: rows.length };
   }

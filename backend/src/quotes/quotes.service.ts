@@ -10,6 +10,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AuthUser } from '../common/auth-user';
 import { isSalesScoped } from '../common/sales-scope';
 import { AuditService } from '../common/audit.service';
+import { addExportAboutSheet, rangeWhere, resolveExportRange } from '../common/export-range';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import {
   TEMPLATE_REQUIRED_REASON,
@@ -1081,7 +1082,10 @@ export class QuotesService {
   async exportXlsx(
     user: AuthUser,
     headerStore?: string,
+    /** The Excel dialog's range, on the day the quote was raised. */
+    window: { from?: string; to?: string } = {},
   ): Promise<{ buffer: Buffer; rows: number }> {
+    const range = resolveExportRange(window.from, window.to);
     const quotes = await this.prisma.quote.findMany({
       where: {
         ...this.scope.storeFilter(user, headerStore),
@@ -1089,6 +1093,7 @@ export class QuotesService {
         // Kaccha estimates never leave the building in a spreadsheet, even for
         // head office: the screen's toggle is a glance, a file is a handout.
         isKaccha: false,
+        ...rangeWhere('createdAt', range),
       },
       orderBy: { createdAt: 'desc' },
       take: 5000,
@@ -1129,6 +1134,17 @@ export class QuotesService {
         total: Number(q.grandTotal),
       });
     }
+    // What the file covers, in the file. The kaccha exclusion is stated for the
+    // same reason: this sheet will not add up to the quote book's own total, and
+    // somebody is going to try.
+    addExportAboutSheet(wb, {
+      what: 'Quotations',
+      rangedOn: 'The day the quote was raised',
+      from: window.from,
+      to: window.to,
+      rows: quotes.length,
+      notes: [['Excludes', 'Kaccha estimates']],
+    });
     const buffer = Buffer.from(await wb.xlsx.writeBuffer());
     return { buffer, rows: quotes.length };
   }

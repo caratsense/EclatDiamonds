@@ -130,7 +130,11 @@ export default function QuotationPage() {
           <TabsTrigger value="quotes">Quotes</TabsTrigger>
           <TabsTrigger value="orders">Custom Orders &amp; Timeline</TabsTrigger>
         </TabsList>
-          <ExcelExportButton path="/quotes/export.xlsx" fallbackName="quotations.xlsx" />
+          <ExcelExportButton
+            path="/quotes/export.xlsx"
+            fallbackName="quotations.xlsx"
+            rangedOn="the day the quote was raised"
+          />
         </div>
 
         <TabsContent value="quotes" className="space-y-4">

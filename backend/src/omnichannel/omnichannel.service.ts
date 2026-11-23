@@ -49,6 +49,8 @@ import {
   type ProviderTemplateStatus,
 } from './omnichannel-policy';
 import { templateKey } from './template-sync.service';
+import { variableDefaultsFrom, type TemplateVariableDefault } from './template-draft';
+import { planReadReceipt } from './read-receipt';
 
 export const OMNICHANNEL_DELIVERY_JOB = 'omnichannel.deliver';
 const DELIVERY_MAX_ATTEMPTS = 5;
@@ -99,6 +101,14 @@ interface TemplateMetadata {
   footerText?: string;
   buttons?: { type: 'URL' | 'QUICK_REPLY'; text: string; url?: string }[];
   variables: string[];
+  /**
+   * What normally fills each `{{n}}`, as recorded on the template.
+   *
+   * Empty means the author recorded none and the broadcast asks as it always
+   * did. Carried out to the campaign wizard so it can pre-select her answer
+   * rather than making her give it again on every send.
+   */
+  variableDefaults?: TemplateVariableDefault[];
   recordedAt: string;
 }
 
@@ -1750,6 +1760,127 @@ export class OmnichannelService implements OnModuleInit {
     return { id: job.id, deduplicated: false, status: job.status };
   }
 
+  /**
+   * Turn the customer's ticks blue, because a person has just opened the thread.
+   *
+   * The counterpart of `applyDeliveryReceipt` below: that one records what the
+   * provider tells us about OUR messages, this one tells the provider about
+   * THEIRS. Nothing did, so a customer messaging the shop saw one grey tick for
+   * ever and could not tell a thread nobody had opened from one being worked on
+   * (client, 16 Nov).
+   *
+   * WHEN this is called is the whole design, and it is deliberately not on
+   * arrival — see the note on `read-receipt.ts`. The caller is
+   * `ConversationsService.thread`, i.e. a signed-in person opening the
+   * conversation, which is the closest thing to "read" this app can honestly
+   * observe: it has no read tracking of its own.
+   *
+   * REFUSALS ARE RETURNED, NEVER THROWN. The caller is someone opening a thread,
+   * and no missing tick is worth failing that read: an unconnected number, a
+   * tenant with several numbers and no route, or a provider error all leave the
+   * thread unacknowledged and it is tried again the next time somebody opens it.
+   */
+  async markThreadRead(input: {
+    organisationId: string;
+    conversationId: string;
+  }): Promise<{ marked: number; reason?: string }> {
+    const conversation = await this.prisma.conversation.findFirst({
+      where: { id: input.conversationId, organisationId: input.organisationId },
+      select: {
+        id: true,
+        channel: true,
+        externalThreadId: true,
+        storeId: true,
+        senderAssetId: true,
+      },
+    });
+    if (!conversation) return { marked: 0, reason: 'Conversation not found.' };
+
+    /*
+     * 200 is a ceiling, not a rule. The plan only ever acknowledges the newest
+     * of these, and a thread carrying more unacknowledged messages than that is
+     * worked through over successive opens — the cost of hitting it is one extra
+     * receipt for a screen that already looks the same.
+     */
+    const inbound = await this.prisma.message.findMany({
+      where: {
+        organisationId: input.organisationId,
+        conversationId: conversation.id,
+        direction: 'inbound',
+        status: { not: 'read' },
+      },
+      orderBy: { sentAt: 'desc' },
+      take: 200,
+      select: { id: true, externalId: true, status: true, sentAt: true },
+    });
+
+    const to = conversation.externalThreadId;
+    const plan = planReadReceipt({
+      channel: conversation.channel,
+      externalThreadId: to,
+      inbound,
+    });
+    if (!plan.acknowledge) return { marked: 0, reason: plan.reason };
+    // `planReadReceipt` already refuses a thread with no number, so this cannot
+    // fire. It is here to prove that to the compiler rather than with a cast,
+    // which would survive a later change to the plan's rules.
+    if (!to) return { marked: 0, reason: 'This thread has no WhatsApp number.' };
+
+    /*
+     * Through `WhatsAppService`, not Graph directly. That is where the staging
+     * recipient allowlist lives, and a read receipt is visible to the customer:
+     * a second path to their phone with its own copy of that check is a blast
+     * door with a second entrance.
+     *
+     * `senderAssetId` is the number the customer wrote TO, and Graph accepts the
+     * receipt only on that number — so it is the route, with the branch as the
+     * fallback for a thread that predates per-number routing.
+     *
+     * `audience: 'customer'` matters only on that fallback: a branch with a
+     * staff line and a shopfront line must not acknowledge a customer's message
+     * from the staff one, which is a number she has never written to.
+     */
+    const result = await this.whatsapp.markRead(
+      input.organisationId,
+      to,
+      plan.acknowledge.providerMessageId,
+      {
+        assetId: conversation.senderAssetId,
+        storeId: conversation.storeId,
+        audience: 'customer',
+      },
+    );
+    if (!result.delivered) {
+      // Logged rather than thrown: see the note on this method. A tick that did
+      // not happen is retried the next time somebody opens the thread.
+      this.log.warn(
+        `read receipt for conversation ${conversation.id} not sent: ${
+          result.reason ?? result.error ?? 'provider refused it'
+        }`,
+      );
+      return { marked: 0, reason: result.reason ?? result.error ?? 'The receipt was not sent.' };
+    }
+
+    /*
+     * Recorded only AFTER the provider took it, and across every message up to
+     * the one acknowledged — which is what the customer's phone now shows, since
+     * Graph ticks the earlier ones too. `status: 'read'` on an inbound message
+     * means "WhatsApp has been told", so writing it before the call would
+     * silence a receipt that never left.
+     */
+    const marked = await this.prisma.message.updateMany({
+      where: {
+        organisationId: input.organisationId,
+        conversationId: conversation.id,
+        direction: 'inbound',
+        status: { not: 'read' },
+        sentAt: { lte: plan.acknowledge.sentAt },
+      },
+      data: { status: 'read' },
+    });
+    return { marked: marked.count };
+  }
+
   /** Apply a verified provider receipt after tenant ownership has been resolved. */
   async applyDeliveryReceipt(input: {
     organisationId: string;
@@ -2516,6 +2647,16 @@ function templateMetadata(value: unknown): TemplateMetadata {
     variables: Array.isArray(raw.variables)
       ? raw.variables.filter((item): item is string => typeof item === 'string')
       : [],
+    /*
+     * Present as `null` on every template submitted since defaults existed and
+     * absent on everything older, which the screens read the same way: nothing
+     * was chosen. `variableDefaultsFrom` drops rows it cannot read rather than
+     * throwing — this projection runs on the template LIST, and one bad row
+     * must not take the whole screen down.
+     */
+    ...(raw.variableDefaults !== undefined
+      ? { variableDefaults: variableDefaultsFrom(raw.variableDefaults) }
+      : {}),
     recordedAt: typeof raw.recordedAt === 'string' ? raw.recordedAt : '',
   };
 }

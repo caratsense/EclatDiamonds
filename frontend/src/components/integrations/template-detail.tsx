@@ -69,8 +69,23 @@ function editSeed(row: MessageTemplateRow): TemplateEditSeed | string {
     header: m.headerText ?? null,
     footer: m.footerText ?? null,
     buttons: (m.buttons ?? []).map((b) => ({ type: b.type, text: b.text, url: b.url })),
+    /*
+     * Carried into the editor because a submission REPLACES the stored
+     * defaults. Without this, opening an approved template to fix a comma and
+     * saving it would forget that {{1}} is a customer's first name, and the
+     * next broadcast would quietly go back to asking.
+     */
+    variableDefaults: m.variableDefaults ?? [],
   };
 }
+
+/** What a stored default reads as on screen. The wizard's own words for it. */
+const SOURCE_LABELS: Record<string, string> = {
+  customer_first_name: "the customer's first name",
+  customer_name: "the customer's full name",
+  branch_name: "their branch",
+  fixed: "the same wording for everyone",
+};
 
 export function TemplateDetail({
   row,
@@ -144,17 +159,49 @@ export function TemplateDetail({
             )}
 
             {m.variables?.length ? (
+              /*
+                WHAT FILLS EACH VARIABLE, AND WHAT THE SAMPLE WAS FOR.
+
+                This used to be a row of badges reading "{{1}} {{1}}" — the
+                placeholder printed twice, because `metadata.variables` already
+                holds the braces — and it said nothing at all about where the
+                value comes from. The client read the sample she had given Meta
+                as the answer, and asked for "an option that you want to match
+                this variable to customer's name". There was one; it was on the
+                broadcast, out of sight from here.
+              */
               <div className="space-y-1">
                 <p className="text-xs font-medium text-muted-foreground">
                   Fills in per customer
                 </p>
-                <div className="flex flex-wrap gap-1">
-                  {m.variables.map((v, i) => (
-                    <Badge key={`${v}-${i}`} variant="outline" className="font-mono text-[11px]">
-                      {`{{${i + 1}}}`} {v}
-                    </Badge>
-                  ))}
-                </div>
+                <ul className="space-y-0.5">
+                  {m.variables.map((_v, i) => {
+                    const slot = i + 1;
+                    const row = m.variableDefaults?.find((d) => d.slot === slot);
+                    return (
+                      <li key={slot} className="flex items-baseline gap-2 text-xs">
+                        <span className="font-mono text-muted-foreground">{`{{${slot}}}`}</span>
+                        {row ? (
+                          <span>
+                            {row.source === "fixed"
+                              ? `“${row.text ?? ""}”`
+                              : SOURCE_LABELS[row.source] ?? row.source}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">
+                            chosen when a broadcast is sent
+                          </span>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+                {m.bodyExamples?.length ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    The sample values ({m.bodyExamples.join(", ")}) were only shown to Meta&apos;s
+                    reviewer. No customer is ever sent them.
+                  </p>
+                ) : null}
               </div>
             ) : null}
 

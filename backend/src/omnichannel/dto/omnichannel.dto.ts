@@ -1,22 +1,29 @@
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
   IsIn,
+  IsInt,
   IsISO8601,
   IsOptional,
   IsString,
   Matches,
+  Max,
   MaxLength,
+  Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
 
 import { OMNICHANNEL_CHANNELS } from '../omnichannel-policy';
 import {
   HEADER_FORMATS,
   MAX_TEMPLATE_BUTTONS,
+  TEMPLATE_VARIABLE_SOURCES,
   type HeaderFormat,
   type TemplateButton,
   type TemplateCard,
+  type TemplateVariableSource,
 } from '../template-draft';
 
 export class RecordConsentDto {
@@ -100,6 +107,44 @@ export class UpsertMessageTemplateDto {
   @ArrayMaxSize(50)
   @IsString({ each: true })
   variables?: string[];
+}
+
+/**
+ * What normally fills one `{{n}}`, as the template composer sends it.
+ *
+ * A real nested class with real decorators, not a bare `@IsArray()`. The last
+ * field added to the submission DTO was `buttons`, and the editor was already
+ * sending it while the DTO did not declare it — the pipe runs with
+ * `forbidNonWhitelisted`, so every CTA template submission came back 400
+ * "property buttons should not exist". Declaring this one loosely would move
+ * the same failure later rather than removing it: an unchecked `source` would
+ * be stored, pre-selected on a broadcast, and refused by
+ * `parseVariableMappings` at send time, with several thousand recipients
+ * already queued.
+ *
+ * `fallback` is optional HERE and required there. A 'fixed' row has no fallback
+ * to give — its wording is its own stand-in — and the message explaining that
+ * to a person belongs in `parseVariableDefaults`, which can name the slot.
+ */
+export class TemplateVariableDefaultDto {
+  /** 1-based. Ten is the ceiling because a template may use at most ten. */
+  @IsInt()
+  @Min(1)
+  @Max(10)
+  slot!: number;
+
+  @IsIn(TEMPLATE_VARIABLE_SOURCES)
+  source!: TemplateVariableSource;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  text?: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(60)
+  fallback?: string;
 }
 
 /**
@@ -190,6 +235,21 @@ export class SubmitMessageTemplateDto {
   @IsString({ each: true })
   @MaxLength(200, { each: true })
   examples?: string[];
+
+  /**
+   * What normally fills each placeholder when a broadcast goes out.
+   *
+   * None of this reaches Meta. It is the answer to the client's question about
+   * the sample value — "there should be an option that you want to match this
+   * variable to customer's name" — stored with the template so the campaign
+   * wizard pre-selects it rather than asking again on every send.
+   */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(10)
+  @ValidateNested({ each: true })
+  @Type(() => TemplateVariableDefaultDto)
+  variableDefaults?: TemplateVariableDefaultDto[];
 }
 
 /**
