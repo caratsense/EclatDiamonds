@@ -15,6 +15,7 @@ import {
   useUpdateFeedbackSettings,
 } from "@/lib/queries/feedback";
 import { apiErrorMessage, positiveNumberInput } from "@/lib/utils";
+import { TemplatePicker } from "@/components/campaigns/template-picker";
 import {
   MAX_DELAY_HOURS,
   MIN_DELAY_HOURS,
@@ -207,26 +208,33 @@ function StepFields({
             className="h-9 w-[8rem]"
           />
         </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${idPrefix}-template`}>WhatsApp template</Label>
-          <Input
-            id={`${idPrefix}-template`}
-            value={step.templateName ?? ""}
-            onChange={(e) => onChange({ templateName: e.target.value })}
-            placeholder={step.step === 1 ? "visit_feedback" : "visit_feedback_reminder"}
-            className="h-9 w-[12rem]"
-          />
-        </div>
-        <div className="grid gap-1.5">
-          <Label htmlFor={`${idPrefix}-language`}>Language</Label>
-          <Input
-            id={`${idPrefix}-language`}
-            value={step.templateLanguage ?? ""}
-            onChange={(e) => onChange({ templateLanguage: e.target.value })}
-            placeholder="en"
-            className="h-9 w-[6rem]"
-          />
-        </div>
+      </div>
+
+      {/*
+        CHOSEN FROM WHAT META HAS APPROVED, not typed from memory.
+
+        These were two free-text boxes — a template name and a language code —
+        so a typo, a template that was never approved, or one Meta has since
+        paused all looked identical while saving, and the first anybody knew was
+        a customer who never got their feedback request. The picker lists the
+        approved templates for this tenant and carries the language with the
+        name, which is the pair the send actually needs.
+      */}
+      <div className="grid gap-1.5">
+        <Label>WhatsApp template</Label>
+        <TemplatePicker
+          value={
+            step.templateName
+              ? { name: step.templateName, languageCode: step.templateLanguage ?? "en" }
+              : null
+          }
+          onChange={(picked) =>
+            onChange({
+              templateName: picked?.name ?? "",
+              templateLanguage: picked?.languageCode ?? "",
+            })
+          }
+        />
       </div>
       <p className="text-xs text-muted-foreground">{whenItGoesOut(step)}</p>
     </div>
