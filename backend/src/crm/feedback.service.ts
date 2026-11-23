@@ -12,6 +12,7 @@ import { AuditService } from '../common/audit.service';
 import { AuthUser } from '../common/auth-user';
 import { readableParty } from '../common/sales-scope';
 import { StoreScopeService } from '../common/store-scope.service';
+import { businessDate, instantFromLocalTime, parseHHMM, resolveTz } from '../common/tz.util';
 import { ActivityService } from './activity.service';
 import { updateOrgSettings } from '../config/org-settings';
 
@@ -44,28 +45,99 @@ const SETTINGS = {
 } as const;
 
 /**
- * The automatic ask after a walk-in. OFF unless a tenant turns it on: one
- * business asked for "a week later", which is a policy for that business, not a
- * default to impose on every tenant.
+ * One of the two requests that go out after a visit.
+ *
+ * The client asked for this in hours — "one just after a day a customer visits
+ * ... and second would go after 48 hours" — so hours is the stored unit. The
+ * send is still pinned to the branch's own time of day: 48 hours after a visit
+ * that ended at 23:30 is 23:30, and a jeweller does not message a customer in
+ * the middle of the night.
  */
-export interface AfterVisitPolicy {
+export interface AfterVisitStep {
+  /** 1 = the request itself, 2 = the later one. The order is the meaning. */
+  step: 1 | 2;
   enabled: boolean;
-  /** Local days after the visit ended. */
-  delayDays: number;
-  /** Local "HH:MM" on that day. */
+  /**
+   * Hours after the visit ended, never under a day — see MIN_DELAY_HOURS.
+   *
+   * It chooses the local DAY, not the minute: whole days are counted from the
+   * visit's own local day and `sendTimeLocal` then decides the hour, so 24 and
+   * 30 hours both land on the day after the visit. That is the rule the single
+   * request has always been scheduled by, and changing it would move every
+   * already-configured tenant's send.
+   */
+  delayHours: number;
+  /** Local "HH:MM" at the branch, on the day the delay lands on. */
   sendTimeLocal: string;
   /** A provider-approved utility template taking {{1}} first name, {{2}} link. */
   templateName: string | null;
   templateLanguage: string | null;
 }
 
-const AFTER_VISIT_DEFAULTS: AfterVisitPolicy = {
+/**
+ * The automatic ask after a walk-in. OFF unless a tenant turns it on: one
+ * business asked for "a week later", which is a policy for that business, not a
+ * default to impose on every tenant.
+ */
+export interface AfterVisitPolicy {
+  enabled: boolean;
+  /*
+   * Step one, flattened, in exactly the keys this policy has always been stored
+   * and read under. Kept rather than replaced because an organisation that
+   * configured one request before this change must keep behaving identically
+   * after it, and because the walk-in scheduler reads these. `steps[0]` is the
+   * same four facts, read as a step.
+   */
+  /** Whole local days after the visit — `Math.floor(steps[0].delayHours / 24)`. */
+  delayDays: number;
+  /** Local "HH:MM" on that day. */
+  sendTimeLocal: string;
+  templateName: string | null;
+  templateLanguage: string | null;
+  /** The request, then the later one. Always two entries, each with its own switch. */
+  steps: [AfterVisitStep, AfterVisitStep];
+}
+
+/** The stored key step two lives under. Absent until a tenant adds one. */
+const SECOND_STEP_KEY = 'second';
+
+const HOURS_PER_DAY = 24;
+const DAY_MS = 86_400_000;
+
+/**
+ * A step never goes out less than a day after the visit.
+ *
+ * Not an arbitrary floor. The due day is whole local days after the visit's own
+ * local day, which is how the single request has always been scheduled; a delay
+ * under a day would resolve to the day of the visit itself here while the
+ * `delayDays` the walk-in scheduler reads would still say the day after — one
+ * setting, two different days. A day is also the soonest the client asked for.
+ */
+export const MIN_DELAY_HOURS = HOURS_PER_DAY;
+/** 60 days, the bound the single request already had, expressed in hours. */
+export const MAX_DELAY_HOURS = 60 * HOURS_PER_DAY;
+
+const STEP_ONE_DEFAULTS: AfterVisitStep = {
+  step: 1,
   enabled: false,
-  delayDays: 7,
+  /** "One just after a day a customer visits" — the client's own first step. */
+  delayHours: 24,
   sendTimeLocal: '11:00',
   templateName: null,
   templateLanguage: null,
 };
+
+const STEP_TWO_DEFAULTS: AfterVisitStep = {
+  step: 2,
+  enabled: false,
+  /** "And second would go after 48 hours". */
+  delayHours: 48,
+  sendTimeLocal: '11:00',
+  templateName: null,
+  templateLanguage: null,
+};
+
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
  * Requests that were actually PUT to somebody. An automatic ask that is still
@@ -77,20 +149,324 @@ export const ASKED_FEEDBACK: Prisma.FeedbackRequestWhereInput = {
   NOT: { origin: 'visit_auto', status: 'cancelled', messageId: null, taskId: null },
 };
 
-function readAfterVisit(value: unknown): AfterVisitPolicy {
-  const raw = jsonObject(value);
+/**
+ * One step out of whatever is stored, falling back field by field.
+ *
+ * `delayHours` wins when present. `delayDays` is what every organisation that
+ * configured this before the second step existed has stored, so it is still
+ * read — and still written alongside the hours, so nothing that reads the old
+ * key sees a different schedule than this does.
+ */
+function readStep(step: 1 | 2, raw: Record<string, unknown>, fallback: AfterVisitStep): AfterVisitStep {
+  const hours = Number(raw.delayHours);
   const days = Number(raw.delayDays);
+  const delayHours =
+    Number.isInteger(hours) && hours >= MIN_DELAY_HOURS && hours <= MAX_DELAY_HOURS
+      ? hours
+      : Number.isInteger(days) && days >= 1 && days <= MAX_DELAY_HOURS / HOURS_PER_DAY
+        ? days * HOURS_PER_DAY
+        : fallback.delayHours;
   return {
+    step,
     enabled: raw.enabled === true,
-    delayDays: Number.isInteger(days) && days >= 1 && days <= 60 ? days : AFTER_VISIT_DEFAULTS.delayDays,
+    delayHours,
     sendTimeLocal:
-      typeof raw.sendTimeLocal === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(raw.sendTimeLocal)
+      typeof raw.sendTimeLocal === 'string' && HHMM.test(raw.sendTimeLocal)
         ? raw.sendTimeLocal
-        : AFTER_VISIT_DEFAULTS.sendTimeLocal,
+        : fallback.sendTimeLocal,
     templateName: typeof raw.templateName === 'string' && raw.templateName ? raw.templateName : null,
     templateLanguage:
       typeof raw.templateLanguage === 'string' && raw.templateLanguage ? raw.templateLanguage : null,
   };
+}
+
+export function readAfterVisit(value: unknown): AfterVisitPolicy {
+  return readPolicy(value, [STEP_ONE_DEFAULTS, STEP_TWO_DEFAULTS]);
+}
+
+/**
+ * The same read, against chosen fallbacks.
+ *
+ * A save falls back to what the organisation already has rather than to the
+ * product defaults: a delay the DTO somehow let through out of range must leave
+ * a configured request where it was, not quietly reset it to 24 hours.
+ */
+function readPolicy(
+  value: unknown,
+  fallbacks: [AfterVisitStep, AfterVisitStep],
+): AfterVisitPolicy {
+  const raw = jsonObject(value);
+  const enabled = raw.enabled === true;
+  /*
+   * Step one has no `enabled` of its own: the policy switch IS step one's
+   * switch, and that is not a shortcut. There is no such thing as "send only
+   * the chaser" — the second request follows up on the first, so it cannot be
+   * the only one to go out.
+   */
+  const first = readStep(1, { ...raw, enabled }, fallbacks[0]);
+  const second = readStep(2, jsonObject(raw[SECOND_STEP_KEY]), fallbacks[1]);
+  return {
+    enabled,
+    delayDays: Math.floor(first.delayHours / HOURS_PER_DAY),
+    sendTimeLocal: first.sendTimeLocal,
+    templateName: first.templateName,
+    templateLanguage: first.templateLanguage,
+    steps: [first, second],
+  };
+}
+
+/** The same policy with everything switched off, down to each step's own switch. */
+function offPolicy(policy: AfterVisitPolicy): AfterVisitPolicy {
+  return {
+    ...policy,
+    enabled: false,
+    steps: [
+      { ...policy.steps[0], enabled: false },
+      { ...policy.steps[1], enabled: false },
+    ],
+  };
+}
+
+/** Back to the stored shape: step one flat under the legacy keys, step two nested. */
+function writeAfterVisit(policy: AfterVisitPolicy): Record<string, unknown> {
+  const [first, second] = policy.steps;
+  return {
+    enabled: policy.enabled,
+    // Both units, kept in step. `delayDays` is still the key the walk-in
+    // scheduler reads, and MIN_DELAY_HOURS is what guarantees the two agree.
+    delayDays: Math.floor(first.delayHours / HOURS_PER_DAY),
+    delayHours: first.delayHours,
+    sendTimeLocal: first.sendTimeLocal,
+    templateName: first.templateName,
+    templateLanguage: first.templateLanguage,
+    [SECOND_STEP_KEY]: {
+      enabled: second.enabled,
+      delayHours: second.delayHours,
+      sendTimeLocal: second.sendTimeLocal,
+      templateName: second.templateName,
+      templateLanguage: second.templateLanguage,
+    },
+  };
+}
+
+/** Everything a caller may send. The flat step-one fields are still accepted. */
+export type AfterVisitPolicyInput = Partial<Omit<AfterVisitPolicy, 'steps'>> & {
+  steps?: Array<Partial<AfterVisitStep> | undefined>;
+};
+
+/** Drop only the keys that were not sent. `null` is an instruction: clear it. */
+function defined<T extends object>(value: T): Partial<T> {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, v]) => v !== undefined),
+  ) as Partial<T>;
+}
+
+/**
+ * The current policy plus whatever was sent.
+ *
+ * Only the fields actually sent are applied: a validated DTO carries the rest
+ * as `undefined`, and spreading those would switch the policy off. `null` is
+ * not that — it means clear this template.
+ *
+ * The flat step-one fields are still honoured, because the settings screen sent
+ * them for months before a second step existed and a PATCH written against the
+ * old shape must keep working. `steps[0]` wins when both arrive: a caller that
+ * sends the new shape meant it.
+ */
+export function mergeAfterVisit(
+  current: AfterVisitPolicy,
+  input: AfterVisitPolicyInput,
+): AfterVisitPolicy {
+  const flat = defined({
+    delayHours: input.delayDays === undefined ? undefined : input.delayDays * HOURS_PER_DAY,
+    sendTimeLocal: input.sendTimeLocal,
+    templateName: input.templateName,
+    templateLanguage: input.templateLanguage,
+  });
+  const enabled = input.enabled ?? input.steps?.[0]?.enabled ?? current.enabled;
+  const first: AfterVisitStep = {
+    ...current.steps[0],
+    ...flat,
+    ...defined(input.steps?.[0] ?? {}),
+    step: 1,
+    enabled,
+  };
+  const second: AfterVisitStep = {
+    ...current.steps[1],
+    ...defined(input.steps?.[1] ?? {}),
+    step: 2,
+  };
+  /*
+   * Round-tripped through the stored shape on purpose: every bound — the delay
+   * floor, the "HH:MM" shape, an empty template name meaning none — is then
+   * enforced by the same code that enforces it on the way out of the database,
+   * so a saved policy and a loaded one cannot disagree.
+   */
+  return readPolicy(
+    writeAfterVisit({ ...current, enabled, steps: [first, second] }),
+    current.steps,
+  );
+}
+
+/** The policy in one line, for the audit trail. Product words, not column names. */
+export function describeAfterVisit(policy: AfterVisitPolicy): string {
+  if (!policy.enabled) return 'off';
+  const [first, second] = policy.steps;
+  const when = (s: AfterVisitStep) => `${s.delayHours}h later at ${s.sendTimeLocal}`;
+  return `on, ${when(first)}${second.enabled ? `, then again ${when(second)}` : ', no second request'}`;
+}
+
+/**
+ * When a step goes out, for a visit that closed at `closedAt`.
+ *
+ * Whole local days after the visit's own local day, at the branch's send time —
+ * the rule the single request has always used, so a tenant configured before
+ * this change gets the same instant after it. A customer who left at 23:30 on
+ * the 1st in Kolkata is asked on the 2nd, not on the 1st because the server
+ * runs in UTC.
+ */
+export function afterVisitStepDueAt(
+  closedAt: Date,
+  timezone: string | null | undefined,
+  step: AfterVisitStep,
+): Date {
+  const tz = resolveTz(timezone);
+  const days = Math.floor(step.delayHours / HOURS_PER_DAY);
+  const day = new Date(businessDate(closedAt, tz).getTime() + days * DAY_MS);
+  return instantFromLocalTime(day, parseHHMM(step.sendTimeLocal), tz);
+}
+
+/** Minutes from the visit's local midnight to when a step goes out. */
+function stepOffsetMinutes(step: AfterVisitStep): number {
+  return (
+    Math.floor(step.delayHours / HOURS_PER_DAY) * HOURS_PER_DAY * 60 + parseHHMM(step.sendTimeLocal)
+  );
+}
+
+/**
+ * Does the second request actually land after the first?
+ *
+ * Compared as offsets rather than hours because the delay chooses the day and
+ * `sendTimeLocal` the hour: 30 hours at 09:00 lands BEFORE 24 hours at 11:00,
+ * since both fall on the day after the visit and the clock then decides. A
+ * chaser that arrives before the thing it chases is the one arrangement no
+ * tenant means, and it is easy to produce by accident.
+ */
+export function afterVisitStepsAreOrdered(steps: [AfterVisitStep, AfterVisitStep]): boolean {
+  if (!steps[1].enabled) return true;
+  return stepOffsetMinutes(steps[1]) > stepOffsetMinutes(steps[0]);
+}
+
+/**
+ * The second request, when there is one to send.
+ *
+ * Null when the whole automation is off, when the step is off, or when it has
+ * no template. The second request deliberately has NO staff-task fallback: the
+ * first one already raises a task when WhatsApp cannot carry it, and two tasks
+ * about one visit is work nobody asked for.
+ */
+export function secondAskStep(policy: AfterVisitPolicy): AfterVisitStep | null {
+  const step = policy.steps[1];
+  if (!policy.enabled || !step.enabled || !step.templateName) return null;
+  return step;
+}
+
+/** Why the second request did or did not go out. */
+export type SecondAskOutcome =
+  | 'send'
+  | 'not_configured'
+  | 'not_due'
+  | 'already_sent'
+  | 'already_answered'
+  | 'already_replied'
+  | 'first_never_arrived'
+  | 'not_contactable';
+
+/** The same outcomes in words a manager can act on. Product words, not column names. */
+export const SECOND_ASK_REASONS: Record<SecondAskOutcome, string> = {
+  send: 'Due now.',
+  not_configured: 'No second feedback request is set up.',
+  not_due: 'The second request is not due yet.',
+  already_sent: 'The second request has already gone out.',
+  already_answered: 'They had already answered.',
+  already_replied: 'They had already written back, so a person is talking to them.',
+  first_never_arrived: 'The first request never reached them.',
+  not_contactable: 'They asked not to be contacted.',
+};
+
+/** Everything the decision below is allowed to depend on. */
+export interface SecondAskFacts {
+  /** A second step exists, is on, and has a template — `secondAskStep` decides this. */
+  configured: boolean;
+  /** The request's own status, as FeedbackRequest stores it. */
+  status?: string | null;
+  /** Stamped by the outbox when the FIRST request actually left. */
+  sentAt?: Date | null;
+  reminderDueAt?: Date | null;
+  reminderSentAt?: Date | null;
+  /** The customer wrote back on WhatsApp. NOT a form submission. */
+  repliedAt?: Date | null;
+  respondedAt?: Date | null;
+  rating?: number | null;
+  /** True when an NpsResponse row is matched to this request. */
+  hasMatchedResponse?: boolean;
+  /** Set when the first request was handed to a colleague instead of WhatsApp. */
+  handedToStaffTaskId?: string | null;
+  /** False when they said STOP, or the customer record was archived. */
+  contactable: boolean;
+}
+
+/**
+ * WHETHER THE SECOND REQUEST GOES OUT.
+ *
+ * The default is not to send. A second nag to somebody who already answered is
+ * worse than no second message at all: the first one was a courtesy, the second
+ * one tells them nobody read what they wrote.
+ *
+ * Highest precedence first, and every one of these is a deliberate stop:
+ *
+ *  1. already_sent — the only guard about us rather than them. The sweep claims
+ *     the row conditionally as well; this is belt and braces.
+ *  2. already_answered — they filled the form, or a rating is on the row. The
+ *     request is finished, whatever the clock says.
+ *  3. already_replied — they wrote back on WhatsApp WITHOUT filling the form.
+ *     This codebase keeps those two facts apart on purpose (see nps-stage.ts)
+ *     and so does this: a reply means a colleague is in a conversation with
+ *     this customer, and a scheduled chaser landing in the middle of it is the
+ *     software talking over a person.
+ *  4. first_never_arrived — the first request was cancelled, was handed to a
+ *     colleague to make by phone, or has simply not gone yet. A message reading
+ *     "following up on my earlier message" when there was no earlier message is
+ *     worse than silence; worse still, it would be the FIRST WhatsApp this
+ *     customer got, sent at the second step's delay on the second step's
+ *     template, which is not what anybody configured.
+ *  5. not_contactable — the outbox refuses this too, but stopping here means
+ *     the row is never even claimed.
+ *  6. not_due — simply early.
+ */
+export function secondAskOutcome(facts: SecondAskFacts, now: Date = new Date()): SecondAskOutcome {
+  if (!facts.configured) return 'not_configured';
+  if (facts.reminderSentAt) return 'already_sent';
+  if (
+    facts.respondedAt ||
+    // Not `!== null`: the field is optional, and an absent rating must not read
+    // as an answer.
+    typeof facts.rating === 'number' ||
+    facts.hasMatchedResponse ||
+    facts.status === 'responded'
+  ) {
+    return 'already_answered';
+  }
+  if (facts.repliedAt) return 'already_replied';
+  const firstArrived =
+    Boolean(facts.sentAt) &&
+    !facts.handedToStaffTaskId &&
+    facts.status !== 'cancelled' &&
+    facts.status !== 'expired';
+  if (!firstArrived) return 'first_never_arrived';
+  if (!facts.contactable) return 'not_contactable';
+  if (!facts.reminderDueAt || facts.reminderDueAt > now) return 'not_due';
+  return 'send';
 }
 
 const DEFAULT_POSITIVE = 4;
@@ -146,8 +522,9 @@ export class FeedbackService {
       select: { settings: true },
     });
     const s = jsonObject(org?.settings);
-    // Collection switched off switches the automatic ask off with it.
-    if (s[SETTINGS.enabled] === false) return { ...readAfterVisit(s[SETTINGS.afterVisit]), enabled: false };
+    // Collection switched off switches the automatic ask off with it — both
+    // steps, since each step's switch only says whether it would go at all.
+    if (s[SETTINGS.enabled] === false) return offPolicy(readAfterVisit(s[SETTINGS.afterVisit]));
     return readAfterVisit(s[SETTINGS.afterVisit]);
   }
 
@@ -158,7 +535,7 @@ export class FeedbackService {
       positiveThreshold?: number;
       escalateAtOrBelow?: number;
       reviewLinks?: Record<string, string>;
-      afterVisit?: Partial<AfterVisitPolicy>;
+      afterVisit?: AfterVisitPolicyInput;
     },
   ) {
     this.assertManager(user);
@@ -194,12 +571,15 @@ export class FeedbackService {
       }
     }
 
-    // Only the fields that were sent: a validated DTO carries the rest as
-    // `undefined`, and spreading those would switch the policy off.
-    const sent = Object.fromEntries(
-      Object.entries(input.afterVisit ?? {}).filter(([, v]) => v !== undefined),
-    );
-    const afterVisit = readAfterVisit({ ...current.afterVisit, ...sent });
+    const afterVisit = mergeAfterVisit(current.afterVisit, input.afterVisit ?? {});
+    if (!afterVisitStepsAreOrdered(afterVisit.steps)) {
+      // A chaser that arrives before the request it chases is the one
+      // arrangement no tenant means, and it is easy to produce by accident:
+      // 24 hours at 18:00 lands after 48 hours at 09:00.
+      throw new BadRequestException(
+        'The second feedback request must go out after the first one.',
+      );
+    }
     // Enabling without a template is allowed: each ask then becomes a task for
     // the person who served the customer, and says why.
     // Under the settings row lock: several unrelated features share this column.
@@ -209,14 +589,17 @@ export class FeedbackService {
       [SETTINGS.positiveThreshold]: positive,
       [SETTINGS.escalateAtOrBelow]: escalate,
       [SETTINGS.reviewLinkByStore]: links,
-      [SETTINGS.afterVisit]: afterVisit,
+      // Written in the stored shape, not as the read shape: `steps` is derived
+      // from the keys below, and storing both would leave two answers to "when
+      // does the first request go out" with nothing to say which one wins.
+      [SETTINGS.afterVisit]: writeAfterVisit(afterVisit),
     }));
 
     await this.audit.record(user, {
       action: 'feedback.settings_updated',
       entityType: 'Organisation',
       entityId: user.organisationId,
-      summary: `Feedback settings updated — happy at ${positive}+, escalate at ${escalate} or below; after-visit ask ${afterVisit.enabled ? `on, ${afterVisit.delayDays} day(s) later at ${afterVisit.sendTimeLocal}` : 'off'}.`,
+      summary: `Feedback settings updated — happy at ${positive}+, escalate at ${escalate} or below; after-visit ask ${describeAfterVisit(afterVisit)}.`,
     });
 
     return this.settings(user);

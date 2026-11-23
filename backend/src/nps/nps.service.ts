@@ -1,7 +1,14 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 
 import { AuthUser } from '../common/auth-user';
+import { exportFieldWidth, readExportFormat } from '../common/export-formats';
+import {
+  addExportAboutSheet,
+  rangeFilename,
+  rangeWhere,
+  resolveExportRange,
+} from '../common/export-range';
 import { PrismaService } from '../prisma/prisma.service';
 import { StoreScopeService } from '../common/store-scope.service';
 import { NPS_STAGE_LABELS, NpsStage, npsReplyState, npsStage } from './nps-stage';
@@ -12,6 +19,13 @@ import {
   npsImportKey,
   parseRecommendScore,
 } from './nps-match';
+import {
+  NpsSheetNames,
+  SkippedRow,
+  mapFollowupRows,
+  mapResponseRows,
+  readNpsUpload,
+} from './nps-sheet';
 
 /** One row of the client's NPS Responses sheet, as read by a connector. */
 export interface NpsResponseRow {
@@ -38,6 +52,30 @@ export interface NpsFollowupRow {
   response?: unknown;
 }
 
+/** What one uploaded sheet did, in the terms the screen reports it. */
+export interface NpsSheetImportSummary {
+  /** The tab it came from, as the workbook spells it. */
+  sheet: string;
+  received: number;
+  created: number;
+  updated: number;
+  matched: number;
+  ambiguous: number;
+  unmatched: number;
+  /** Rows that could not become records, with the reason for each. */
+  skipped: SkippedRow[];
+  /** Columns no question claimed — a renamed header shows up here first. */
+  ignoredColumns: string[];
+}
+
+export interface NpsImportResult {
+  file: string | null;
+  /** Every tab in the uploaded workbook, so the caller can see what was skipped. */
+  sheetNames: string[];
+  responses: NpsSheetImportSummary | null;
+  followups: NpsSheetImportSummary | null;
+}
+
 /**
  * The ask behind a visit, fetched separately from the visit itself because
  * `FeedbackRequest.checkInId` carries no foreign key — see `updates()`.
@@ -55,6 +93,12 @@ interface NpsAsk {
   deliveryNote: string | null;
   dispatchAttempts: number;
 }
+
+/** An import summary as one log-safe phrase. */
+const summarise = (s: NpsSheetImportSummary | null): string =>
+  s
+    ? `${s.received} rows (${s.created} new, ${s.updated} updated, ${s.matched} matched, ${s.ambiguous} ambiguous, ${s.unmatched} unmatched, ${s.skipped.length} skipped)`
+    : 'no sheet';
 
 const text = (v: unknown): string | null => {
   if (v == null) return null;
@@ -254,6 +298,66 @@ export class NpsService {
   // =================================================================== import
 
   /**
+   * The client's own export, uploaded from the NPS screen.
+   *
+   * This is the only route data has into NPS. Everything downstream of it —
+   * the model, the matcher, the two screens, the Excel export — was built and
+   * then sat empty, because nothing called the importers: production held 0
+   * responses and 0 follow-ups, so the module could not be tested at all.
+   *
+   * Both tabs in one upload, because that is how the file arrives. A workbook
+   * holding only one of them is imported on its own rather than refused: she
+   * sends whichever sheet she has updated.
+   */
+  async importUpload(
+    user: AuthUser,
+    file: { buffer?: Buffer; originalname?: string } | undefined,
+    names: NpsSheetNames = {},
+  ): Promise<NpsImportResult> {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('No file uploaded. Attach the NPS sheet as `file`.');
+    }
+    const tables = await readNpsUpload(file.buffer, file.originalname, names);
+    /*
+     * Sheet timestamps carry no offset, so they are read as the shop's own wall
+     * clock — see `parseNpsTimestamp`. The tenant's branches are all in one
+     * zone today; when that stops being true the branch's own timezone belongs
+     * here, not a second guess at the sheet.
+     */
+    const responseRows = tables.responses ? mapResponseRows(tables.responses) : null;
+    const followupRows = tables.followups ? mapFollowupRows(tables.followups) : null;
+
+    let responses: NpsSheetImportSummary | null = null;
+    if (tables.responses && responseRows) {
+      const counts = await this.importResponses(user.organisationId, responseRows.rows);
+      responses = {
+        sheet: tables.responses.name,
+        ...counts,
+        skipped: responseRows.skipped,
+        ignoredColumns: responseRows.ignoredColumns,
+      };
+    }
+
+    let followups: NpsSheetImportSummary | null = null;
+    if (tables.followups && followupRows) {
+      const counts = await this.importFollowups(user.organisationId, followupRows.rows);
+      followups = {
+        sheet: tables.followups.name,
+        ...counts,
+        skipped: followupRows.skipped,
+        ignoredColumns: followupRows.ignoredColumns,
+      };
+    }
+
+    // Counts only: an NPS row is a named customer's opinion of the shop, and a
+    // log line is the last place that should hold it.
+    this.logger.log(
+      `NPS import by ${user.id}: responses ${summarise(responses)}, follow-ups ${summarise(followups)}`,
+    );
+    return { file: file.originalname ?? null, sheetNames: tables.sheetNames, responses, followups };
+  }
+
+  /**
    * Ingest submissions.
    *
    * Historical rows are imported WITHOUT messaging anybody: this writes
@@ -312,7 +416,10 @@ export class NpsService {
   }
 
   async importFollowups(organisationId: string, rows: NpsFollowupRow[]) {
-    const summary = { received: rows.length, created: 0, updated: 0, matched: 0 };
+    // Ambiguous and unmatched are counted as well as matched, so a follow-up
+    // sheet reports in the same three terms as the responses one: "40 of 50
+    // reached nobody" is the number the screen exists to show.
+    const summary = { received: rows.length, created: 0, updated: 0, matched: 0, ambiguous: 0, unmatched: 0 };
     for (const row of rows) {
       const phoneE164 = normaliseNpsPhone(row.number);
       const importKey = npsImportKey(organisationId, row.submittedAt, phoneE164, 'followup');
@@ -338,7 +445,7 @@ export class NpsService {
         await this.prisma.npsFollowup.create({ data: { ...data, importKey } });
         summary.created++;
       }
-      if (match.state === 'matched') summary.matched++;
+      summary[match.state === 'matched' ? 'matched' : match.state === 'ambiguous' ? 'ambiguous' : 'unmatched']++;
     }
     return summary;
   }
@@ -386,29 +493,73 @@ export class NpsService {
    * The whole authorised set, not the visible page: an export that silently
    * stopped at 100 rows would be reconciled against the client's sheet and
    * quietly disagree with it.
+   *
+   * ## The range, and which column it applies to
+   *
+   * Each of the three sheets is dated by the thing that sheet is ABOUT, which is
+   * not the same column:
+   *
+   * - **NPS Updates** by the visit's `timeIn`. A visit is the unit; when we got
+   *   round to asking about it is our business, not the client's.
+   * - **NPS Responses** by `submittedAt`. The customer's own submission time, as
+   *   her Google Form records it — `createdAt` is when the import ran, so a
+   *   back-filled sheet would file three months of answers under one day.
+   * - **Followup answers** by `submittedAt`, for the same reason.
+   *
+   * Neither bound means all time, which is what the client downloads today.
+   *
+   * ## The columns
+   *
+   * The Responses sheet is laid out from the tenant's configured format (see
+   * `common/export-formats.ts`), defaulting to the client's own NPS Responses
+   * tab. Updates and Followup answers keep their fixed shape: neither is a sheet
+   * she maintains by hand, so there is nothing for a format to line up with.
    */
-  async exportXlsx(user: AuthUser, opts: { storeId?: string } = {}) {
-    const { rows } = await this.updates(user, { storeId: opts.storeId, take: 500 });
+  async exportXlsx(user: AuthUser, opts: { storeId?: string; from?: string; to?: string } = {}) {
+    const range = resolveExportRange(opts.from, opts.to);
+    /*
+     * `updates()` takes an INCLUSIVE upper bound (`lte` on `timeIn`), and the
+     * resolved range's is exclusive. Handing it straight over would pull in a
+     * visit stamped exactly midnight on the day after the range — one extra row,
+     * on the one boundary somebody reconciles.
+     */
+    const page = {
+      storeId: opts.storeId,
+      from: range.from,
+      to: range.to ? new Date(range.to.getTime() - 1) : undefined,
+    };
+    const { rows } = await this.updates(user, { ...page, take: 500 });
     const all = [...rows];
     let skip = rows.length;
-    const total = (await this.updates(user, { storeId: opts.storeId, take: 1 })).total;
+    const total = (await this.updates(user, { ...page, take: 1 })).total;
     while (all.length < total && skip < 20000) {
-      const page = await this.updates(user, { storeId: opts.storeId, take: 500, skip });
-      if (!page.rows.length) break;
-      all.push(...page.rows);
+      const next = await this.updates(user, { ...page, take: 500, skip });
+      if (!next.rows.length) break;
+      all.push(...next.rows);
       skip += 500;
     }
 
+    const submitted = rangeWhere('submittedAt', range);
     const responses = await this.prisma.npsResponse.findMany({
-      where: { organisationId: user.organisationId },
+      where: { organisationId: user.organisationId, ...submitted },
       orderBy: { submittedAt: 'desc' },
       take: 20000,
+      include: {
+        party: { select: { name: true } },
+        checkIn: { select: { timeIn: true, store: { select: { name: true } } } },
+      },
     });
     const followups = await this.prisma.npsFollowup.findMany({
-      where: { organisationId: user.organisationId },
+      where: { organisationId: user.organisationId, ...submitted },
       orderBy: { submittedAt: 'desc' },
       take: 20000,
     });
+
+    const org = await this.prisma.organisation.findUnique({
+      where: { id: user.organisationId },
+      select: { settings: true },
+    });
+    const responseFormat = readExportFormat(org?.settings, 'nps');
 
     const { Workbook } = await import('exceljs');
     const wb = new Workbook();
@@ -448,24 +599,37 @@ export class NpsService {
     }
 
     const rs = wb.addWorksheet('NPS Responses');
-    rs.columns = [
-      { header: 'Timestamp', key: 'submittedAt', width: 18 },
-      { header: 'Name', key: 'rawName', width: 22 },
-      { header: 'Number', key: 'rawNumber', width: 15 },
-      { header: 'Is this your first purchase with Nibhana?', key: 'firstPurchase', width: 30 },
-      { header: 'How likely are you to recommend Nibhana to your friends and family?', key: 'recommendAnswer', width: 34 },
-      { header: 'What was the purpose of your visit?', key: 'visitPurpose', width: 30 },
-      { header: 'What is the one thing you liked about our products and services?', key: 'likedMost', width: 34 },
-      { header: 'What is the one thing we could improve to serve you better next time?', key: 'couldImprove', width: 34 },
-      { header: "Was there any product you were searching for but didn't find in our store?", key: 'notFound', width: 34 },
-      { header: 'How did you come to know about us?', key: 'heardAboutUs', width: 28 },
-      { header: 'Do you follow our brand on social media?', key: 'followsSocial', width: 28 },
-      { header: 'Kindly share your concerns or suggestions, if any', key: 'concerns', width: 34 },
-      { header: 'Match', key: 'matchState', width: 12 },
-      { header: 'Match note', key: 'matchNote', width: 40 },
-    ];
+    rs.columns = responseFormat.map((c) => ({
+      header: c.header,
+      key: c.field,
+      width: exportFieldWidth('nps', c.field),
+    }));
     rs.getRow(1).font = { bold: true };
-    for (const r of responses) rs.addRow({ ...r, submittedAt: iso(r.submittedAt) });
+    for (const r of responses) {
+      const row: Record<string, unknown> = {
+        submittedAt: iso(r.submittedAt),
+        rawName: r.rawName ?? '',
+        rawNumber: r.rawNumber ?? '',
+        firstPurchase: r.firstPurchase ?? '',
+        recommendAnswer: r.recommendAnswer ?? '',
+        visitPurpose: r.visitPurpose ?? '',
+        likedMost: r.likedMost ?? '',
+        couldImprove: r.couldImprove ?? '',
+        notFound: r.notFound ?? '',
+        heardAboutUs: r.heardAboutUs ?? '',
+        followsSocial: r.followsSocial ?? '',
+        concerns: r.concerns ?? '',
+        // Blank, not 0, when the answer never read as a number: a zero here is a
+        // detractor, and inventing one would drag the average down.
+        score: r.score ?? '',
+        matchState: r.matchState,
+        matchNote: r.matchNote ?? '',
+        customer: r.party?.name ?? '',
+        store: r.checkIn?.store?.name ?? '',
+        visitAt: iso(r.checkIn?.timeIn),
+      };
+      rs.addRow(Object.fromEntries(responseFormat.map((c) => [c.field, row[c.field] ?? ''])));
+    }
 
     const fs = wb.addWorksheet('Followup answers');
     fs.columns = [
@@ -481,7 +645,36 @@ export class NpsService {
       fs.addRow({ ...f, submittedAt: iso(f.submittedAt), followupDate: iso(f.followupDate) });
     }
 
+    addExportAboutSheet(wb, {
+      what: 'NPS',
+      // Three sheets, three columns — stated because a reader comparing the tabs
+      // will otherwise assume one range was applied to one column.
+      rangedOn: 'Visits by the day of the visit; responses by the day they were submitted',
+      from: opts.from,
+      to: opts.to,
+      rows: all.length,
+      notes: [
+        ['Responses', String(responses.length)],
+        ['Followup answers', String(followups.length)],
+      ],
+    });
+
     const buffer = Buffer.from(await wb.xlsx.writeBuffer());
-    return { buffer, rows: all.length, responses: responses.length, followups: followups.length };
+    return {
+      buffer,
+      /*
+       * The name says what is inside. Two of these on a desk with the same name
+       * and different row counts is the next question we get asked — so a ranged
+       * download carries its range, and an all-time one keeps the plain
+       * day-stamped name it has always had.
+       */
+      filename:
+        opts.from || opts.to
+          ? rangeFilename('nps', opts.from, opts.to)
+          : `nps-${new Date().toISOString().slice(0, 10)}.xlsx`,
+      rows: all.length,
+      responses: responses.length,
+      followups: followups.length,
+    };
   }
 }

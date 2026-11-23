@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
+import { useNotificationStream } from "@/lib/queries/notifications";
 import { LEAD_STAGES, type LeadStage } from "@/lib/mock/crm";
 import type { PartyAttribution } from "@/lib/queries/crm-ai";
 
@@ -687,25 +688,93 @@ export function useStartWhatsAppThread() {
   return useMutation({
     mutationFn: async (input: {
       to: string;
+      /**
+       * Who this number belongs to. Optional, and it only ever NAMES A NEW
+       * customer — see below for why it can never rename an existing one.
+       */
+      name?: string;
       purpose?: "service" | "marketing";
       body?: string;
       templateName?: string;
       languageCode?: string;
       templateComponents?: unknown[];
-    }) =>
-      (
-        await api.post<{
-          conversationId: string;
-          messageId: string;
-          status: string;
-          deduplicated: boolean;
-          policy?: { mode?: string };
-        }>("/omnichannel/messages", { purpose: "service", ...input })
-      ).data,
+    }): Promise<StartedThread> => {
+      const { name, ...send } = input;
+      const typed = name?.trim();
+
+      /*
+       * THE CUSTOMER RECORD IS CREATED FIRST, AND THAT ORDER IS LOAD-BEARING.
+       *
+       * `POST /omnichannel/messages` decides whose thread this is by looking
+       * the number up in ContactPoint, and leaves an unknown number anonymous
+       * rather than inventing a customer for it. So a record created after the
+       * send would arrive too late and the thread would stay headed by the bare
+       * number — which is the whole complaint this field answers. Created
+       * before, the send finds it.
+       *
+       * `createIfMissing` is what makes the name stick, and `resolve` is what
+       * makes it safe: a number already on file comes back `matched` and its
+       * customer's name is NOT touched. That is the same rule the inbound path
+       * follows with a WhatsApp profile name (`resolveInbound` names a record
+       * it creates and never one it matched) — a name a colleague took the
+       * trouble to record outranks one typed into a compose box.
+       *
+       * No `storeId`: the branch in the top bar may be head office, an import
+       * holding area or a closed branch, all of which the server refuses as a
+       * customer's home — and refusing to message somebody because of the
+       * branch selector would be a worse bug than the one being fixed. The
+       * thread's own branch still comes from the routing rules.
+       */
+      const customer = typed
+        ? (
+            await api.post<ResolvedCustomer>("/crm/customers/resolve", {
+              kind: "whatsapp",
+              value: input.to,
+              name: typed,
+              createIfMissing: true,
+            })
+          ).data
+        : undefined;
+
+      const { data } = await api.post<Omit<StartedThread, "customer">>(
+        "/omnichannel/messages",
+        { purpose: "service", ...send },
+      );
+      return { ...data, customer };
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["crm", "conversations"] });
+      // The thread it just created is headed by a customer the directory and
+      // Customer 360 have not seen yet.
+      void qc.invalidateQueries({ queryKey: ["parties"] });
     },
   });
+}
+
+/** What `POST /crm/customers/resolve` says it did. */
+export interface ResolvedCustomer {
+  partyId: string | null;
+  /**
+   * `created` — this name is now the customer's name. `matched` — the number
+   * was already on file and the name it already had was KEPT. `unresolved` —
+   * nothing was created and `reason` says why.
+   */
+  outcome: "matched" | "created" | "unresolved";
+  contactPointId: string | null;
+  reason?: string;
+}
+
+export interface StartedThread {
+  conversationId: string;
+  messageId: string;
+  status: string;
+  deduplicated: boolean;
+  policy?: { mode?: string };
+  /**
+   * What happened to the customer record. Absent when no name was given,
+   * because then no record was touched.
+   */
+  customer?: ResolvedCustomer;
 }
 
 /**
@@ -729,6 +798,75 @@ export function useUpdateConversation(conversationId: string) {
       void qc.invalidateQueries({ queryKey: ["crm", "conversation", conversationId] });
       void qc.invalidateQueries({ queryKey: ["crm", "conversations"] });
     },
+  });
+}
+
+/* ------------------------------------------------- The inbox, kept current */
+
+/**
+ * What a pushed notification means for the inbox.
+ *
+ * Read off `entityType`, NOT off `kind`. Every push that concerns a thread
+ * stamps `entityType: 'Conversation'` with its id — lead routing
+ * (`lead_assigned`), the bot handing a customer to a person (`reminder`) and an
+ * SLA breach (`reminder`) all do — whereas `kind` is shared with events that
+ * have nothing to do with this screen. A leave request or a discount approval
+ * must not refetch the inbox: a manager whose bell is busy would otherwise be
+ * refetching the conversation list all day for events that cannot change it.
+ *
+ * Exported for its own sake because it is the rule, and a rule that is wrong in
+ * either direction is invisible — too narrow and the inbox goes stale again,
+ * too wide and every bell in the building becomes a refetch.
+ */
+export function inboxRefreshTarget(n: {
+  kind: string;
+  entityType: string | null;
+  entityId: string | null;
+}): { list: boolean; conversationId: string | null } {
+  // `lead_assigned` is kept as a second route in because its whole subject IS a
+  // conversation; if a future emit forgets the entity stamp, the list still
+  // refreshes even though the open thread cannot be pinpointed.
+  if (n.entityType === "Conversation") {
+    return { list: true, conversationId: n.entityId };
+  }
+  if (n.kind === "lead_assigned") return { list: true, conversationId: null };
+  return { list: false, conversationId: null };
+}
+
+/**
+ * New threads and new messages appear without a refresh.
+ *
+ * Rides the notification stream that already exists rather than opening
+ * anything of its own, and deliberately adds no polling. That stream holds ONE
+ * connection per browser — six tabs each holding their own used up all six of
+ * HTTP/1.1's connections to the origin and left actual page loads queued, which
+ * is why the tabs elect a leader — so a second stream here would reintroduce
+ * exactly that. `useNotificationStream` fires its callback in the follower tabs
+ * too, from the leader's rebroadcast, so this works in every tab whether or not
+ * it is the one holding the socket.
+ *
+ * Invalidation rather than patching the cache: the pushed row says only that
+ * something changed, and the list is the authority on what it now looks like.
+ *
+ * KNOWN GAP, so nobody reads more into this than it does: an ordinary reply
+ * from a customer emits no notification at all unless it causes a handoff, so
+ * the thread it landed in is still refreshed by the open thread's own poll
+ * rather than by the push. Closing that needs a server-side event per inbound
+ * message.
+ */
+export function useLiveInbox() {
+  const qc = useQueryClient();
+  useNotificationStream((n) => {
+    const target = inboxRefreshTarget(n);
+    if (!target.list) return;
+    // Matches the lists AND the queue counts, which share this prefix — a badge
+    // that disagrees with the list under it is the bug that pairs them.
+    void qc.invalidateQueries({ queryKey: ["crm", "conversations"] });
+    if (target.conversationId) {
+      void qc.invalidateQueries({
+        queryKey: ["crm", "conversation", target.conversationId],
+      });
+    }
   });
 }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft,
@@ -50,6 +50,7 @@ import {
   useAudiencePreview,
   useCreateCampaign,
   useSubmitCampaign,
+  useTemplateOverlap,
   type CampaignVariable,
   type CampaignVariableSource,
   type SegmentCondition,
@@ -126,8 +127,40 @@ export default function NewCampaignPage() {
   const preview = useAudiencePreview();
   const create = useCreateCampaign();
   const submit = useSubmitCampaign();
+  const overlap = useTemplateOverlap();
 
   const definition: SegmentDefinition = { match, conditions };
+
+  /*
+   * "THESE MANY PEOPLE HAVE ALREADY RECEIVED THIS TEMPLATE."
+   *
+   * The client's own request, and the only place it can honestly be asked is
+   * here: the audience and the template are both known, and nothing has been
+   * created yet. `excludeAlreadySent` is her answer, and it is sent to the
+   * server as a decision rather than as a list of people — the people are
+   * resolved again from the recipient history when the broadcast expands, so a
+   * broadcast scheduled for Friday excludes who it should on Friday.
+   */
+  const [excludeAlreadySent, setExcludeAlreadySent] = useState(false);
+  const overlapKey =
+    step === "Review" && templateName.trim()
+      ? JSON.stringify([match, conditions, [...storeIds].sort(), templateName.trim()])
+      : null;
+  const [checkedKey, setCheckedKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!overlapKey || overlapKey === checkedKey) return;
+    setCheckedKey(overlapKey);
+    // The answer belongs to this audience and this template. Editing either
+    // makes it meaningless, so the choice is reset together with the count
+    // rather than carried silently onto a different send.
+    setExcludeAlreadySent(false);
+    overlap.mutate({
+      definition: { match, conditions },
+      ...(storeIds.length ? { storeIds } : {}),
+      templateName: templateName.trim(),
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the key IS the dependency; the rules object is rebuilt every render
+  }, [overlapKey, checkedKey]);
 
   const index = STEPS.indexOf(step);
   const go = (delta: number) => setStep(STEPS[Math.min(Math.max(index + delta, 0), STEPS.length - 1)]);
@@ -185,6 +218,9 @@ export default function NewCampaignPage() {
         ...(variables.length ? { templateVariables: variables } : {}),
         ...(storeIds.length ? { storeIds } : {}),
         ...(scheduledAt ? { scheduledAt: new Date(scheduledAt).toISOString() } : {}),
+        // Only when it was actually chosen, and only against the template the
+        // count was taken for.
+        ...(excludeAlreadySent ? { excludeAlreadyReceivedTemplate: true } : {}),
       },
       {
         onSuccess: (campaign) => {
@@ -597,12 +633,27 @@ export default function NewCampaignPage() {
                  * mapping left over from another template would fill the wrong
                  * slots with the right-looking values.
                  */
+                /*
+                 * The TEMPLATE'S OWN ANSWER FIRST, where its author gave one.
+                 *
+                 * This used to assume the first name for every slot on every
+                 * template, so somebody whose {{1}} is the branch had to correct
+                 * it on each send — and the client's complaint was the opposite
+                 * end of the same thing: nowhere to say it once. A template whose
+                 * author left the choice to each broadcast still lands here on
+                 * first name, which is what this screen has always done.
+                 */
                 setVariables(
-                  Array.from({ length: picked?.variableCount ?? 0 }, (_, i) => ({
-                    slot: i + 1,
-                    source: "customer_first_name" as const,
-                    fallback: "there",
-                  })),
+                  Array.from({ length: picked?.variableCount ?? 0 }, (_, i) => {
+                    const slot = i + 1;
+                    const stored = picked?.variableDefaults?.find((d) => d.slot === slot);
+                    if (!stored) {
+                      return { slot, source: "customer_first_name" as const, fallback: "there" };
+                    }
+                    return stored.source === "fixed"
+                      ? { slot, source: "fixed" as const, text: stored.text ?? "", fallback: "" }
+                      : { slot, source: stored.source, fallback: stored.fallback || "there" };
+                  }),
                 );
               }}
             />
@@ -676,6 +727,63 @@ export default function NewCampaignPage() {
                   : "Every branch you can see"
               }
             />
+            {/*
+              "These many people have already received this template, do you
+              want to send again? If no, exclude them." Asked here because this
+              is the first moment both halves are known, and the last moment
+              before anything is created.
+            */}
+            {overlap.isPending ? (
+              <p className="pt-2 text-xs text-muted-foreground">
+                Checking who has already had this template…
+              </p>
+            ) : overlap.data && overlap.data.alreadyReceived > 0 ? (
+              <div className="space-y-3 rounded-md border border-border bg-muted/40 p-3 pt-3 text-xs">
+                <div className="flex gap-2">
+                  <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <p>
+                    <span className="font-medium tabular-nums">
+                      {overlap.data.alreadyReceived.toLocaleString()}
+                      {overlap.data.historyCapped ? " or more" : ""}
+                    </span>{" "}
+                    of the {overlap.data.audience.toLocaleString()} people this reaches have already
+                    had <span className="font-medium">{overlap.data.templateName}</span> from you.
+                    Send it to them again, or leave them out?
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {/* Two plain buttons rather than a tick box, because this is
+                      a question with two answers and neither is the safe
+                      default: sending again is sometimes exactly right. */}
+                  <Button
+                    size="sm"
+                    variant={excludeAlreadySent ? "outline" : "default"}
+                    onClick={() => setExcludeAlreadySent(false)}
+                  >
+                    Send to everyone
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={excludeAlreadySent ? "default" : "outline"}
+                    onClick={() => setExcludeAlreadySent(true)}
+                  >
+                    Leave those {overlap.data.alreadyReceived.toLocaleString()} out
+                  </Button>
+                </div>
+                <p className="text-muted-foreground">
+                  {excludeAlreadySent
+                    ? "They will be listed on the broadcast as not messaged, with the reason. Who they are is worked out again when the broadcast goes out, so a scheduled send excludes the right people at the time it runs."
+                    : "Everyone who matches will be messaged, including the people who have had this wording before."}
+                </p>
+                {overlap.data.historyCapped ? (
+                  <p className="text-muted-foreground">
+                    Your history with this template is longer than this screen reads in one go, so
+                    the figure is a floor rather than an exact count. The exclusion itself is exact.
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+
             <div className="pt-2">
               <Badge variant="outline">
                 {approvesOwnWork

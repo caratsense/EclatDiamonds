@@ -9,7 +9,10 @@ import {
   CreateSegmentDto,
   ListCampaignsDto,
   ListRecipientsDto,
+  RetryCampaignDto,
   SegmentDefinitionCarrierDto,
+  TagRecipientsDto,
+  TemplateOverlapDto,
   UpdateCampaignDto,
   UpdateSegmentDto,
 } from './dto/campaign.dto';
@@ -97,6 +100,18 @@ export class CampaignsController {
     return this.campaigns.recipients(user, id, query);
   }
 
+  /**
+   * How many of an audience have already had this template.
+   *
+   * Declared before `:id` would ever be consulted for it — a POST to a literal
+   * path cannot collide with `POST /campaigns`, but keeping it beside the other
+   * audience reads is where somebody looks for it.
+   */
+  @Post('template-overlap')
+  templateOverlap(@CurrentUser() user: AuthUser, @Body() body: TemplateOverlapDto) {
+    return this.campaigns.templateOverlap(user, body);
+  }
+
   @Post()
   create(@CurrentUser() user: AuthUser, @Body() body: CreateCampaignDto) {
     return this.campaigns.create(user, body);
@@ -131,8 +146,35 @@ export class CampaignsController {
     return this.campaigns.cancel(user, id, body.reason);
   }
 
+  /**
+   * What a re-send would do, read before it is done.
+   *
+   * A GET of its own rather than a figure the re-send returns: the point is
+   * that the manager sees how many people it will spend, and how many it is
+   * holding back inside Meta's per-recipient cooldown, while she can still
+   * decide not to.
+   */
+  @Get(':id/retry-plan')
+  retryPlan(@CurrentUser() user: AuthUser, @Param('id') id: string) {
+    return this.campaigns.retryPlanFor(user, id);
+  }
+
   @Post(':id/retry')
-  retry(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return this.campaigns.retryFailed(user, id);
+  retry(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: RetryCampaignDto,
+  ) {
+    return this.campaigns.retryFailed(user, id, body);
+  }
+
+  /** Tag the customers behind the ticked recipient rows. */
+  @Post(':id/recipients/tag')
+  tagRecipients(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() body: TagRecipientsDto,
+  ) {
+    return this.campaigns.tagRecipients(user, id, body);
   }
 }

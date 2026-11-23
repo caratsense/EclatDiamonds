@@ -32,6 +32,11 @@ import {
   templateComponentsFrom,
 } from '../omnichannel/template-card';
 import {
+  businessSenderNameFrom,
+  signAsBusiness,
+  stripOutboundSignature,
+} from '../omnichannel/outbound-signature';
+import {
   adCardFrom,
   extractMetaReferral,
   platformFromSourceUrl,
@@ -63,35 +68,6 @@ import { explainDeliveryError } from '../integrations/whatsapp-delivery-errors';
 const HANDLING = ['ai', 'human', 'unassigned'];
 const STATUSES = ['open', 'snoozed', 'closed'];
 
-/**
- * Put the sender's name on a reply typed in the dashboard.
- *
- * ## Why the customer needs it
- *
- * Every reply leaves from ONE business number — the assistant's answers and
- * four different branch managers' answers all arrive in the same chat bubble.
- * Without a name the customer cannot tell whether they are still talking to a
- * machine, and cannot address the person who actually helped them last week.
- *
- * ## Why the name is stored, not added at delivery
- *
- * The signed text is what goes into `Message.body`, so the thread is a record
- * of what the customer actually received. Signing later — at the provider call
- * — would make the dashboard show something the customer never saw, and a
- * transcript that differs from reality is worse than no transcript.
- *
- * ## Why only WhatsApp
- *
- * `*name*` is WhatsApp's bold markup. On a channel that does not parse it the
- * asterisks would be shown literally, so every other channel is left alone
- * until it has a format of its own. Media with no caption is left alone too:
- * there is no text to sign, and a bare name would read as a message.
- */
-function signAsAgent(body: string | null, agentName: string, channel: string): string | null {
-  if (!body || channel !== 'whatsapp') return body;
-  return `*${agentName}*\n${body}`;
-}
-
 /** How long an inbox preview may run before it is cut. */
 const PREVIEW_MAX = 120;
 
@@ -101,10 +77,16 @@ const PREVIEW_MAX = 120;
  * Media with no caption carries no text, so it is described by its kind rather
  * than previewing as a blank row.
  *
- * An agent's stored body still carries the `*Name*` signature `signAsAgent`
+ * An agent's stored body still carries the `*Name*` signature `signAsBusiness`
  * added. The sender travels beside the preview as `authorName`, so the
  * signature is dropped here — without this every staff reply would preview as
- * the sender's own name instead of what they said.
+ * a name instead of what they said.
+ *
+ * BOTH signature shapes are stripped: the business name every reply now carries
+ * and the sender's own name every reply stored before November 2026 carries.
+ * 'Head Office' is a real account name in production, so stripping only the
+ * current shape would turn the preview of those threads into the words "Head
+ * Office" — the very thing the change was made to stop showing people.
  */
 function previewOf(
   m: {
@@ -121,12 +103,12 @@ function previewOf(
    * invitation. The caller resolves this; it is null for an ordinary message.
    */
   templateBody?: string | null,
+  /** What this tenant signs with now. The caller resolves it once per list. */
+  businessName?: string | null,
 ): string {
   let text = m.body?.trim() ?? '';
-  const signature = m.authorUser?.name ? `*${m.authorUser.name}*
-` : null;
-  if (m.authorType === 'agent' && signature && text.startsWith(signature)) {
-    text = text.slice(signature.length).trim();
+  if (m.authorType === 'agent') {
+    text = stripOutboundSignature(text, [businessName, m.authorUser?.name]).trim();
   }
   if (!text) text = templateBody?.trim() ?? '';
   if (!text) {
@@ -538,6 +520,46 @@ export class ConversationsService {
       messageId: message.id,
       at: msg.sentAt ?? new Date(),
     });
+
+    /*
+     * THIS CUSTOMER HAS ANSWERED THE FEEDBACK ASK.
+     *
+     * `FeedbackRequest.repliedAt` was read in four places — the second-ask rule,
+     * two NPS stages and the export — and written in NONE, so the column was
+     * permanently null and every rule resting on it was inert. The visible
+     * consequence: somebody who answered on WhatsApp still got the second ask
+     * a day later, which is exactly the nagging the two-step feature was
+     * written to avoid.
+     *
+     * A reply is any inbound message from that customer, not a form submission:
+     * `respondedAt` is the form, and most people simply reply. Narrow on
+     * purpose — only a request that actually went out, has not been answered,
+     * and has not already been marked. `updateMany` with those conditions is
+     * also the claim, so the second and third messages of a conversation do not
+     * keep rewriting the first reply's timestamp.
+     *
+     * After the commit and swallowing its own errors, for the same reason the
+     * SLA clock above is: a feedback bookkeeping failure must never be why a
+     * customer's message is not stored.
+     */
+    if (conversation.partyId) {
+      try {
+        await this.prisma.feedbackRequest.updateMany({
+          where: {
+            organisationId,
+            partyId: conversation.partyId,
+            sentAt: { not: null },
+            respondedAt: null,
+            repliedAt: null,
+          },
+          data: { repliedAt: msg.sentAt ?? new Date() },
+        });
+      } catch (err) {
+        this.logger.warn(
+          `Could not mark a feedback request as replied to (${err instanceof Error ? err.message : String(err)}).`,
+        );
+      }
+    }
 
     // A later ad pointed somewhere else. Recorded as a ROW, not just a sentence:
     // the original and proposed assignment are operational state somebody has to
@@ -2002,6 +2024,22 @@ export class ConversationsService {
       );
     };
 
+    /*
+     * Resolved once for the whole page, not per row: every preview strips the
+     * same signature, and asking per thread would be one query per line of the
+     * inbox.
+     *
+     * And only when a preview could actually carry one. A signature always
+     * begins the body with `*`, so a page whose newest messages are all inbound
+     * — the usual state of a busy inbox — costs no extra query at all.
+     */
+    const mayCarrySignature = rows.some(
+      (row) => row.messages[0]?.authorType === 'agent' && row.messages[0]?.body?.startsWith('*'),
+    );
+    const senderName = mayCarrySignature
+      ? await this.businessSenderName(user.organisationId)
+      : null;
+
     return rows.map(({ messages, party, ...row }) => ({
       ...row,
       /*
@@ -2036,7 +2074,7 @@ export class ConversationsService {
        */
       lastMessage: messages[0]
         ? {
-            preview: previewOf(messages[0], templateBodyFor(messages[0])),
+            preview: previewOf(messages[0], templateBodyFor(messages[0]), senderName),
             direction: messages[0].direction,
             authorType: messages[0].authorType,
             authorName: messages[0].authorUser?.name ?? null,
@@ -2117,11 +2155,59 @@ export class ConversationsService {
       : [];
     const templateById = new Map(templates.map((t) => [t.id, t]));
 
+    /*
+     * THE BLUE TICKS ON THE CUSTOMER'S PHONE.
+     *
+     * Fire-and-forget on purpose, twice over. Opening a thread is a read and
+     * must not 500 because Meta was briefly unavailable, and it must not wait a
+     * Graph round trip to render either — so the receipt goes out beside the
+     * response. `markThreadRead` returns its own refusals; the `catch` is for
+     * the thing it cannot return, a database error on the way to Graph.
+     *
+     * This is the ONLY place it is called from, and the caller is a signed-in
+     * person opening the conversation. Marking read on webhook arrival would
+     * tick every message the instant it landed, including the ones nobody opens
+     * until the next morning, and the bot answering a thread is not a person
+     * reading it — a tick with nobody behind it is the same deception the
+     * business signature was just removed for.
+     */
+    void this.omnichannel
+      .markThreadRead({ organisationId: user.organisationId, conversationId })
+      .catch((err: unknown) =>
+        this.logger.warn(
+          `read receipt not sent for ${conversationId}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+      );
+
+    // Only when a bubble could actually carry a signature — a signed body always
+    // begins with `*`. A thread of inbound messages costs no extra query.
+    const senderName = rows.some(
+      (row) => row.authorType === 'agent' && row.body?.startsWith('*'),
+    )
+      ? await this.businessSenderName(user.organisationId)
+      : null;
+
     const messages = rows.map(({ payload, ...message }) => {
       const assetId = templateAssetIdFrom(payload);
       const asset = assetId ? templateById.get(assetId) : undefined;
       return {
         ...message,
+        /*
+         * The words, without the signature line the customer's phone needs.
+         *
+         * Stripped HERE rather than in the browser because the dashboard cannot
+         * know which name was prepended: the business signs with its branding
+         * name now and signed with each sender's own name before November 2026,
+         * and both shapes are in every thread. The stored row is untouched — the
+         * transcript is still exactly what was sent — and the sender is still
+         * shown beside the bubble from `authorUser`.
+         */
+        body:
+          message.authorType === 'agent' && message.body
+            ? stripOutboundSignature(message.body, [senderName, message.authorUser?.name])
+            : message.body,
         // The same sentence the broadcast report gives, for the same reason: a
         // colleague looking at a failed message needs to know whether to try
         // again or to stop.
@@ -2284,7 +2370,16 @@ export class ConversationsService {
       organisationId: user.organisationId,
       conversationId,
       authorUserId: user.id,
-      body: signAsAgent(input.body?.trim() ?? null, user.name, conversation.channel),
+      /*
+       * Signed as the BUSINESS, not as the person who typed it. The staff name
+       * stays on the row as `authorUserId` and is shown beside the bubble in
+       * the CRM; it simply stops being something the customer is shown.
+       */
+      body: signAsBusiness(
+        input.body?.trim() ?? null,
+        await this.businessSenderName(user.organisationId),
+        conversation.channel,
+      ),
       mediaUrl: input.mediaUrl ?? null,
       mediaType: input.mediaType ?? null,
       mediaFilename: input.mediaFilename ?? null,
@@ -2416,6 +2511,25 @@ export class ConversationsService {
    */
   async assertCanAccess(user: AuthUser, conversationId: string, recordAuthorised = false) {
     return this.load(user, conversationId, recordAuthorised);
+  }
+
+  /**
+   * The name THIS tenant's outbound messages are signed with.
+   *
+   * Read per call rather than cached: a tenant who corrects their display name
+   * should see the next reply go out under it, and this is one indexed row read
+   * beside the several a reply already does.
+   *
+   * An organisation that cannot be read signs with nothing, which sends the
+   * reply unsigned. A missing branding row must not cost a waiting customer
+   * their answer.
+   */
+  private async businessSenderName(organisationId: string): Promise<string> {
+    const organisation = await this.prisma.organisation.findUnique({
+      where: { id: organisationId },
+      select: { name: true, settings: true },
+    });
+    return businessSenderNameFrom(organisation?.settings, organisation?.name ?? '');
   }
 
   /**

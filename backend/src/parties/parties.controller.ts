@@ -12,6 +12,7 @@ import { PartyArchiveService } from './party-archive.service';
 import { HumansOnly } from '../auth/machine.decorator';
 import { Roles } from '../auth/roles.decorator';
 import { CurrentUser, AuthUser } from '../common/auth-user';
+import { rangeFilename } from '../common/export-range';
 import { StoreHeader } from '../common/store-header.decorator';
 import { parsePagination, DEFAULT_PAGE_SIZE } from '../common/pagination';
 
@@ -28,16 +29,29 @@ export class PartiesController {
     private readonly archiveSvc: PartyArchiveService,
   ) {}
 
-  /** The directory as Excel — same scope as the list, archived rows excluded. */
+  /**
+   * The directory as Excel — same scope as the list, archived rows excluded.
+   *
+   * `from`/`to` are the Excel dialog's range, filtering on the day the customer
+   * was ADDED. That is the only date on a customer that marks an event: birthday
+   * and anniversary recur every year, so a range over either would answer a
+   * different question entirely ("whose birthday falls in November") and answer
+   * it wrongly, since the stored year is their year of birth.
+   *
+   * Both absent is all time, which is what this did before the dialog existed.
+   */
   @Get('export.xlsx')
   @Header('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
   async exportXlsx(
     @CurrentUser() user: AuthUser,
     @Res({ passthrough: true }) res: Response,
     @StoreHeader() store?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
   ) {
-    const { buffer, rows } = await this.parties.exportXlsx(user, store);
-    res.setHeader('Content-Disposition', 'attachment; filename="customers.xlsx"');
+    const { buffer, rows } = await this.parties.exportXlsx(user, store, { from, to });
+    const filename = from || to ? rangeFilename('customers', from, to) : 'customers.xlsx';
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('X-Export-Rows', String(rows));
     return new StreamableFile(buffer);
   }

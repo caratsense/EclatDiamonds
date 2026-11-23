@@ -45,6 +45,17 @@ import { apiErrorMessage } from "@/lib/utils";
  * list, which has two very different causes (nothing written yet, or written
  * and not approved). A second picker here would be a second place for that
  * rule to drift.
+ *
+ * ## Why there is a name field
+ *
+ * Without one (client, 21 Nov: "if there's no name, how can you identify it?")
+ * this door produced a thread headed by a bare number, because
+ * `POST /omnichannel/messages` leaves a number it does not recognise anonymous
+ * rather than inventing a customer for it. The name is optional — somebody who
+ * only has a number can still send — and when it is given it names a NEW
+ * customer record only. A number already on file keeps the name a colleague
+ * recorded for it; see `useStartWhatsAppThread` for where that rule lives and
+ * which inbound path it matches.
  */
 export function StartWhatsAppDialog({
   open,
@@ -61,6 +72,7 @@ export function StartWhatsAppDialog({
   const router = useRouter();
   const start = useStartWhatsAppThread();
   const [to, setTo] = useState(phone ?? "");
+  const [who, setWho] = useState(name ?? "");
   const [picked, setPicked] = useState<PickedTemplate | null>(null);
 
   // Reopening for a different lead must not carry the last one's number.
@@ -68,6 +80,7 @@ export function StartWhatsAppDialog({
   if ((phone ?? "") !== lastPhone) {
     setLastPhone(phone ?? "");
     setTo(phone ?? "");
+    setWho(name ?? "");
     setPicked(null);
   }
 
@@ -76,19 +89,43 @@ export function StartWhatsAppDialog({
   function send() {
     if (!picked) return;
     start.mutate(
-      { to: to.trim(), templateName: picked.name, languageCode: picked.languageCode },
+      {
+        to: to.trim(),
+        name: who.trim() || undefined,
+        templateName: picked.name,
+        languageCode: picked.languageCode,
+      },
       {
         onSuccess: (res) => {
           onOpenChange(false);
           setPicked(null);
+          // The dialog stays mounted, so a name left in the box would be
+          // offered again next time — against whatever number is typed then.
+          setWho("");
           toast.success(
             res.deduplicated
               ? "That message was already queued for this number."
               : "Queued. It appears in the thread as the provider confirms it.",
+            {
+              /*
+               * Said out loud, because it is the one outcome somebody who just
+               * typed a name would otherwise misread: the number was already
+               * on file and the name THEY had for it is what the thread will
+               * be headed by, not the one just typed.
+               */
+              description:
+                res.customer?.outcome === "matched"
+                  ? "That number is already a customer, so the name already on their record was kept."
+                  : res.customer?.outcome === "unresolved"
+                    ? res.customer.reason
+                    : undefined,
+            },
           );
           // Straight into the thread it just created, rather than leaving
-          // somebody to find it in a list of several hundred.
-          router.push(`/conversations?id=${res.conversationId}`);
+          // somebody to find it in a list of several hundred. `thread` is the
+          // parameter the inbox actually reads — this said `id`, which the page
+          // ignores, so it landed on the list with nothing open.
+          router.push(`/conversations?thread=${res.conversationId}`);
         },
         onError: (err) =>
           toast.error(apiErrorMessage(err, "Could not start that conversation.")),
@@ -120,6 +157,21 @@ export function StartWhatsAppDialog({
               placeholder="e.g. 9876543210"
               onChange={(e) => setTo(e.target.value)}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="wa-name">Their name</Label>
+            <Input
+              id="wa-name"
+              value={who}
+              autoComplete="name"
+              placeholder="e.g. Priya Shah"
+              onChange={(e) => setWho(e.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Optional — but without it the thread is headed by the number. A
+              number already on file keeps the name it already has.
+            </p>
           </div>
 
           <div className="space-y-1.5">

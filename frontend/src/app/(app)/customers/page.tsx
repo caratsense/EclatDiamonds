@@ -195,7 +195,11 @@ export default function CustomersPage() {
             ))}
           </select>
         ) : null}
-        <ExcelExportButton path="/parties/export.xlsx" fallbackName="customers.xlsx" />
+        <ExcelExportButton
+          path="/parties/export.xlsx"
+          fallbackName="customers.xlsx"
+          rangedOn="the day the customer was added"
+        />
       </div>
 
       {isError ? (

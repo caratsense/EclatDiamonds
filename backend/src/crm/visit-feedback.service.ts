@@ -3,17 +3,34 @@ import { ConfigService } from '@nestjs/config';
 import { Prisma } from '@prisma/client';
 import { randomBytes } from 'node:crypto';
 
-import { businessDate, instantFromLocalTime, parseHHMM, resolveTz } from '../common/tz.util';
+import { businessDate, resolveTz } from '../common/tz.util';
 import { ChannelAdaptersService } from '../integrations/adapters/channel-adapters.service';
 import { OmnichannelService } from '../omnichannel/omnichannel.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { FeedbackService } from './feedback.service';
+import {
+  type AfterVisitPolicy,
+  SECOND_ASK_REASONS,
+  FeedbackService,
+  afterVisitStepDueAt,
+  secondAskOutcome,
+  secondAskStep,
+} from './feedback.service';
 
 const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
 /** A visit ask whose dispatch keeps throwing is given up on, and says so. */
 const MAX_DISPATCH_ATTEMPTS = 5;
 /** How long the response link stays open after it is due. */
 const RESPONSE_WINDOW_DAYS = 30;
+/**
+ * How long after its hour the second request may still go out.
+ *
+ * A courtesy chaser half a day late is not a chaser any more — it is a message
+ * out of nowhere about a visit that is now three days old. This is also what
+ * bounds the retries: `dispatchAttempts` counts attempts for the FIRST request
+ * only, so the second one is bounded by the clock instead of by a counter.
+ */
+const SECOND_ASK_GRACE_HOURS = 12;
 /**
  * Refusals that mean "do not contact this person", not "WhatsApp is not ready".
  * The first kind cancels the ask outright; handing it to a colleague to make by
@@ -35,6 +52,17 @@ const DO_NOT_CONTACT = new Set(['recipient_opted_out', 'consent_required', 'reci
  * When WhatsApp cannot carry it — no approved template, no public link, a
  * disconnected sender — the ask becomes a task for the person who served them,
  * with the reason, and is never recorded as sent.
+ *
+ * ## Two requests, not one
+ *
+ * The client asked for a second, later one: "there are two templates that will
+ * go. One just after a day a customer visits ... and second would go after 48
+ * hours." Both delays are measured from the visit, each step has its own
+ * template, and the second is planned (`reminderDueAt`) only once the first has
+ * actually left on WhatsApp. `sweepSecondAsk` decides whether it still goes
+ * when its hour comes, and `secondAskOutcome` in feedback.service.ts is that
+ * decision — written as a pure rule, because the cost of getting it wrong is
+ * not an error anybody sees but a customer being nagged after they answered.
  */
 @Injectable()
 export class VisitFeedbackService {
@@ -80,9 +108,10 @@ export class VisitFeedbackService {
     });
     if (open) return { scheduled: false, reason: 'The customer already has an open feedback request.' };
 
-    const tz = resolveTz(input.timezone);
-    const day = new Date(businessDate(input.closedAt, tz).getTime() + policy.delayDays * DAY_MS);
-    const scheduledFor = instantFromLocalTime(day, parseHHMM(policy.sendTimeLocal), tz);
+    // The first step's own delay. The second one is not booked here: it is
+    // planned only once this one has actually reached the customer, which is
+    // the whole reason a chaser cannot go out on its own.
+    const scheduledFor = afterVisitStepDueAt(input.closedAt, input.timezone, policy.steps[0]);
 
     try {
       await this.prisma.feedbackRequest.create({
@@ -133,6 +162,10 @@ export class VisitFeedbackService {
       cancelled: 0,
       retrying: 0,
       recovered: await this.recoverUndelivered(now),
+      // The later request runs in the same tick but on its own rows: the two
+      // are days apart, so a tick with no first requests due may well have
+      // second ones, and vice versa.
+      ...(await this.sweepSecondAsk(now)),
     };
     for (const { id } of due) {
       const claim = await this.prisma.feedbackRequest.updateMany({
@@ -203,8 +236,9 @@ export class VisitFeedbackService {
     });
     if (other) return cancel('The customer already had an open feedback request when this came due.');
 
+    const first = policy.steps[0];
     const link = this.publicLink(r.publicKey);
-    if (!policy.templateName) {
+    if (!first.templateName) {
       return this.handToStaff(r, link, 'No WhatsApp feedback template is configured.', now);
     }
     if (!link) {
@@ -228,8 +262,8 @@ export class VisitFeedbackService {
       partyId: r.partyId,
       storeId: r.storeId,
       purpose: 'service',
-      templateName: policy.templateName,
-      languageCode: policy.templateLanguage ?? 'en',
+      templateName: first.templateName,
+      languageCode: first.templateLanguage ?? 'en',
       templateComponents: [
         {
           type: 'body',
@@ -248,7 +282,25 @@ export class VisitFeedbackService {
       await this.prisma.feedbackRequest.update({
         where: { id },
         // `pending` until the provider takes it; the outbox sets `sent` then.
-        data: { status: 'pending', messageId: result.messageId, deliveryNote: null },
+        data: {
+          status: 'pending',
+          messageId: result.messageId,
+          deliveryNote: null,
+          /*
+           * The second request is planned HERE and nowhere else, because this
+           * is the only point at which the first one has actually gone to the
+           * customer. Booking it at checkout instead would plan a chaser for
+           * visits whose first request is later handed to a colleague or
+           * cancelled, and `reminderDueAt` is the column the NPS register
+           * derives "reminder due" from — it must not say a reminder is coming
+           * for a message that never went.
+           *
+           * The policy is read again here rather than at booking, so a tenant
+           * who switches the second request on while a visit is waiting gets
+           * it, and one who switches it off does not.
+           */
+          reminderDueAt: await this.secondAskDueAt(r.checkInId, policy, now),
+        },
       });
       return 'queued';
     }
@@ -294,6 +346,336 @@ export class VisitFeedbackService {
     return recovered;
   }
 
+  /* ================================================== the second request */
+
+  /**
+   * Send every second request that has come due — and, far more often, decide
+   * not to.
+   *
+   * Claimed the way every sweep in this codebase claims: a conditional
+   * `updateMany` that only one caller can win, then act. Here the claim is
+   * `reminderDueAt` being cleared, which is both the claim and the statement
+   * that no second request is planned any more, so two replicas or a tick that
+   * overlaps the previous one cannot both send it. The outbox message carries
+   * its own idempotency key as well, keyed to this request, so even a claim
+   * lost after queuing cannot produce a second WhatsApp.
+   *
+   * `reminderSentAt` is NOT the claim. That column means the same thing
+   * `sentAt` means — the provider took it — and stamping it to reserve a row
+   * would make the NPS register read "reminder sent" for a message that had not
+   * left, which is the one thing the register must never say. It is stamped by
+   * `settleSecondAsks` once the Message itself says it went.
+   */
+  private async sweepSecondAsk(
+    now: Date,
+  ): Promise<{ secondQueued: number; secondDropped: number; secondSettled: number }> {
+    const settled = await this.settleSecondAsks();
+    const due = await this.prisma.feedbackRequest.findMany({
+      where: {
+        origin: 'visit_auto',
+        reminderDueAt: { lte: now },
+        reminderSentAt: null,
+        reminderMessageId: null,
+      },
+      orderBy: [{ reminderDueAt: 'asc' }, { id: 'asc' }],
+      take: 200,
+      select: {
+        id: true,
+        organisationId: true,
+        storeId: true,
+        partyId: true,
+        publicKey: true,
+        status: true,
+        sentAt: true,
+        taskId: true,
+        rating: true,
+        respondedAt: true,
+        repliedAt: true,
+        reminderDueAt: true,
+        reminderSentAt: true,
+        party: { select: { name: true, archivedAt: true } },
+        _count: { select: { npsResponses: true } },
+      },
+    });
+
+    let secondQueued = 0;
+    let secondDropped = 0;
+    /*
+     * One settings read, and one deliverability check, per organisation per
+     * tick rather than per request: a branch's day of walk-ins arrives here as
+     * a hundred rows that would otherwise ask the same two questions a hundred
+     * times over.
+     */
+    const policies = new Map<string, AfterVisitPolicy>();
+    const channels = new Map<string, Awaited<ReturnType<ChannelAdaptersService['deliverability']>>>();
+
+    for (const r of due) {
+      let policy = policies.get(r.organisationId);
+      if (!policy) {
+        policy = await this.feedback.afterVisitPolicy(r.organisationId);
+        policies.set(r.organisationId, policy);
+      }
+      const step = secondAskStep(policy);
+      const outcome = secondAskOutcome(
+        {
+          configured: Boolean(step),
+          status: r.status,
+          sentAt: r.sentAt,
+          reminderDueAt: r.reminderDueAt,
+          reminderSentAt: r.reminderSentAt,
+          repliedAt: r.repliedAt,
+          respondedAt: r.respondedAt,
+          rating: r.rating,
+          hasMatchedResponse: r._count.npsResponses > 0,
+          handedToStaffTaskId: r.taskId,
+          // Archived is the part of "do not contact" visible on the row. STOP
+          // is the outbox's shared consent check, which refuses the send with
+          // `recipient_opted_out`, and is deliberately not reimplemented here:
+          // one consent rule for every outbound message or none.
+          contactable: !r.party?.archivedAt,
+        },
+        now,
+      );
+
+      // Cannot happen given the query above, and still not treated as a reason
+      // to stop planning: a clock that disagrees must not cancel a request.
+      if (outcome === 'not_due') continue;
+      if (outcome !== 'send') {
+        await this.dropSecondAsk(r.id, SECOND_ASK_REASONS[outcome]);
+        secondDropped++;
+        continue;
+      }
+
+      // `step` is non-null whenever the outcome is `send` — that is what
+      // `configured` means — but the narrowing does not cross the call, and a
+      // request whose customer record has since gone has nobody to ask.
+      if (!step?.templateName || !r.partyId || !r.party) {
+        await this.dropSecondAsk(r.id, 'the customer record no longer exists');
+        secondDropped++;
+        continue;
+      }
+
+      const link = this.publicLink(r.publicKey);
+      if (!link) {
+        // The first request went out WITH a link, so losing one now means the
+        // deployment changed under us rather than that this request was never
+        // sendable. Held for the next tick, inside the grace window.
+        if (await this.holdOrDrop(r.id, r.reminderDueAt, now, 'there is no feedback link to send')) {
+          secondDropped++;
+        }
+        continue;
+      }
+
+      /*
+       * An automatic chaser is not queued onto a channel that will certainly
+       * not deliver it, for the same reason the first request is not: with no
+       * live sender WhatsApp runs as a dry run. Unlike the first request this
+       * does NOT become a task for a colleague — the first one already raised
+       * one when WhatsApp could not carry it, and a second task to nag the same
+       * customer again is work nobody asked for.
+       */
+      let channel = channels.get(r.organisationId);
+      if (!channel) {
+        channel = await this.adapters.deliverability(r.organisationId, 'whatsapp');
+        channels.set(r.organisationId, channel);
+      }
+      if (channel.state !== 'live') {
+        if (await this.holdOrDrop(r.id, r.reminderDueAt, now, `WhatsApp is not live: ${channel.reason}`)) {
+          secondDropped++;
+        }
+        continue;
+      }
+
+      /*
+       * The claim. Only one caller can clear a `reminderDueAt` that is still
+       * set, so a second replica or an overlapping tick loses here and moves on.
+       *
+       * It fails CLOSED: a crash between this line and the queue call leaves no
+       * plan and no message, so the chaser is simply never sent. That is the
+       * direction to fail in — the alternative is a row that says a reminder
+       * went out when none did, which is exactly what the client's register
+       * must never claim.
+       */
+      const claim = await this.prisma.feedbackRequest.updateMany({
+        where: { id: r.id, reminderDueAt: { lte: now }, reminderSentAt: null, reminderMessageId: null },
+        data: { reminderDueAt: null },
+      });
+      if (claim.count === 0) continue; // another sweep, or another replica, has it
+
+      const firstName = r.party.name.split(/\s+/)[0] || r.party.name;
+      const result = await this.omnichannel.queueCustomerNotice({
+        organisationId: r.organisationId,
+        partyId: r.partyId,
+        storeId: r.storeId,
+        purpose: 'service',
+        templateName: step.templateName,
+        languageCode: step.templateLanguage ?? 'en',
+        templateComponents: [
+          {
+            type: 'body',
+            parameters: [
+              { type: 'text', text: firstName },
+              { type: 'text', text: link },
+            ],
+          },
+        ],
+        // Keyed apart from the first request's `visit-feedback:<id>`: one
+        // request, two messages, and the outbox must not mistake either for
+        // the other.
+        idempotencyKey: `visit-feedback-second:${r.id}`,
+        summary: 'Asked again how their visit went.',
+        automation: 'visit_feedback',
+      });
+
+      if (result.queued) {
+        await this.prisma.feedbackRequest.update({
+          where: { id: r.id },
+          data: { reminderMessageId: result.messageId },
+        });
+        secondQueued++;
+        continue;
+      }
+
+      if (DO_NOT_CONTACT.has(result.code)) {
+        // The claim already cleared the plan, which is the right end state: a
+        // customer who asked not to be contacted is not asked again next tick.
+        this.log.log(`Second feedback request ${r.id} not sent — ${result.reason}`);
+        secondDropped++;
+        continue;
+      }
+      // Nothing left the building, so the plan goes back for one more tick
+      // inside the grace window.
+      const retrying = await this.restoreSecondAsk(
+        r.id,
+        r.reminderDueAt,
+        now,
+        `WhatsApp was not used: ${result.reason}`,
+      );
+      if (!retrying) secondDropped++;
+    }
+
+    if (due.length || settled) {
+      this.log.log(
+        `Second feedback requests: ${secondQueued} queued, ${secondDropped} not sent, ${settled} confirmed`,
+      );
+    }
+    return { secondQueued, secondDropped, secondSettled: settled };
+  }
+
+  /**
+   * Record that a second request actually left, from the Message itself.
+   *
+   * Separate from queuing it for the same reason `sentAt` is: a feedback ask
+   * counts as sent when the PROVIDER took it, not when it was composed. The
+   * outbox stamps `sentAt` for the FIRST message because it matches on
+   * `messageId`; the second message is held in `reminderMessageId`, which the
+   * outbox does not look at, so the confirmation is read back here instead.
+   *
+   * A reminder whose message failed is left with `reminderSentAt` null on
+   * purpose: it is simply unsent, and nothing counts it as delivered.
+   */
+  private async settleSecondAsks(): Promise<number> {
+    const waiting = await this.prisma.feedbackRequest.findMany({
+      where: { origin: 'visit_auto', reminderMessageId: { not: null }, reminderSentAt: null },
+      /*
+       * Newest first, and that is not cosmetic. A reminder whose message the
+       * provider refused stays in this window for good — there is no later
+       * state for it to reach — so taking the OLDEST rows would eventually fill
+       * every page with permanent failures and stop confirming the reminders
+       * that did go out.
+       */
+      orderBy: [{ updatedAt: 'desc' }, { id: 'desc' }],
+      take: 200,
+      select: { id: true, reminderMessageId: true },
+    });
+    if (!waiting.length) return 0;
+    const accepted = await this.prisma.message.findMany({
+      // `status`, not `sentAt`: Message.sentAt defaults to the moment the row
+      // was composed, so it is set even for a message still sitting in the
+      // outbox. The status is what changes when the provider takes it.
+      where: {
+        id: { in: waiting.map((w) => w.reminderMessageId!) },
+        status: { in: ['sent', 'delivered', 'read'] },
+      },
+      select: { id: true, sentAt: true },
+    });
+    let settled = 0;
+    for (const message of accepted) {
+      const ask = waiting.find((w) => w.reminderMessageId === message.id)!;
+      const stamped = await this.prisma.feedbackRequest.updateMany({
+        where: { id: ask.id, reminderSentAt: null },
+        data: { reminderSentAt: message.sentAt },
+      });
+      settled += stamped.count;
+    }
+    return settled;
+  }
+
+  /**
+   * Stop planning the second request, for a reason.
+   *
+   * `reminderDueAt` is cleared rather than left to be re-examined every ten
+   * minutes for the next month. `reminderSentAt` is deliberately untouched —
+   * nothing went out. So is `deliveryNote`, which holds why the FIRST request
+   * did not go on WhatsApp: a manager reads that and acts on it, and
+   * overwriting it with a note about the chaser would lose the explanation.
+   */
+  private async dropSecondAsk(id: string, reason: string): Promise<void> {
+    const cleared = await this.prisma.feedbackRequest.updateMany({
+      where: { id, reminderSentAt: null },
+      data: { reminderDueAt: null },
+    });
+    if (cleared.count) this.log.log(`Second feedback request ${id} not sent — ${reason}`);
+  }
+
+  /**
+   * Keep the plan for one more tick, or give up on it.
+   *
+   * Returns true when it was given up on, so the caller can count it. The grace
+   * window is what bounds the retries: nothing counts attempts for the second
+   * request, and a chaser that is half a day late has stopped being a chaser.
+   */
+  private async holdOrDrop(
+    id: string,
+    dueAt: Date | null,
+    now: Date,
+    reason: string,
+  ): Promise<boolean> {
+    if (dueAt && now.getTime() - dueAt.getTime() <= SECOND_ASK_GRACE_HOURS * HOUR_MS) {
+      this.log.warn(`Second feedback request ${id} waiting — ${reason}`);
+      return false;
+    }
+    await this.dropSecondAsk(id, `${reason}, and it is now too late to be a follow-up`);
+    return true;
+  }
+
+  /**
+   * Put a claimed plan back, once it is certain nothing was sent. Returns true
+   * when it will be tried again, false when it has been given up on.
+   *
+   * Restored only while every reminder column is still exactly as the claim
+   * left it, so a reminder that did go out in the meantime — a racing tick
+   * whose queue call succeeded — is never re-planned.
+   */
+  private async restoreSecondAsk(
+    id: string,
+    dueAt: Date | null,
+    now: Date,
+    reason: string,
+  ): Promise<boolean> {
+    if (!dueAt || now.getTime() - dueAt.getTime() > SECOND_ASK_GRACE_HOURS * HOUR_MS) {
+      this.log.log(`Second feedback request ${id} not sent — ${reason}`);
+      return false;
+    }
+    const restored = await this.prisma.feedbackRequest.updateMany({
+      where: { id, reminderDueAt: null, reminderSentAt: null, reminderMessageId: null },
+      data: { reminderDueAt: dueAt },
+    });
+    if (!restored.count) return false;
+    this.log.warn(`Second feedback request ${id} will retry — ${reason}`);
+    return true;
+  }
+
   /**
    * The honest fallback: a person asks. The request stays open so the customer's
    * answer, if they give one through the link, still lands on it.
@@ -333,9 +715,59 @@ export class VisitFeedbackService {
     });
     await this.prisma.feedbackRequest.update({
       where: { id: r.id },
-      data: { status: 'pending', taskId: task.id, deliveryNote: reason },
+      data: {
+        status: 'pending',
+        taskId: task.id,
+        deliveryNote: reason,
+        /*
+         * Any second request planned for this visit is cancelled with it. This
+         * path is reached both before the first message is queued and after the
+         * outbox finally marks it failed (`recoverUndelivered`), and in the
+         * second case `reminderDueAt` is already set. A chaser whose template
+         * reads "following up on my earlier message" would then be the FIRST
+         * thing this customer ever heard from us about the visit.
+         */
+        reminderDueAt: null,
+      },
     });
     return 'handedToStaff';
+  }
+
+  /**
+   * When the second request is due, or null when there is not going to be one.
+   *
+   * Both delays are measured from the visit, which is how the client states
+   * them, so the two requests land at the hours she chose rather than at an
+   * hour that depends on when a sweep happened to run.
+   *
+   * The floor exists because a first request can leave very late — a sweep that
+   * retried for a day, WhatsApp down over a weekend. Anchored purely to the
+   * visit, the second one would then already be overdue and go out minutes
+   * after the first, which is two messages in a row rather than a follow-up.
+   * The gap the tenant configured BETWEEN the steps is what they actually
+   * chose, so a late first request pushes the second out by that gap.
+   */
+  private async secondAskDueAt(
+    checkInId: string | null,
+    policy: AfterVisitPolicy,
+    firstSentAt: Date,
+  ): Promise<Date | null> {
+    const step = secondAskStep(policy);
+    if (!step || !checkInId) return null;
+    const visit = await this.prisma.checkIn.findUnique({
+      where: { id: checkInId },
+      select: { timeIn: true, timeOut: true, store: { select: { timezone: true } } },
+    });
+    // `timeOut` is the visit closing, which is what the delay is measured from.
+    // A visit row that has gone has nothing to measure from, and a chaser timed
+    // off "now" would be a different promise than the one configured.
+    const closedAt = visit?.timeOut ?? visit?.timeIn ?? null;
+    if (!closedAt) return null;
+
+    const fromVisit = afterVisitStepDueAt(closedAt, visit?.store?.timezone, step);
+    const gapHours = Math.max(1, step.delayHours - policy.steps[0].delayHours);
+    const notBefore = new Date(firstSentAt.getTime() + gapHours * HOUR_MS);
+    return fromVisit > notBefore ? fromVisit : notBefore;
   }
 
   /** The absolute response link, or null when the deployment has no public address. */

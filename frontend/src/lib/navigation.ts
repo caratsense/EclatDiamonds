@@ -15,6 +15,7 @@ import {
   Contact,
   Database,
   DoorOpen,
+  FileSpreadsheet,
   FileText,
   Fingerprint,
   Gauge,
@@ -758,6 +759,27 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ["head_office"],
   },
   {
+    /*
+     * What shape the downloaded sheets come out in.
+     *
+     * The client reconciles our Leads and NPS downloads against her own Master
+     * Leads workbook by eye, so the headings and their order are hers to
+     * declare — down to her spellings. Beside Product Groups because it is the
+     * same kind of screen: one tenant-wide decision about how data is named,
+     * taken once and then forgotten about.
+     */
+    module: 10,
+    slug: "settings/export-formats",
+    title: "Export Formats",
+    purpose:
+      "Which columns the Leads and NPS downloads carry, in which order, under your own headings.",
+    primaryAction: "",
+    icon: FileSpreadsheet,
+    group: "Setup",
+    rank: 56,
+    roles: ["head_office"],
+  },
+  {
     module: 2,
     slug: "settings/rates",
     title: "Gold Rate",
@@ -1088,6 +1110,7 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "settings/staff-digest",
   "settings/lead-tags",
   "settings/product-groups",
+  "settings/export-formats",
   "settings/messaging-routes",
   "settings/channels",
   "data",

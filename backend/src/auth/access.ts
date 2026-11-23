@@ -48,6 +48,7 @@ export const MODULES = [
   'settings/onboarding', 'settings/stores', 'new-store', 'settings/configuration', 'settings/rates',
   'settings/integrations', 'settings/integrations/templates',
   'data', 'settings/audit', 'settings/staff-digest', 'settings/lead-tags', 'settings/product-groups',
+  'settings/export-formats',
   'data/images', 'settings/messaging-routes', 'settings/channels', 'settings/access',
 ] as const;
 
@@ -186,6 +187,12 @@ export const HEAD_OFFICE_DELEGABLE: ModuleSlug[] = [
   // owner's. Head office should be able to hand the screen over without
   // handing over head office.
   'settings/product-groups',
+  // Which columns the Leads and NPS sheets come out with is the subject of
+  // whoever reconciles those sheets against the client's own workbook — a
+  // branch manager, not the owner. Delegable for the same reason product
+  // groups are: handing the screen over should not mean handing over head
+  // office.
+  'settings/export-formats',
 ];
 
 /** The roles in use. Area manager and storeperson are retired: nobody can be given them. */
@@ -477,6 +484,17 @@ const SOFT_ROUTE_MODULES: [prefix: string, module: ModuleSlug][] = [
    * page and be refused by it.
    */
   ['product-groups', 'settings/product-groups'],
+  /*
+   * The export-format screen's own API — and ONLY it.
+   *
+   * Deliberately `crm/exports/formats` and not `crm/exports`. The prefix is
+   * shared with `crm/exports/leads.xlsx`, and because a delegable module raises
+   * the holder to head office for the whole matched prefix, the wider mapping
+   * would have let somebody granted a column-layout screen download every
+   * branch's leads — `LeadExportService` scopes that file from `user.role`.
+   * Longer prefixes win in BY_LENGTH, so the download keeps its CRM scoping.
+   */
+  ['crm/exports/formats', 'settings/export-formats'],
 ];
 
 type Route = { module: ModuleSlug | null; soft: boolean };

@@ -10,15 +10,60 @@ import { api } from "@/lib/api";
  * answering a survey to /login. Same reasoning as the public enquiry form.
  */
 
-/** The automatic ask after a walk-in with no follow-up booked. */
-export interface AfterVisitPolicy {
+/**
+ * One of the two requests that go out after a walk-in.
+ *
+ * `delayHours` chooses the local DAY and `sendTimeLocal` the hour: whole days
+ * are counted from the visit's own local day, so 24 and 30 hours both land on
+ * the day after. Anything shown on screen about when a request goes out has to
+ * be worked out the same way, or the screen and the sweep disagree.
+ */
+export interface AfterVisitStep {
+  /** 1 = the request itself, 2 = the later one. The order is the meaning. */
+  step: 1 | 2;
   enabled: boolean;
-  delayDays: number;
+  delayHours: number;
   /** "HH:MM" at the branch. */
   sendTimeLocal: string;
   templateName: string | null;
   templateLanguage: string | null;
 }
+
+/** The automatic ask after a walk-in with no follow-up booked. */
+export interface AfterVisitPolicy {
+  enabled: boolean;
+  /*
+   * Step one, flattened, under the keys this policy has always been read
+   * under — the same four facts as `steps[0]`.
+   */
+  delayDays: number;
+  /** "HH:MM" at the branch. */
+  sendTimeLocal: string;
+  templateName: string | null;
+  templateLanguage: string | null;
+  /**
+   * The request, then the later one — always two, each with its own switch,
+   * from an API that has the second step.
+   *
+   * Optional because the browser bundle and the API deploy separately: a
+   * browser on this bundle can be talking to an API that has not rolled out
+   * yet, and the settings screen must still draw the request a branch actually
+   * has configured rather than an empty form. `afterVisitSteps` in
+   * components/feedback is the one place that resolves it.
+   */
+  steps?: [AfterVisitStep, AfterVisitStep];
+}
+
+/**
+ * What a settings PATCH may carry.
+ *
+ * Only the fields actually sent are applied, so a partial step is a partial
+ * edit rather than a reset. `steps` is sparse on purpose: `[undefined, {...}]`
+ * changes the second request and leaves the first alone.
+ */
+export type AfterVisitPolicyInput = Partial<Omit<AfterVisitPolicy, "steps">> & {
+  steps?: Array<Partial<AfterVisitStep> | undefined>;
+};
 
 export interface FeedbackSettings {
   enabled: boolean;
@@ -29,7 +74,7 @@ export interface FeedbackSettings {
 }
 
 export type FeedbackSettingsInput = Partial<Omit<FeedbackSettings, "afterVisit">> & {
-  afterVisit?: Partial<AfterVisitPolicy>;
+  afterVisit?: AfterVisitPolicyInput;
 };
 
 export interface FeedbackSummary {

@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import type { CampaignVariableSource } from "@/lib/queries/campaigns";
 
 /**
  * The administration surface for connected messaging and advertising accounts.
@@ -138,6 +139,33 @@ export type ProviderTemplateStatus =
   | "REMOVED"
   | "UNKNOWN";
 
+/**
+ * What normally fills one `{{n}}`, remembered on the template itself.
+ *
+ * The client wrote a template whose body was `{{1}}`, gave "Priya" as the
+ * sample, and asked where she says that this is a customer's name. The sample
+ * is for Meta's reviewer and is never sent; the real choice was only on the
+ * broadcast, so it existed and was invisible from the template screen — and had
+ * to be made again on every send.
+ *
+ * `CampaignVariableSource` rather than a second list of the same four strings.
+ * These rows are pre-selected straight into a broadcast's own mapping, so two
+ * lists would eventually disagree and the one that was wrong would be the one
+ * deciding what a customer reads. The server will not accept a fifth either:
+ * `resolveVariables` is handed a subject of `{name, branchName}` only, so an
+ * unresolvable source would send the stand-in to everybody and look as though
+ * it had worked.
+ *
+ * `fallback` is optional because a "same wording for everyone" row is its own
+ * stand-in; the server fills that in.
+ */
+export interface TemplateVariableDefault {
+  slot: number;
+  source: CampaignVariableSource;
+  text?: string;
+  fallback?: string;
+}
+
 export interface MessageTemplateRow {
   id: string;
   externalId: string;
@@ -188,6 +216,14 @@ export interface MessageTemplateRow {
     headerImageUrl?: string;
     footerText?: string;
     buttons?: { type: "URL" | "QUICK_REPLY"; text: string; url?: string }[];
+    /**
+     * What normally fills each variable, as recorded on the template.
+     *
+     * Empty or absent means nothing was chosen and the broadcast asks as it
+     * always did. Templates submitted before this existed have none, which is
+     * the truth about them rather than a gap to be guessed at.
+     */
+    variableDefaults?: TemplateVariableDefault[];
   };
 }
 
@@ -286,6 +322,11 @@ export interface TemplateDraftInput {
   headerHandle?: string;
   footer?: string;
   examples?: string[];
+  /**
+   * What normally fills each variable on a broadcast. Never sent to Meta — it
+   * is stored with the template so the campaign wizard can pre-select it.
+   */
+  variableDefaults?: TemplateVariableDefault[];
   /** 2–10 cards turns this into a carousel. */
   cards?: Omit<TemplateCardInput, "previewUrl">[];
   /**

@@ -46,6 +46,11 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { BroadcastFilter } from "@/components/crm/broadcast-filter";
+import {
+  CustomerDetailsDialog,
+  primaryContactValue,
+} from "@/components/crm/customer-details-dialog";
 import { StartWhatsAppDialog } from "@/components/crm/start-whatsapp-dialog";
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
@@ -75,7 +80,9 @@ import {
   useAddCustomerNote,
   useConversationThread,
   useConversations,
+  useCustomer360,
   useCustomerNotes,
+  useLiveInbox,
   useQueueCounts,
   useAttachPhoto,
   useSendReply,
@@ -141,10 +148,14 @@ const QUEUES = [
 /**
  * Render WhatsApp's `*bold*` the way WhatsApp does.
  *
- * The thread stores exactly what the customer was sent, asterisks and all — the
- * assistant's questions use them, and so does the sender's name on a reply typed
- * here. Showing the raw markup would mean the dashboard renders the one thing
- * the customer never sees.
+ * The stored row holds exactly what the customer was sent, asterisks and all —
+ * the assistant's questions use them, and so did the sender's name until that
+ * became the business's name. Showing the raw markup would mean the dashboard
+ * renders the one thing the customer never sees.
+ *
+ * The signature itself no longer reaches here: `thread()` strips it server-side
+ * now, so what this receives is the message without its leading `*Name*` line.
+ * Bold inside the message body is still the customer's view and still rendered.
  *
  * Bold only, deliberately: it is what the product actually sends. A fuller
  * markdown parser would invent formatting nobody asked for, and would have to
@@ -452,6 +463,24 @@ function ConversationsContent() {
       else params.delete("source");
       params.delete("thread");
     }
+    /*
+     * THIS BLOCK IS WHY THE BROADCAST FILTER DID NOTHING.
+     *
+     * `broadcast` was declared on this function's parameter type and then never
+     * read in its body, so every selection was accepted by TypeScript, dropped
+     * on the floor, and `router.replace` rewrote the same URL it was already
+     * on. Nothing downstream was wrong: the select is controlled by the URL, so
+     * it snapped straight back to "All conversations", the query key never
+     * changed, no request was made, and the inbox was identical — the three
+     * symptoms the fault was reported as.
+     */
+    if (next.broadcast !== undefined) {
+      if (next.broadcast) params.set("broadcast", next.broadcast);
+      else params.delete("broadcast");
+      // The open thread may not be one the broadcast reached, so keeping it
+      // selected would show a conversation the list no longer contains.
+      params.delete("thread");
+    }
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   };
 
@@ -495,16 +524,26 @@ function ConversationsContent() {
   );
   const counts = useQueueCounts();
 
+
   /*
-   * The broadcasts that have actually been sent, for the filter above.
+   * The inbox keeps itself current.
    *
-   * A draft or an unapproved one has reached nobody, so offering it could only
-   * produce an empty inbox and the question of whether the filter is broken.
+   * Client, 21 Nov: "I need to refresh the tab each time to see new customers or
+   * new conversations." This rides the notification stream that is already
+   * open — one connection per browser, shared with every other tab — rather
+   * than adding a second stream or a poll. See `useLiveInbox` for which pushes
+   * count as inbox news, and for the one case it still cannot cover.
+   */
+  useLiveInbox();
+
+  /*
+   * Every broadcast, for the filter above. Which of them have actually REACHED
+   * anybody is `isSentBroadcast`'s decision, inside the control.
+   *
+   * Not `useCampaigns("sent")`: there is no such status, and asking the server
+   * for one would be the same mistake in a place where it fails silently.
    */
   const campaigns = useCampaigns();
-  const sentCampaigns = (campaigns.data ?? []).filter((c) =>
-    ["sending", "sent", "partially_failed", "finished"].includes(c.status),
-  );
 
   /*
    * Which platforms actually appear in this inbox.
@@ -815,27 +854,14 @@ function ConversationsContent() {
                 customer may have been sent three and then written in about
                 something else entirely, and that is still one conversation.
 
-                Only campaigns that actually went out are offered: a draft has
-                reached nobody, so choosing it could only ever show an empty
-                inbox. */}
-            <select
-              aria-label="Show only the customers a broadcast was sent to"
+                A category, then which broadcast under it. See
+                `BroadcastFilter` for why it is two controls and not one
+                flat menu of unrelated options. */}
+            <BroadcastFilter
               value={broadcastFilter}
-              onChange={(e) => navigate({ broadcast: e.target.value || null })}
-              className={`h-8 max-w-[14rem] rounded-md border bg-background px-2 text-xs font-medium ${
-                broadcastFilter
-                  ? "border-[#25D366]/40 text-[#128C7E] dark:text-[#25D366]"
-                  : "border-border text-muted-foreground"
-              }`}
-            >
-              <option value="">All conversations</option>
-              <option value="any">Broadcasts — any</option>
-              {sentCampaigns.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
+              campaigns={campaigns.data ?? []}
+              onChange={(next) => navigate({ broadcast: next || null })}
+            />
           </div>
           {/* The branch this inbox is showing. Read-only on purpose — it is the
               store switcher in the top bar, and a second control for the same
@@ -1227,9 +1253,20 @@ function ThreadView({
   const notesPartyId = data?.conversation.party?.id ?? null;
   const notes = useCustomerNotes(notesPartyId);
   const addNote = useAddCustomerNote(notesPartyId);
+  /*
+   * The customer's REAL details for the panel on the right — their email, their
+   * city, the ways they are reached.
+   *
+   * None of that is on a conversation row, which is why the panel used to
+   * manufacture it. A salesperson outside this customer's book of work is
+   * refused by the server; the panel falls back to the conversation's own party
+   * fields in that case rather than showing an error where an email goes.
+   */
+  const profile = useCustomer360(notesPartyId);
   const [draft, setDraft] = useState("");
 
   // Dialog states for Zithara Right Sidebar Accordions
+  const [editCustomerOpen, setEditCustomerOpen] = useState(false);
   const [noteDialogOpen, setNoteDialogOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
@@ -1266,6 +1303,27 @@ function ThreadView({
 
   const { conversation, messages } = data;
   const party = conversation.party;
+
+  /*
+   * What this customer is actually reached on. `primaryContactValue` prefers a
+   * contact point somebody marked primary — which is what the edit dialog
+   * writes — so a corrected number shows here the moment it is saved instead of
+   * the panel carrying on with the old one.
+   *
+   * `whatsapp` counts as a phone: for most customers here it is the only number
+   * on file, because it is the one they wrote in from.
+   */
+  const contactPoints = profile.data?.identity.contactPoints;
+  const customerPhone = primaryContactValue(
+    contactPoints,
+    ["phone", "whatsapp"],
+    profile.data?.customer.phone ?? party?.phone ?? null,
+  );
+  const customerEmail = primaryContactValue(
+    contactPoints,
+    ["email"],
+    profile.data?.customer.email ?? null,
+  );
 
   const onSend = async () => {
     // A photo on its own is a message; the caption is optional.
@@ -2052,65 +2110,86 @@ function ThreadView({
               </span>
               <span className="text-amber-500 font-bold">⚡</span>
             </div>
+            {/*
+              Edit opens a form that saves, rather than a link to a page that
+              cannot.
+
+              This was `<Link href={/customers/<id>}>`, and that profile screen
+              has no edit affordance of any kind — so the client's report was
+              exactly right: there was an Edit control, it went somewhere real,
+              and there was still nowhere along the path to change a name. The
+              profile is still one click away on the customer's name in the
+              header above.
+
+              Disabled with a reason when the thread has no customer attached:
+              the href was "#" in that case, which looks identical to a working
+              link right up until it is clicked.
+            */}
             <div className="flex items-center gap-1">
-              <Link
-                href={party ? `/customers/${party.id}` : "#"}
-                className="text-xs text-primary hover:underline inline-flex items-center gap-1"
+              <button
+                type="button"
+                disabled={!party}
+                onClick={() => setEditCustomerOpen(true)}
+                title={
+                  party
+                    ? "Change their name, number or email"
+                    : "This thread is not linked to a customer yet"
+                }
+                className="text-xs text-primary hover:underline inline-flex items-center gap-1 disabled:text-muted-foreground disabled:no-underline disabled:cursor-not-allowed"
               >
                 <Edit3 className="h-3 w-3" /> Edit
-              </Link>
+              </button>
             </div>
           </CardHeader>
           <CardContent className="p-4 space-y-3 text-xs">
+            {/*
+              Facts, or "Not provided". Every field here was invented before:
+              the email was the customer's own name with "@gmail.com" stuck on
+              the end, the phone fell back to a literal +91 91900000101, and the
+              job title, lifecycle stage and lead status were three fixed
+              strings that read identically on every customer in the tenant —
+              "Solitaire Buyer", "Marketing qualified…", "High Intent Prospect".
+              A salesperson ringing the fabricated number is the kind of defect
+              that looked like a feature for months.
+
+              What replaces them is read off the customer record, and the real
+              intent score it was pretending to be lives in the panel directly
+              below this card.
+            */}
             <div className="grid grid-cols-2 gap-2">
-              <div>
+              <div className="min-w-0">
                 <span className="text-muted-foreground block text-[11px]">Email</span>
                 <span className="font-medium text-foreground truncate block">
-                  {party?.name ? `${party.name.toLowerCase().replace(/\s+/g, ".")}@gmail.com` : "Not provided"}
+                  {customerEmail ?? "Not provided"}
                 </span>
               </div>
-              <div>
+              <div className="min-w-0">
                 <span className="text-muted-foreground block text-[11px]">Phone number</span>
-                <span className="font-medium text-foreground">
-                  {party?.phone ?? "+91 91900000101"}
+                <span className="font-medium text-foreground truncate block">
+                  {customerPhone ?? "Not provided"}
                 </span>
               </div>
             </div>
 
             <div className="grid grid-cols-2 gap-2">
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Company name</span>
-                <span className="font-medium text-foreground">
+              <div className="min-w-0">
+                <span className="text-muted-foreground block text-[11px]">Branch</span>
+                <span className="font-medium text-foreground truncate block">
                   {conversation.store?.name ?? "No store yet"}
                 </span>
               </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Job title</span>
-                <span className="font-medium text-foreground">
-                  Solitaire Buyer
-                </span>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Contact owner</span>
-                <span className="font-medium text-foreground">
-                  {conversation.assignedUser?.name ?? "Karan Malhotra"}
-                </span>
-              </div>
-              <div>
-                <span className="text-muted-foreground block text-[11px]">Lifecycle stage</span>
-                <span className="font-medium text-foreground">
-                  Marketing qualified…
+              <div className="min-w-0">
+                <span className="text-muted-foreground block text-[11px]">City</span>
+                <span className="font-medium text-foreground truncate block">
+                  {profile.data?.customer.city ?? "Not provided"}
                 </span>
               </div>
             </div>
 
             <div>
-              <span className="text-muted-foreground block text-[11px]">Lead status</span>
-              <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#128C7E] dark:text-[#25D366] mt-0.5">
-                <Sparkles className="h-3 w-3" /> High Intent Prospect
+              <span className="text-muted-foreground block text-[11px]">Contact owner</span>
+              <span className="font-medium text-foreground">
+                {conversation.assignedUser?.name ?? "Unassigned"}
               </span>
             </div>
 
@@ -2238,6 +2317,23 @@ function ThreadView({
           </div>
         </Card>
       </div>
+
+      {/*
+        Edit this person's details.
+
+        Mounted only when there is a customer to edit, so the dialog never has
+        to carry a null id and the fields are never seeded from nothing.
+      */}
+      {party && (
+        <CustomerDetailsDialog
+          open={editCustomerOpen}
+          onOpenChange={setEditCustomerOpen}
+          partyId={party.id}
+          name={party.name}
+          phone={customerPhone}
+          email={customerEmail}
+        />
+      )}
 
       {/* ── Dialogs for Zithara Accordions ── */}
       {/*

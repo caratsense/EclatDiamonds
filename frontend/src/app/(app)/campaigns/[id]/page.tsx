@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
@@ -8,8 +8,10 @@ import {
   ArrowLeft,
   Ban,
   CheckCircle2,
+  Plus,
   RefreshCw,
   ShieldCheck,
+  Tag,
   ThumbsUp,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +26,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -39,10 +50,19 @@ import {
   useApproveCampaign,
   useCampaign,
   useCampaignRecipients,
+  useCampaignRetryPlan,
   useCancelCampaign,
   useRetryCampaign,
+  useTagCampaignRecipients,
   type CampaignCounts,
+  type CampaignRecipientRow,
 } from "@/lib/queries/campaigns";
+import { useLeadTags } from "@/lib/queries/lead-tags";
+import {
+  allTaggableSelected,
+  taggableRows,
+  withPageSelected,
+} from "./recipient-selection";
 import { ROLE_RANK } from "@/lib/types";
 import { apiErrorMessage } from "@/lib/utils";
 import { useSession } from "@/store/use-session";
@@ -68,6 +88,13 @@ const EXCLUSION_LABELS: Record<string, string> = {
    * only when there is not.
    */
   policy_refused_at_send: "The messaging rules refused it at send time",
+  /*
+   * The answer to "these many people have already received this template, do
+   * you want to send again? If no, exclude them." Named on the row, because
+   * somebody reading this list a week later needs to know these people were
+   * left out on purpose and by whose decision.
+   */
+  already_received_template: "Already had this template, so left out on purpose",
 };
 
 /**
@@ -177,6 +204,244 @@ function Stat({
   );
 }
 
+/**
+ * Re-send to the people this broadcast did not reach.
+ *
+ * The number comes BEFORE the click. Meta caps marketing per recipient (error
+ * 131049), so a re-send is not free — and on the nails-event broadcast the
+ * outcome tracked attempts almost exactly: 80% of the people tried twice got
+ * it, 9% of those tried three times did, and nobody tried four times did. The
+ * retries were debugging a delivery bug and they made the delivery worse. So
+ * anyone messaged in the last day is held back, the screen says how many and
+ * why, and including them is a deliberate tick rather than a default.
+ */
+function RetrySection({ id }: { id: string }) {
+  const plan = useCampaignRetryPlan(id);
+  const retry = useRetryCampaign();
+  const [override, setOverride] = useState(false);
+
+  if (plan.isLoading) return <Skeleton className="h-20 w-full" />;
+  if (!plan.data || plan.data.retryable === 0) return null;
+
+  const p = plan.data;
+  const willSend = override ? p.willSendWithOverride : p.willSend;
+
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-muted/30 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="text-sm">
+          <p className="font-medium">Send it again to these people</p>
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {/* The figure the button will act on, not the size of the tab.
+                A number that ignores the hold-back is the number somebody
+                plans around and then has to explain. */}
+            {willSend.toLocaleString()} of {p.retryable.toLocaleString()} will be messaged.
+          </p>
+        </div>
+        <Button
+          variant="outline"
+          disabled={retry.isPending || willSend === 0}
+          onClick={() =>
+            retry.mutate(
+              { id, includeRecentlyMessaged: override },
+              {
+                onSuccess: (r) => {
+                  toast.success(
+                    r.retried === 0
+                      ? "Nobody was eligible, so nothing was sent."
+                      : `Sending again to ${r.retried.toLocaleString()} ${
+                          r.retried === 1 ? "person" : "people"
+                        }.` +
+                          (r.heldBack
+                            ? ` ${r.heldBack.toLocaleString()} held back for ${r.cooldownHours}h.`
+                            : ""),
+                  );
+                  setOverride(false);
+                },
+                onError: (e) => toast.error(apiErrorMessage(e, "Could not send it again.")),
+              },
+            )
+          }
+        >
+          <RefreshCw className={`mr-2 h-4 w-4 ${retry.isPending ? "animate-spin" : ""}`} />
+          {willSend === 0
+            ? "Nobody can be messaged yet"
+            : `Send again to ${willSend.toLocaleString()}`}
+        </Button>
+      </div>
+
+      {p.heldBack > 0 ? (
+        <div className="flex gap-2 rounded-md border border-border bg-background p-3 text-xs">
+          <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          <div className="space-y-2 text-muted-foreground">
+            <p>
+              <span className="font-medium text-foreground tabular-nums">
+                {p.heldBack.toLocaleString()}
+              </span>{" "}
+              of them were already messaged in the last {p.cooldownHours} hours, so they are being
+              held back. WhatsApp limits how much marketing one person receives, and messaging them
+              again spends that allowance — it is the likeliest way to have them refused a second
+              time.
+            </p>
+            <label className="flex items-start gap-2 text-foreground">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={override}
+                onChange={(e) => setOverride(e.target.checked)}
+              />
+              <span>
+                Include them anyway
+                <span className="block text-muted-foreground">
+                  Sends to all {p.willSendWithOverride.toLocaleString()}, the held-back included.
+                </span>
+              </span>
+            </label>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Tag the people ticked on the recipient list.
+ *
+ * The client's words: "I can select multiple people at a time and then I can
+ * give them a custom tag. So next time when I create a broadcast I can include
+ * or exclude those people through tags." The include and exclude already exist
+ * in the audience builder — Tag / has any of / does not have — so this is the
+ * half that was missing.
+ *
+ * The tag goes on the CUSTOMER, which is why a row with no customer record
+ * cannot be ticked at all and says so on the row rather than being quietly
+ * dropped from the count.
+ */
+function TagSelectedBar({
+  id,
+  selected,
+  rows,
+  onDone,
+}: {
+  id: string;
+  selected: Set<string>;
+  rows: CampaignRecipientRow[];
+  onDone: () => void;
+}) {
+  const tags = useLeadTags();
+  const apply = useTagCampaignRecipients(id);
+  const [newName, setNewName] = useState("");
+
+  const anyTaggable = rows.some((r) => r.partyId);
+
+  if (!selected.size) {
+    return anyTaggable ? (
+      <p className="text-xs text-muted-foreground">
+        Tick people to give them a tag. A tag put on somebody here can include or exclude them from
+        the next broadcast.
+      </p>
+    ) : null;
+  }
+
+  const run = (input: { tagId?: string; tagName?: string }) =>
+    apply.mutate(
+      { recipientIds: [...selected], ...input },
+      {
+        onSuccess: (r) => {
+          const parts = [
+            r.tagged
+              ? `Tagged ${r.tagged.toLocaleString()} ${r.tagged === 1 ? "customer" : "customers"} "${r.tag.name}".`
+              : `Nobody new was tagged "${r.tag.name}".`,
+          ];
+          // Said out loud rather than folded into a smaller number. Somebody
+          // who ticked nine people and tagged seven needs to know which two
+          // were left and why.
+          if (r.alreadyTagged) parts.push(`${r.alreadyTagged} already had it.`);
+          if (r.withoutCustomer) {
+            parts.push(`${r.withoutCustomer} had no customer record, so could not be tagged.`);
+          }
+          if (r.notOnThisBroadcast) {
+            parts.push(`${r.notOnThisBroadcast} are no longer on this broadcast.`);
+          }
+          toast.success(parts.join(" "));
+          setNewName("");
+          onDone();
+        },
+        onError: (e) => toast.error(apiErrorMessage(e, "Could not tag them.")),
+      },
+    );
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/30 p-2">
+      <span className="px-1 text-sm tabular-nums">
+        {selected.size.toLocaleString()} selected
+      </span>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button size="sm" variant="outline" disabled={apply.isPending}>
+            <Tag className="mr-1.5 h-3.5 w-3.5" />
+            Tag selected
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start" className="w-64">
+          <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
+            Give these people a tag
+          </DropdownMenuLabel>
+          {tags.isLoading ? (
+            <p className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</p>
+          ) : (tags.data ?? []).length === 0 ? (
+            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+              No tags yet. Type a name below to make the first one.
+            </p>
+          ) : (
+            (tags.data ?? []).map((t) => (
+              <DropdownMenuItem key={t.id} onSelect={() => run({ tagId: t.id })}>
+                <span
+                  aria-hidden="true"
+                  className="h-2 w-2 shrink-0 rounded-full"
+                  style={{ background: t.colour ?? "var(--muted-foreground)" }}
+                />
+                <span className="truncate">{t.name}</span>
+              </DropdownMenuItem>
+            ))
+          )}
+          <DropdownMenuSeparator />
+          <div className="flex items-center gap-1.5 p-1.5">
+            <Input
+              value={newName}
+              onChange={(e) => setNewName(e.target.value)}
+              placeholder="New tag name"
+              maxLength={40}
+              // The menu closes on Enter otherwise, losing what was typed.
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && newName.trim().length >= 2) {
+                  e.preventDefault();
+                  run({ tagName: newName.trim() });
+                }
+              }}
+            />
+            <Button
+              size="icon"
+              variant="outline"
+              aria-label="Make this tag and apply it"
+              disabled={newName.trim().length < 2}
+              onClick={() => run({ tagName: newName.trim() })}
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <Button size="sm" variant="ghost" onClick={onDone} disabled={apply.isPending}>
+        Clear
+      </Button>
+      {apply.isPending ? (
+        <RefreshCw className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
+      ) : null}
+    </div>
+  );
+}
+
 export default function CampaignDetailPage() {
   const params = useParams<{ id: string }>();
   const id = params?.id ?? "";
@@ -189,7 +454,22 @@ export default function CampaignDetailPage() {
   const recipientRows = recipients.data?.items ?? [];
   const approve = useApproveCampaign();
   const cancel = useCancelCampaign();
-  const retry = useRetryCampaign();
+
+  /*
+   * Ticked rows, by recipient id, kept across pages.
+   *
+   * Across pages on purpose: a page holds ten rows and the client asked to
+   * "select multiple people at a time and then give them a custom tag" — a
+   * selection that emptied itself every time she turned the page would make
+   * tagging thirty people thirty separate decisions. Cleared when the tab
+   * changes, because the tabs are different questions and a selection carried
+   * from "Got it" into "Did not arrive" is a selection nobody made.
+   */
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const clearSelection = () => setSelected(new Set());
+  /** Rows on this page that have a customer behind them to carry a tag. */
+  const taggableOnPage = useMemo(() => taggableRows(recipientRows), [recipientRows]);
+  const allOnPageSelected = allTaggableSelected(recipientRows, selected);
 
   const canApprove = ROLE_RANK[role] >= ROLE_RANK.area_manager;
 
@@ -260,27 +540,13 @@ export default function CampaignDetailPage() {
                 Approve and send
               </Button>
             ) : null}
-            {c.counts.failed > 0 && !inFlight ? (
-              <Button
-                variant="outline"
-                onClick={() =>
-                  retry.mutate(
-                    { id },
-                    {
-                      onSuccess: (r) =>
-                        toast.success(
-                          `Retrying ${(r as unknown as { retried?: number })?.retried ?? 0} recipients.`,
-                        ),
-                      onError: (e) => toast.error(apiErrorMessage(e, "Could not retry.")),
-                    },
-                  )
-                }
-                disabled={retry.isPending}
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                Retry failed
-              </Button>
-            ) : null}
+            {/*
+              The re-send button used to live here, beside Approve and Cancel,
+              and said "Retry failed" with no number on it. It is now on the
+              "Did not arrive" tab instead: that tab IS the group it re-sends
+              to, and a button there can say how many people it will actually
+              message before anybody presses it.
+            */}
             {stoppable ? (
               <Button
                 variant="outline"
@@ -401,6 +667,7 @@ export default function CampaignDetailPage() {
             onValueChange={(v) => {
               setTab(v);
               setPage(1);
+              clearSelection();
             }}
           >
             <TabsList>
@@ -426,6 +693,17 @@ export default function CampaignDetailPage() {
             </p>
           ) : null}
 
+          {/* The re-send sits on the tab it acts on, so "that group" is the
+              group on screen rather than a word in a button. */}
+          {tab === "not_reached" && !inFlight ? <RetrySection id={id} /> : null}
+
+          <TagSelectedBar
+            id={id}
+            selected={selected}
+            rows={recipientRows}
+            onDone={clearSelection}
+          />
+
           {recipients.isLoading ? (
             <Skeleton className="h-32 w-full" />
           ) : !recipientRows.length ? (
@@ -439,6 +717,24 @@ export default function CampaignDetailPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      {/* Select-all is this page, not the whole broadcast: a
+                          tick that silently selected four hundred people on
+                          pages nobody had looked at would be a tag applied
+                          sight unseen. Rows with no customer behind them are
+                          skipped, because there is nothing there to tag. */}
+                      <input
+                        type="checkbox"
+                        aria-label="Select everyone on this page"
+                        checked={allOnPageSelected}
+                        onChange={(e) =>
+                          setSelected(
+                            withPageSelected(selected, recipientRows, e.target.checked),
+                          )
+                        }
+                        disabled={!taggableOnPage.length}
+                      />
+                    </TableHead>
                     <TableHead>Contact</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead>Why</TableHead>
@@ -448,8 +744,39 @@ export default function CampaignDetailPage() {
                 <TableBody>
                   {recipientRows.map((r) => (
                     <TableRow key={r.id}>
+                      <TableCell>
+                        <input
+                          type="checkbox"
+                          checked={selected.has(r.id)}
+                          disabled={!r.partyId}
+                          aria-label={
+                            r.partyId
+                              ? `Select ${r.contact ?? "this recipient"}`
+                              : "This number is not linked to a customer, so it cannot be tagged"
+                          }
+                          title={
+                            r.partyId
+                              ? undefined
+                              : "Not linked to a customer record, so there is nobody to tag."
+                          }
+                          onChange={(e) => {
+                            const next = new Set(selected);
+                            if (e.target.checked) next.add(r.id);
+                            else next.delete(r.id);
+                            setSelected(next);
+                          }}
+                        />
+                      </TableCell>
                       <TableCell className="font-[family-name:var(--font-mono-face)] text-sm">
                         {r.contact ?? "—"}
+                        {/* Said on the row rather than only in a disabled
+                            tick box: the reason a row cannot be tagged is
+                            about the record, not about the tick box. */}
+                        {!r.partyId ? (
+                          <span className="block text-[11px] font-sans text-muted-foreground">
+                            No customer record — cannot be tagged
+                          </span>
+                        ) : null}
                       </TableCell>
                       <TableCell>
                         <Badge

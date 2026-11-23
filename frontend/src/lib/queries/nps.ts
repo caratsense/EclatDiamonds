@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { useStoreKey } from "@/lib/queries/keys";
@@ -67,6 +67,64 @@ export interface NpsResponseRow {
   matchNote: string | null;
   party: { id: string; name: string } | null;
   checkIn: { id: string; timeIn: string; store: { name: string } | null } | null;
+}
+
+/** What one uploaded tab did. The three match counts are the honest part. */
+export interface NpsSheetImportSummary {
+  sheet: string;
+  received: number;
+  created: number;
+  updated: number;
+  matched: number;
+  ambiguous: number;
+  unmatched: number;
+  skipped: { row: number; reason: string }[];
+  ignoredColumns: string[];
+}
+
+export interface NpsImportResult {
+  file: string | null;
+  sheetNames: string[];
+  responses: NpsSheetImportSummary | null;
+  followups: NpsSheetImportSummary | null;
+}
+
+/**
+ * Upload the client's NPS export.
+ *
+ * Re-uploading the same workbook is the expected operation, not a mistake —
+ * she sends the whole file each time and the server keys every row on its
+ * submission, so a second upload updates the rows it already has.
+ */
+export function useImportNpsSheet() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ file }: { file: File }) => {
+      const form = new FormData();
+      form.append("file", file);
+      const { data } = await api.post<NpsImportResult>("/crm/nps/import", form, {
+        /*
+         * Clearing the header is not optional: the shared axios instance
+         * defaults to application/json, which axios reads as an instruction to
+         * serialise the FormData as JSON — the file silently disappears and the
+         * server answers "No file uploaded".
+         */
+        headers: { "Content-Type": undefined },
+        transformRequest: [(value) => value],
+        // Every row is matched against the walk-in register with its own query,
+        // so a year of submissions takes minutes; the shared 15s default would
+        // abandon an import that is still running server-side.
+        timeout: 300_000,
+      });
+      return data;
+    },
+    onSuccess: () => {
+      // A matched submission also closes its walk-in row and cancels a pending
+      // reminder, so the Feedback screens are stale too.
+      void qc.invalidateQueries({ queryKey: ["nps"] });
+      void qc.invalidateQueries({ queryKey: ["feedback"] });
+    },
+  });
 }
 
 export function useNpsUpdates(opts: { stage?: NpsStage; take?: number } = {}) {

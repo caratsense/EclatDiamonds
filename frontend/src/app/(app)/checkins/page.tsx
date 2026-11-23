@@ -223,7 +223,11 @@ export default function CheckinsPage() {
       />
 
       <div className="mb-3 flex justify-end">
-        <ExcelExportButton path="/checkins/export.xlsx" fallbackName="walk-ins.xlsx" />
+        <ExcelExportButton
+          path="/checkins/export.xlsx"
+          fallbackName="walk-ins.xlsx"
+          rangedOn="the day the customer walked in"
+        />
       </div>
 
       <div className="space-y-4">

@@ -24,6 +24,82 @@ export const HEADER_FORMATS = ['TEXT', 'IMAGE'] as const;
 export type HeaderFormat = (typeof HEADER_FORMATS)[number];
 
 /**
+ * Where a `{{n}}` NORMALLY gets its value, said once on the template.
+ *
+ * The client built a template whose whole body was `{{1}}`, gave "Priya" as the
+ * sample, and asked the only sensible question about it: "how does the backend
+ * know when I'm sending that message that a customer name has to be added?
+ * There should be an option that you want to match this variable to customer's
+ * name or their gender or something like that. There is no such option."
+ *
+ * The sample is for Meta's reviewer and is never sent to anybody. The real
+ * choice already existed — on the BROADCAST, in the campaign wizard's variable
+ * mapper — so the feature was there and invisible from where she was standing,
+ * and it had to be re-chosen on every single send.
+ *
+ * This is that choice, remembered on the template itself. The broadcast
+ * pre-selects it and can still override it, because one template does get sent
+ * two ways.
+ *
+ * Deliberately the SAME four sources as `VARIABLE_SOURCES` in
+ * crm/campaign-variables, and not one more. That module is what actually
+ * resolves a value at send time, and it is handed a subject of `{name,
+ * branchName}` only — so a fifth source offered here (gender, last purchase,
+ * anything) would be chosen on the template and then quietly send the fallback
+ * to every recipient. Adding one means extending the resolver and the subject
+ * fetch first.
+ */
+export const TEMPLATE_VARIABLE_SOURCES = [
+  'customer_first_name',
+  'customer_name',
+  'branch_name',
+  'fixed',
+] as const;
+
+export type TemplateVariableSource = (typeof TEMPLATE_VARIABLE_SOURCES)[number];
+
+/**
+ * One remembered choice.
+ *
+ * Field for field the broadcast's own `VariableMapping`, so a stored row can be
+ * handed to `parseVariableMappings` unchanged. The spec asserts that against
+ * the real parser rather than trusting this sentence: the two shapes drifting
+ * apart would show up as a broadcast refusing every template that carries a
+ * default.
+ */
+export interface TemplateVariableDefault {
+  /** 1-based, matching `{{n}}`. */
+  slot: number;
+  source: TemplateVariableSource;
+  /** The wording itself, when `source` is 'fixed'. */
+  text?: string;
+  /**
+   * What to send when the customer record is empty for this source.
+   *
+   * Not optional, exactly as on the broadcast: Meta refuses a template
+   * parameter that is an empty string, so a customer with no name recorded
+   * would fail the send rather than merely read oddly.
+   */
+  fallback: string;
+}
+
+/**
+ * The same row as it ARRIVES, before `parseVariableDefaults` has had it.
+ *
+ * `fallback` is optional only here. A 'fixed' row genuinely has none to give —
+ * its own wording is its stand-in, which the parser fills in — and anything
+ * else is refused with a sentence naming the slot. Separating the two means the
+ * stored shape can keep `fallback` required, which is what lets a stored row be
+ * handed to the broadcast's parser untouched.
+ */
+export interface TemplateVariableDefaultInput {
+  slot: number;
+  source: TemplateVariableSource;
+  text?: string;
+  fallback?: string;
+}
+
+/**
  * A button on a carousel card.
  *
  * Meta allows quick_reply, url and phone_number. Only the first two are
@@ -99,6 +175,14 @@ export interface TemplateDraft {
    */
   examples?: string[];
   /**
+   * What normally fills each placeholder when a broadcast goes out.
+   *
+   * Nothing here reaches Meta — see TemplateVariableDefault. It is stored with
+   * the template so the campaign wizard can pre-select it instead of asking the
+   * same question on every send.
+   */
+  variableDefaults?: TemplateVariableDefaultInput[];
+  /**
    * 2–10 product cards. Present means this is a carousel, which changes the
    * shape of the whole template: the body sits ABOVE the cards and each card
    * carries its own picture and buttons.
@@ -143,6 +227,13 @@ const MAX_CARDS = 10;
 const MAX_CARD_BUTTONS = 2;
 const MAX_CARD_BODY = 160;
 const MAX_BUTTON_TEXT = 25;
+/*
+ * The same two ceilings crm/campaign-variables enforces on a broadcast's own
+ * mapping. Matched on purpose: a default that saved here and was then refused
+ * by the broadcast it exists to pre-fill would be a dead end on screen.
+ */
+const MAX_DEFAULT_FIXED = 200;
+const MAX_DEFAULT_FALLBACK = 60;
 
 /** See TemplateDraft.buttons — a floor Meta always permits, not its ceiling. */
 export const MAX_TEMPLATE_BUTTONS = 2;
@@ -204,6 +295,122 @@ export function placeholdersIn(text: string): number[] {
     found.add(Number(match[1]));
   }
   return [...found].sort((a, b) => a - b);
+}
+
+/**
+ * Meta's own rule about parameter content: no newline, no tab, no run of four
+ * or more spaces. A default typed with a line break in it would be refused at
+ * the provider on every recipient of the first broadcast that used it, so it is
+ * flattened as it is read rather than stored and discovered later.
+ */
+function flattenDefault(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() : '';
+}
+
+/**
+ * Read and check the remembered choices against the message they belong to.
+ *
+ * A SUBSET is allowed: saying what `{{1}}` normally is and leaving `{{2}}` to be
+ * decided per broadcast is a reasonable thing to want. What is refused is a row
+ * for a slot the message does not have — the way to get one is to delete a
+ * variable from a template that already had a default, and that row would then
+ * fill nothing while looking on screen as though it filled something.
+ */
+export function parseVariableDefaults(draft: TemplateDraft): TemplateVariableDefault[] {
+  const rows = draft.variableDefaults ?? [];
+  if (!rows.length) return [];
+
+  const used = new Set(placeholdersIn(draft.body ?? ''));
+  const seen = new Set<number>();
+
+  const parsed = rows.map((raw, i) => {
+    const row = (raw ?? {}) as Partial<TemplateVariableDefaultInput>;
+    const slot = Number.isInteger(row.slot) ? Number(row.slot) : i + 1;
+    if (!used.has(slot)) {
+      fail(`{{${slot}}} is not in this message, so there is nothing for it to fill.`);
+    }
+    if (seen.has(slot)) fail(`{{${slot}}} is listed twice — say once what normally fills it.`);
+    seen.add(slot);
+
+    const source = row.source as TemplateVariableSource;
+    if (!TEMPLATE_VARIABLE_SOURCES.includes(source)) {
+      fail(
+        `Choose what normally fills {{${slot}}}: the customer's name, their branch, ` +
+          'or the same wording for everyone.',
+      );
+    }
+
+    const text = flattenDefault(row.text);
+    if (source === 'fixed') {
+      if (!text) fail(`Type the wording that goes in {{${slot}}} for everyone.`);
+      if (text.length > MAX_DEFAULT_FIXED) {
+        fail(`The wording for {{${slot}}} is too long — keep it under ${MAX_DEFAULT_FIXED} characters.`);
+      }
+      // Mirrors the broadcast's own normalisation: a fixed value is never
+      // empty, so it is its own stand-in and the row stays valid there.
+      return { slot, source, text, fallback: text };
+    }
+
+    const fallback = flattenDefault(row.fallback);
+    if (!fallback) {
+      fail(
+        `Give {{${slot}}} something to say when a customer has no name on record — ` +
+          'Meta refuses a message with a blank value in it.',
+      );
+    }
+    if (fallback.length > MAX_DEFAULT_FALLBACK) {
+      fail(`The stand-in for {{${slot}}} is too long — keep it under ${MAX_DEFAULT_FALLBACK} characters.`);
+    }
+    return { slot, source, fallback };
+  });
+
+  return parsed.sort((a, b) => a.slot - b.slot);
+}
+
+/**
+ * What gets stored with the template asset, or `null` when nothing was chosen.
+ *
+ * `null` rather than an absent key, because an edit MERGES over the metadata
+ * already there: a key left out keeps its old value, so clearing every default
+ * on an edit would silently keep the old ones and the broadcast would go on
+ * pre-selecting a choice she had just removed.
+ */
+export function variableDefaultsMetadata(draft: TemplateDraft): TemplateVariableDefault[] | null {
+  const parsed = parseVariableDefaults(draft);
+  return parsed.length ? parsed : null;
+}
+
+/**
+ * Read stored defaults back out, dropping anything unrecognisable.
+ *
+ * Lenient on purpose, unlike the parser above. This runs on the way OUT of the
+ * database, where a throw would take the whole template list down over one bad
+ * row written by an older shape of this code — and the honest answer to a row
+ * we cannot read is that this slot has no default, which the broadcast already
+ * handles.
+ */
+export function variableDefaultsFrom(value: unknown): TemplateVariableDefault[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<number>();
+  const rows: TemplateVariableDefault[] = [];
+  for (const raw of value) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) continue;
+    const row = raw as Record<string, unknown>;
+    const slot = typeof row.slot === 'number' && Number.isInteger(row.slot) ? row.slot : null;
+    const source = row.source as TemplateVariableSource;
+    if (slot === null || slot < 1 || seen.has(slot)) continue;
+    if (!TEMPLATE_VARIABLE_SOURCES.includes(source)) continue;
+    const text = flattenDefault(row.text);
+    const fallback = flattenDefault(row.fallback);
+    if (source === 'fixed' ? !text : !fallback) continue;
+    seen.add(slot);
+    rows.push(
+      source === 'fixed'
+        ? { slot, source, text, fallback: text }
+        : { slot, source, fallback },
+    );
+  }
+  return rows.sort((a, b) => a.slot - b.slot);
 }
 
 /**
@@ -276,6 +483,15 @@ export function buildTemplatePayload(draft: TemplateDraft): MetaTemplatePayload 
       }
     }
   }
+
+  /*
+   * The remembered mapping never reaches Meta — it says what fills {{1}} on our
+   * own side. It is checked here anyway because this is the last point before
+   * the template is CREATED upstream: `templateShapeMetadata` runs after that
+   * POST, so a bad row discovered there would throw on a template that already
+   * exists at Meta and cannot be un-created.
+   */
+  parseVariableDefaults(draft);
 
   const components: TemplateComponent[] = [];
 

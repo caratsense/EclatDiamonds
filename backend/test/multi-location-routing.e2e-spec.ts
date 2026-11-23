@@ -586,9 +586,30 @@ describe('Multi-location ad routing, handoff and visibility (e2e)', () => {
     expect(outbound[0].authorUser?.id).toBe(managerId[b.key]);
     expect(outbound[0].authorUser?.name).toBe(b.managerName);
 
-    // And the customer was told too — the stored body is signed, so the thread
-    // is a record of what actually arrived on their phone.
-    expect(outbound[0].body.startsWith(`*${b.managerName}*\n`)).toBe(true);
+    // What a COLLEAGUE is shown is the words alone. The signature is stripped on
+    // the way out, so the thread does not state the sender's name twice — the
+    // badge above the bubble already does.
+    expect(outbound[0].body.startsWith('*')).toBe(false);
+    expect(outbound[0].body).toContain('Saturday');
+
+    /*
+     * What the CUSTOMER received, read from the row rather than the API, because
+     * the API deliberately no longer shows it: the reply is signed as the
+     * BUSINESS and never as the person or department who typed it.
+     *
+     * This replaces an assertion that the body was signed `*Karan Malhotra*`.
+     * That shape reached real phones as "*Head Office*" on head-office replies
+     * and as the scripted account's own name on scripted ones (client, Nov 2026),
+     * which is exactly what the customer must never be shown.
+     */
+    const stored = await prisma.message.findUnique({
+      where: { id: outbound[0].id },
+      select: { body: true },
+    });
+    // 'Multi-location' is this fixture's organisation name, and no branding
+    // display name is set for it — so the organisation name is what signs.
+    expect(stored?.body?.startsWith('*Multi-location*\n')).toBe(true);
+    expect(stored?.body).not.toContain(b.managerName);
   });
 
   it("separates the bot's messages from the manager's", async () => {

@@ -44,6 +44,22 @@ import {
   nextRecipientStatus,
   recipientSendKey,
 } from './campaign-delivery';
+import {
+  DID_NOT_ARRIVE,
+  RETRY_COOLDOWN_HOURS,
+  retryCooldownSince,
+  retryPlan,
+  type RetryPlan,
+} from './campaign-retry';
+import { partitionForTagging } from './campaign-tagging';
+import {
+  ALREADY_RECEIVED_REASON,
+  REACHED_STATUSES,
+  audienceSnapshotWith,
+  suppressedTemplateFrom,
+} from './campaign-suppression';
+import { LeadTagsService, tagSlug } from './lead-tags.service';
+import { readableParty } from '../common/sales-scope';
 
 export const CAMPAIGN_EXPAND_JOB = 'campaign.expand';
 export const CAMPAIGN_SEND_JOB = 'campaign.send';
@@ -60,6 +76,22 @@ const MAX_AUDIENCE = 50_000;
 
 /** Rows returned to the preview screen. The COUNT beside them is uncapped. */
 const PREVIEW_SAMPLE = 25;
+
+/**
+ * How many customers' template history the "already received this" check will
+ * hold in memory at once.
+ *
+ * There is no relation from Party to CampaignRecipient, so the overlap cannot
+ * be a single join: the people a template has ever reached are grouped in the
+ * database and then counted against the audience. Capped so a tenant with years
+ * of history cannot turn an interactive screen into a full table scan in
+ * memory, and the screen says the figure is a floor when the cap is hit rather
+ * than presenting a truncated number as complete.
+ */
+const TEMPLATE_HISTORY_MAX = 20_000;
+
+/** How many ids go into one `IN` list. A 20,000-id query is not a query. */
+const ID_CHUNK = 5_000;
 
 type CampaignCounts = Record<string, number>;
 
@@ -103,6 +135,10 @@ export class CampaignsService implements OnModuleInit {
     private readonly audit: AuditService,
     private readonly identity: IdentityService,
     private readonly scope: StoreScopeService,
+    // The tenant's one tag vocabulary. Tagging from a broadcast must go through
+    // the same service the CRM board and the customer profile use, or a tag
+    // created here would skip the per-tenant ceiling and the name rules.
+    private readonly leadTags: LeadTagsService,
     @Inject(forwardRef(() => OmnichannelService))
     private readonly omnichannel: OmnichannelService,
   ) {}
@@ -301,6 +337,95 @@ export class CampaignsService implements OnModuleInit {
     };
   }
 
+  /**
+   * How many of this audience have already had this template from us.
+   *
+   * The client's words: "these many people have already received this
+   * template, do you want to send again? If no, exclude them." Asked at the
+   * point the audience and the template are both known, which is the review
+   * step of the wizard — late enough to be a real number, early enough that
+   * nothing has been created.
+   *
+   * "Received" is the CampaignRecipient history and nothing else: a row that
+   * reached the provider and was accepted. A failed row means they never got
+   * the message, and suppressing them would guarantee they never do.
+   */
+  async templateOverlap(
+    user: AuthUser,
+    input: { definition?: unknown; segmentId?: string; storeIds?: string[]; templateName: string },
+  ) {
+    const templateName = input.templateName.trim();
+    if (!templateName) {
+      throw new BadRequestException('Choose the template before checking who has had it.');
+    }
+    const definition = await this.resolveDefinition(user, input);
+    const compiled = compileSegment(definition, new Date());
+    const where = previewAudienceWhere(user, compiled.where, input.storeIds);
+
+    const [audience, overlap] = await Promise.all([
+      this.prisma.party.count({ where }),
+      this.countAlreadyReceived(user.organisationId, where, templateName),
+    ]);
+
+    return {
+      templateName,
+      /** Everyone the rules match, so the overlap can be read as a share. */
+      audience,
+      alreadyReceived: overlap.alreadyReceived,
+      /** True when the figure is a floor rather than the whole history. */
+      historyCapped: overlap.historyCapped,
+    };
+  }
+
+  /**
+   * Customers inside `where` who have previously been reached by a campaign
+   * sending this template.
+   *
+   * Two steps rather than one join, because CampaignRecipient carries a plain
+   * `partyId` with no relation to Party — grouping in the database gives the
+   * distinct people, and the audience filter counts how many of them it
+   * matches. The id list is chunked so the second half stays a query rather
+   * than a twenty-thousand-element `IN`.
+   */
+  private async countAlreadyReceived(
+    organisationId: string,
+    where: Prisma.PartyWhereInput,
+    templateName: string,
+  ): Promise<{ alreadyReceived: number; historyCapped: boolean }> {
+    const grouped = await this.prisma.campaignRecipient.groupBy({
+      by: ['partyId'],
+      where: {
+        organisationId,
+        status: { in: REACHED_STATUSES },
+        partyId: { not: null },
+        campaign: { templateName },
+      },
+      // Required by Prisma whenever a grouped read is limited, and the id is
+      // the only column here. The order does not change the count: the cap is
+      // reported as a cap rather than presented as the whole history.
+      orderBy: { partyId: 'asc' },
+      // One over the cap, so a capped history can be reported as capped rather
+      // than silently rounded down to it.
+      take: TEMPLATE_HISTORY_MAX + 1,
+    });
+    const historyCapped = grouped.length > TEMPLATE_HISTORY_MAX;
+    const ids = grouped
+      .slice(0, TEMPLATE_HISTORY_MAX)
+      .map((g) => g.partyId)
+      .filter((id): id is string => Boolean(id));
+    if (!ids.length) return { alreadyReceived: 0, historyCapped };
+
+    let alreadyReceived = 0;
+    for (let i = 0; i < ids.length; i += ID_CHUNK) {
+      // AND, never a spread: `where` already carries an OR that IS the store
+      // scope for a branch-limited user.
+      alreadyReceived += await this.prisma.party.count({
+        where: { AND: [where, { id: { in: ids.slice(i, i + ID_CHUNK) } }] },
+      });
+    }
+    return { alreadyReceived, historyCapped };
+  }
+
   private async resolveDefinition(
     user: AuthUser,
     input: { definition?: unknown; segmentId?: string },
@@ -414,6 +539,7 @@ export class CampaignsService implements OnModuleInit {
       storeIds?: string[];
       scheduledAt?: string;
       marketingCampaignId?: string;
+      excludeAlreadyReceivedTemplate?: boolean;
     },
   ) {
     this.assertManager(user, 'create a campaign');
@@ -434,6 +560,19 @@ export class CampaignsService implements OnModuleInit {
       throw new BadRequestException('Choose a saved audience or describe one.');
     }
 
+    /*
+     * "If no, exclude them" — the answer to the already-received prompt, frozen
+     * with the audience rather than left as something the screen displayed.
+     *
+     * Held by TEMPLATE NAME, not as a boolean, because the suppression means
+     * "people who have had this particular wording". Changing the campaign's
+     * template later must not leave it suppressing the previous one's history.
+     */
+    const suppressTemplate =
+      input.excludeAlreadyReceivedTemplate && input.templateName?.trim()
+        ? input.templateName.trim()
+        : null;
+
     const row = await this.prisma.messagingCampaign.create({
       data: {
         organisationId: user.organisationId,
@@ -441,9 +580,13 @@ export class CampaignsService implements OnModuleInit {
         description: input.description?.trim() || null,
         channel,
         segmentId: input.segmentId ?? null,
-        audienceSnapshot: definition
-          ? (definition as unknown as Prisma.InputJsonValue)
-          : Prisma.JsonNull,
+        audienceSnapshot:
+          definition || suppressTemplate
+            ? (audienceSnapshotWith(
+                definition ?? null,
+                suppressTemplate,
+              ) as unknown as Prisma.InputJsonValue)
+            : Prisma.JsonNull,
         templateName: input.templateName?.trim() || null,
         templateLanguage: input.templateLanguage?.trim() || null,
         bodyPreview: input.bodyPreview?.trim() || null,
@@ -491,9 +634,37 @@ export class CampaignsService implements OnModuleInit {
     if (Array.isArray(input.storeIds)) {
       data.storeIds = visibleStores(user, input.storeIds as string[]) ?? [];
     }
+    /*
+     * The already-received suppression lives INSIDE `audienceSnapshot`, so any
+     * write that rebuilds the snapshot has to carry it across or editing a
+     * rule would silently switch the exclusion off — and the broadcast would
+     * go to exactly the people she had chosen to leave out.
+     */
+    const storedSuppression = suppressedTemplateFrom(row.audienceSnapshot);
+    const templateForSuppression =
+      (typeof input.templateName === 'string' ? input.templateName.trim() : row.templateName) ||
+      null;
+    const suppression =
+      input.excludeAlreadyReceivedTemplate === undefined
+        ? storedSuppression
+        : input.excludeAlreadyReceivedTemplate
+          ? templateForSuppression
+          : null;
     if (input.definition !== undefined) {
-      data.audienceSnapshot = parseSegmentDefinition(
-        input.definition,
+      data.audienceSnapshot = audienceSnapshotWith(
+        parseSegmentDefinition(input.definition),
+        suppression,
+      ) as unknown as Prisma.InputJsonValue;
+    } else if (suppression !== storedSuppression) {
+      // Only the answer to the prompt changed. The stored rules are re-parsed
+      // rather than re-typed, so a snapshot that was never written stays
+      // unwritten instead of becoming an audience nobody chose.
+      const rules = hasConditions(row.audienceSnapshot)
+        ? parseSegmentDefinition(row.audienceSnapshot)
+        : null;
+      data.audienceSnapshot = audienceSnapshotWith(
+        rules,
+        suppression,
       ) as unknown as Prisma.InputJsonValue;
     }
     if (typeof input.segmentId === 'string') {
@@ -593,7 +764,14 @@ export class CampaignsService implements OnModuleInit {
         status: row.scheduledAt && row.scheduledAt > new Date() ? 'scheduled' : 'approved',
         approvedById: user.id,
         approvedAt: new Date(),
-        audienceSnapshot: definition as unknown as Prisma.InputJsonValue,
+        // The suppression is carried across with the rules. Approval rewrites
+        // the snapshot from the resolved definition, and a rebuild that dropped
+        // the exclusion would send to the people she chose to leave out — at
+        // the one moment nobody is looking at the screen any more.
+        audienceSnapshot: audienceSnapshotWith(
+          definition,
+          suppressedTemplateFrom(row.audienceSnapshot),
+        ) as unknown as Prisma.InputJsonValue,
         templateAssetId: asset.id,
         providerSnapshot: {
           providerCode: 'whatsapp_cloud',
@@ -683,8 +861,8 @@ export class CampaignsService implements OnModuleInit {
      * the statuses behind it rather than making the reader know which is which.
      */
     const GROUPS: Record<string, string[]> = {
-      reached: ['sent', 'delivered', 'read'],
-      not_reached: ['failed', 'dead'],
+      reached: REACHED_STATUSES,
+      not_reached: DID_NOT_ARRIVE,
     };
     const group = opts.status ? GROUPS[opts.status] : undefined;
     const where = {
@@ -723,7 +901,17 @@ export class CampaignsService implements OnModuleInit {
       items: rows.map((r) => ({
         id: r.id,
         partyId: r.partyId,
-        contact: maskContact(r.contactValue),
+        /*
+         * THE WHOLE NUMBER, not the last four digits.
+         *
+         * This was masked, and the client asked why: "why have we hidden those
+         * numbers... it could have simply been whole number visible." It is her
+         * own customer list, shown to her own staff, who can open any of those
+         * customers' records and read the number there in one click. Masking it
+         * on this screen protected nobody and stopped the one thing the screen
+         * is for — matching a row that did not arrive to a person she knows.
+         */
+        contact: r.contactValue,
         status: r.status,
         exclusionReason: r.exclusionReason,
         // Meta's codes, as a sentence. Stored as codes so no echoed customer
@@ -736,19 +924,80 @@ export class CampaignsService implements OnModuleInit {
   }
 
   /**
-   * Retry the ones that failed transiently. Deliberately NOT offered for 'dead'
-   * or 'excluded': dead exhausted its attempts and needs a human to look at why,
-   * and excluded means consent or policy said no — retrying that would be a
-   * deliberate attempt to message someone who declined.
+   * What a re-send to the "Did not arrive" group would actually do, before
+   * anybody presses the button.
+   *
+   * A separate read rather than a figure returned by the re-send itself: the
+   * client has to be able to see how many people it will spend, and how many it
+   * is holding back and why, while she can still decide not to.
    */
-  async retryFailed(user: AuthUser, id: string) {
+  async retryPlanFor(user: AuthUser, id: string): Promise<RetryPlan> {
+    const row = await this.loadCampaign(user, id);
+    const scope = {
+      organisationId: user.organisationId,
+      campaignId: row.id,
+      status: { in: DID_NOT_ARRIVE },
+    };
+    const [retryable, messagedRecently] = await Promise.all([
+      this.prisma.campaignRecipient.count({ where: scope }),
+      this.prisma.campaignRecipient.count({
+        where: { ...scope, sentAt: { gte: retryCooldownSince(new Date()) } },
+      }),
+    ]);
+    return retryPlan({ retryable, messagedRecently });
+  }
+
+  /**
+   * Re-send to the people this broadcast did not reach.
+   *
+   * 'excluded' is deliberately left alone: it means consent or policy said no,
+   * and retrying that would be a deliberate attempt to message somebody who
+   * declined. scripts/retry-campaign.mjs can reclaim the narrow
+   * `policy_refused_at_send` case when a rule has since changed, with a human
+   * reading the figures first; a button on a screen is not the place for it.
+   */
+  async retryFailed(user: AuthUser, id: string, opts: { includeRecentlyMessaged?: boolean } = {}) {
     this.assertManager(user, 'retry a campaign');
     const row = await this.loadCampaign(user, id);
+    /*
+     * ANYONE MESSAGED IN THE LAST 24 HOURS IS HELD BACK.
+     *
+     * Meta caps marketing per recipient (error 131049), so re-sending to
+     * somebody who was messaged an hour ago spends their allowance and is the
+     * most likely way to have them refused again. The window and the reasoning
+     * are RETRY_COOLDOWN_HOURS in campaign-retry, which is the same rule
+     * scripts/retry-campaign.mjs enforces rather than a second opinion about it.
+     *
+     * `sentAt` is when the provider last took a message for them; a recipient
+     * that never reached the provider has none and is always eligible.
+     */
+    const cooldownSince = retryCooldownSince(new Date());
+    const cooldownClause = opts.includeRecentlyMessaged
+      ? {}
+      : { OR: [{ sentAt: null }, { sentAt: { lt: cooldownSince } }] };
+    const where = {
+      organisationId: user.organisationId,
+      campaignId: row.id,
+      status: { in: DID_NOT_ARRIVE },
+    };
+    const heldBack = opts.includeRecentlyMessaged
+      ? 0
+      : await this.prisma.campaignRecipient.count({
+          where: { ...where, sentAt: { gte: cooldownSince } },
+        });
+
     const reset = await this.prisma.campaignRecipient.updateMany({
-      where: { organisationId: user.organisationId, campaignId: row.id, status: 'failed' },
-      // The old message is let go of too. It is refused and finished, and
-      // leaving it linked would have this attempt's outcome read off the
-      // previous attempt's failure.
+      where: { ...where, ...cooldownClause },
+      /*
+       * `attempts` IS DELIBERATELY LEFT ALONE. It is the generation number in
+       * the send's idempotency key, so zeroing it makes this attempt reuse the
+       * key the last one spent — and the send becomes a no-op that hands back
+       * the message already refused. That is exactly how three re-sends of the
+       * nails-event broadcast reached nobody.
+       *
+       * The old message is let go of too: leaving it linked would have this
+       * attempt's outcome read off the previous attempt's failure.
+       */
       data: { status: 'pending', lastError: null, messageId: null },
     });
     if (reset.count) {
@@ -762,9 +1011,144 @@ export class CampaignsService implements OnModuleInit {
       action: 'campaign.retried',
       entityType: 'MessagingCampaign',
       entityId: row.id,
-      summary: `Retried ${reset.count} failed recipients on "${row.name}".`,
+      // The override is named in the trail. Overriding a per-recipient cap is
+      // a decision somebody made, not a default, and the record has to show
+      // which of the two happened.
+      summary:
+        `Retried ${reset.count} recipients that did not arrive on "${row.name}"` +
+        (opts.includeRecentlyMessaged
+          ? `, including anyone messaged in the last ${RETRY_COOLDOWN_HOURS}h.`
+          : heldBack
+            ? `; ${heldBack} held back as messaged within ${RETRY_COOLDOWN_HOURS}h.`
+            : '.'),
     });
-    return { retried: reset.count };
+    return { retried: reset.count, heldBack, cooldownHours: RETRY_COOLDOWN_HOURS };
+  }
+
+  // ======================================================= tags from a send
+
+  /**
+   * Put a tag on the customers behind the ticked recipient rows.
+   *
+   * The client's words: "I can select multiple people at a time and then I can
+   * give them a custom tag. So next time when I create a broadcast I can
+   * include or exclude those people through tags." The include and the exclude
+   * already exist — `party.tag` with `in` and `not_in` in the audience DSL —
+   * so this is the half that was missing: getting the tag onto the people.
+   *
+   * It lands on the CUSTOMER through the same PartyTagAssignment the customer
+   * profile writes, so a tag put on somebody here is the tag the next
+   * broadcast's audience builder offers. A parallel "broadcast tag" would have
+   * been invisible to the one screen it was asked for.
+   */
+  async tagRecipients(
+    user: AuthUser,
+    id: string,
+    input: { recipientIds: string[]; tagId?: string; tagName?: string },
+  ) {
+    this.assertManager(user, 'tag customers from a broadcast');
+    const row = await this.loadCampaign(user, id);
+    if (!input.recipientIds.length) {
+      throw new BadRequestException('Tick the people you want to tag first.');
+    }
+
+    const tag = await this.resolveTagFor(user, input);
+
+    const rows = await this.prisma.campaignRecipient.findMany({
+      where: {
+        id: { in: input.recipientIds },
+        organisationId: user.organisationId,
+        campaignId: row.id,
+      },
+      select: { id: true, partyId: true },
+    });
+    const split = partitionForTagging(input.recipientIds, rows);
+
+    /*
+     * The customer must be one this caller may read, checked through the same
+     * `readableParty` rule the customer profile's own tagging uses. A recipient
+     * row is reachable because the broadcast is; that is not on its own a
+     * licence to write to the customer record behind it.
+     */
+    const reachable = split.partyIds.length
+      ? await this.prisma.party.findMany({
+          where: { id: { in: split.partyIds }, ...readableParty(user) },
+          select: { id: true },
+        })
+      : [];
+
+    const created = reachable.length
+      ? (
+          await this.prisma.partyTagAssignment.createMany({
+            data: reachable.map((p) => ({
+              organisationId: user.organisationId,
+              partyId: p.id,
+              tagId: tag.id,
+              createdById: user.id,
+            })),
+            skipDuplicates: true,
+          })
+        ).count
+      : 0;
+
+    await this.audit.record(user, {
+      action: 'campaign.recipients.tagged',
+      entityType: 'MessagingCampaign',
+      entityId: row.id,
+      summary:
+        `Tagged ${created} customer${created === 1 ? '' : 's'} "${tag.name}" ` +
+        `from the broadcast "${row.name}".`,
+    });
+
+    return {
+      tag: { id: tag.id, name: tag.name, colour: tag.colour },
+      /** Customers that did not already carry the tag and now do. */
+      tagged: created,
+      /** Ticked customers that already carried it — counted, not an error. */
+      alreadyTagged: reachable.length - created,
+      /**
+       * Ticked rows with no customer record behind them. A broadcast can hold
+       * a number that never matched a customer, and there is nothing to tag;
+       * the screen says which rows rather than reporting a smaller number with
+       * no explanation.
+       */
+      withoutCustomer: split.withoutCustomer.length,
+      /** Ids that are not on this broadcast. A stale screen, not a failure. */
+      notOnThisBroadcast: split.notOnThisBroadcast.length,
+    };
+  }
+
+  /**
+   * The tag to apply: one the tenant already has, or a new one by name.
+   *
+   * A name that already exists is REUSED rather than refused. Somebody typing
+   * "VIP" into the box on a broadcast screen means the VIP tag they already
+   * have, and a conflict error there is a dead end — they cannot see the
+   * vocabulary from here to pick it instead.
+   */
+  private async resolveTagFor(
+    user: AuthUser,
+    input: { tagId?: string; tagName?: string },
+  ): Promise<{ id: string; name: string; colour: string | null }> {
+    if (input.tagId) {
+      const existing = await this.prisma.leadTag.findFirst({
+        where: { id: input.tagId, organisationId: user.organisationId },
+        select: { id: true, name: true, colour: true },
+      });
+      if (!existing) throw new NotFoundException('That tag does not exist here.');
+      return existing;
+    }
+    const name = input.tagName?.trim();
+    if (!name) throw new BadRequestException('Choose a tag, or type a name for a new one.');
+    const bySlug = await this.prisma.leadTag.findFirst({
+      where: { organisationId: user.organisationId, slug: tagSlug(name) },
+      select: { id: true, name: true, colour: true },
+    });
+    if (bySlug) return bySlug;
+    // Through LeadTagsService, so the per-tenant ceiling and the name length
+    // rules are the vocabulary's own and not restated here.
+    const made = await this.leadTags.create(user, { name });
+    return { id: made.id, name: made.name, colour: made.colour };
   }
 
   // ============================================================== jobs
@@ -836,10 +1220,26 @@ export class CampaignsService implements OnModuleInit {
     });
     const country = org?.country ?? 'IN';
 
+    /*
+     * "If no, exclude them", applied to the real audience.
+     *
+     * Checked per batch rather than once up front: CampaignRecipient has no
+     * relation to Party, so this cannot be a clause on the audience query, and
+     * resolving the whole history into an `IN` list would be the same figure
+     * with a worse failure mode. One indexed lookup per 500 customers.
+     *
+     * They are written as EXCLUDED rows rather than left out of the list
+     * entirely. A person who silently never appears is a person nobody can
+     * account for; an excluded row with a reason puts them on the "Not
+     * messaged" tab, which is where every other deliberate omission is.
+     */
+    const suppressTemplate = suppressedTemplateFrom(campaign.audienceSnapshot);
+
     let cursor: string | undefined;
     let created = 0;
     let blocked = 0;
     let unreadable = 0;
+    let alreadyHadTemplate = 0;
     for (;;) {
       const batch = await this.prisma.party.findMany({
         where,
@@ -850,6 +1250,22 @@ export class CampaignsService implements OnModuleInit {
       });
       if (!batch.length) break;
       cursor = batch[batch.length - 1].id;
+
+      const alreadyReached = suppressTemplate
+        ? new Set(
+            (
+              await this.prisma.campaignRecipient.groupBy({
+                by: ['partyId'],
+                where: {
+                  organisationId: ctx.organisationId,
+                  partyId: { in: batch.map((p) => p.id) },
+                  status: { in: REACHED_STATUSES },
+                  campaign: { templateName: suppressTemplate },
+                },
+              })
+            ).map((g) => g.partyId),
+          )
+        : null;
 
       const rows: Prisma.CampaignRecipientCreateManyInput[] = [];
       for (const p of batch) {
@@ -866,13 +1282,22 @@ export class CampaignsService implements OnModuleInit {
         }
         const isBlocked = p.isBlacklisted;
         if (isBlocked) blocked += 1;
+        // Checked after blocked, so a blocked customer is reported as blocked:
+        // that is the stronger reason and the one that would still apply if the
+        // suppression were turned off.
+        const hadTemplate = !isBlocked && alreadyReached?.has(p.id) === true;
+        if (hadTemplate) alreadyHadTemplate += 1;
         rows.push({
           organisationId: ctx.organisationId,
           campaignId: campaign.id,
           partyId: p.id,
           contactValue: normalized,
-          status: isBlocked ? 'excluded' : 'pending',
-          exclusionReason: isBlocked ? 'blocked_customer' : null,
+          status: isBlocked || hadTemplate ? 'excluded' : 'pending',
+          exclusionReason: isBlocked
+            ? 'blocked_customer'
+            : hadTemplate
+              ? ALREADY_RECEIVED_REASON
+              : null,
         });
       }
       if (rows.length) {
@@ -894,10 +1319,13 @@ export class CampaignsService implements OnModuleInit {
       entityId: campaign.id,
       summary:
         `Expanded "${campaign.name}" to ${created} recipients; ` +
-        `${blocked} blocked, ${unreadable} with no usable number.`,
+        `${blocked} blocked, ${unreadable} with no usable number` +
+        (suppressTemplate
+          ? `, ${alreadyHadTemplate} already had ${suppressTemplate}.`
+          : '.'),
     });
     await this.enqueueSend(ctx.organisationId, campaign.id);
-    return { created, blocked, unreadable };
+    return { created, blocked, unreadable, alreadyHadTemplate };
   }
 
   /**
@@ -1428,6 +1856,24 @@ export function audienceRefusal(counts: { total: number; contactable: number }):
     return `None of the ${counts.total} people who match have a phone or WhatsApp number, so nothing could be delivered. Change the audience, count who it reaches, and try again.`;
   }
   return null;
+}
+
+/**
+ * Does this stored snapshot actually hold rules?
+ *
+ * A snapshot may be a suppression and nothing else — a campaign built from a
+ * saved segment answers the already-received prompt without ever having inline
+ * rules — and `parseSegmentDefinition` would refuse that as an audience with no
+ * rule. Asked before parsing rather than caught after, because the refusal it
+ * throws is written for somebody building an audience.
+ */
+function hasConditions(snapshot: unknown): boolean {
+  return (
+    Boolean(snapshot) &&
+    typeof snapshot === 'object' &&
+    !Array.isArray(snapshot) &&
+    Array.isArray((snapshot as Record<string, unknown>).conditions)
+  );
 }
 
 function isUniqueViolation(error: unknown): boolean {

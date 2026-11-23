@@ -129,12 +129,50 @@ export interface AudiencePreview {
 
 export interface CampaignRecipientRow {
   id: string;
+  /** Null when the broadcast messaged a number no customer record claims. */
   partyId: string | null;
+  /**
+   * The whole number, not the last four digits.
+   *
+   * The client asked why it had been hidden: "it could have simply been whole
+   * number visible." It is her own list, shown to her own staff, who can open
+   * the customer and read the number there anyway.
+   */
   contact: string | null;
   status: string;
   exclusionReason: string | null;
   lastError: string | null;
   sentAt: string | null;
+}
+
+/** What a re-send to the "Did not arrive" group would do, before the click. */
+export interface CampaignRetryPlan {
+  cooldownHours: number;
+  /** Everyone the re-send could touch. */
+  retryable: number;
+  /** Of those, the ones messaged inside the cooldown and so left out. */
+  heldBack: number;
+  /** What the button will actually send to. */
+  willSend: number;
+  /** What it would send to if the cooldown were deliberately overridden. */
+  willSendWithOverride: number;
+}
+
+/** How many of an audience have already had one template from us. */
+export interface TemplateOverlap {
+  templateName: string;
+  audience: number;
+  alreadyReceived: number;
+  /** The figure is a floor: the tenant's history was longer than we read. */
+  historyCapped: boolean;
+}
+
+export interface TagRecipientsResult {
+  tag: { id: string; name: string; colour: string | null };
+  tagged: number;
+  alreadyTagged: number;
+  withoutCustomer: number;
+  notOnThisBroadcast: number;
 }
 
 /**
@@ -321,6 +359,7 @@ const keys = {
   campaigns: ["campaigns"] as const,
   campaign: (id: string) => ["campaigns", id] as const,
   recipients: (id: string, status?: string) => ["campaigns", id, "recipients", status ?? "all"] as const,
+  retryPlan: (id: string) => ["campaigns", id, "retry-plan"] as const,
   audiences: ["audiences"] as const,
 };
 
@@ -391,6 +430,68 @@ export function useCampaignRecipients(
   });
 }
 
+/**
+ * What a re-send would do, fetched before the button is pressed.
+ *
+ * The screen used to offer "Retry failed" with no number on it at all, so the
+ * only way to learn how many people a re-send spent was to spend them.
+ */
+export function useCampaignRetryPlan(id: string | undefined, enabled = true) {
+  return useQuery({
+    queryKey: keys.retryPlan(id ?? ""),
+    enabled: Boolean(id) && enabled,
+    queryFn: async () => {
+      const { data } = await api.get<CampaignRetryPlan>(`/campaigns/${id}/retry-plan`);
+      return data;
+    },
+  });
+}
+
+/**
+ * Put a tag on the customers behind the ticked rows.
+ *
+ * Invalidates the tag vocabulary as well as this broadcast: a brand-new tag has
+ * to appear in the next broadcast's audience builder, which is the entire
+ * reason the client asked for this.
+ */
+export function useTagCampaignRecipients(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { recipientIds: string[]; tagId?: string; tagName?: string }) => {
+      const { data } = await api.post<TagRecipientsResult>(
+        `/campaigns/${id}/recipients/tag`,
+        input,
+      );
+      return data;
+    },
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["lead-tags"] });
+      void qc.invalidateQueries({ queryKey: ["parties"] });
+    },
+  });
+}
+
+/**
+ * How many of this audience have already had this template.
+ *
+ * A mutation rather than a query: it is asked once, at the moment the audience
+ * and the template are both known, and the answer is a decision the person then
+ * makes — not something to re-fetch in the background.
+ */
+export function useTemplateOverlap() {
+  return useMutation({
+    mutationFn: async (input: {
+      definition?: SegmentDefinition;
+      segmentId?: string;
+      storeIds?: string[];
+      templateName: string;
+    }) => {
+      const { data } = await api.post<TemplateOverlap>("/campaigns/template-overlap", input);
+      return data;
+    },
+  });
+}
+
 export function useAudiences() {
   return useQuery({
     queryKey: keys.audiences,
@@ -436,6 +537,14 @@ export function useCreateCampaign() {
       bodyPreview?: string;
       storeIds?: string[];
       scheduledAt?: string;
+      /**
+       * The answer to "these many people have already received this template,
+       * do you want to send again? If no, exclude them." Applied at expansion
+       * against the recipient history, so a scheduled broadcast excludes who it
+       * should at the moment it runs rather than who it would have excluded
+       * when the browser asked.
+       */
+      excludeAlreadyReceivedTemplate?: boolean;
     }) => {
       const { data } = await api.post<Campaign>("/campaigns", input);
       return data;
@@ -462,7 +571,40 @@ export const useSubmitCampaign = () => useCampaignAction((id) => `/campaigns/${i
 export const useApproveCampaign = () => useCampaignAction((id) => `/campaigns/${id}/approve`);
 export const useCancelCampaign = () =>
   useCampaignAction<{ reason?: string }>((id) => `/campaigns/${id}/cancel`);
-export const useRetryCampaign = () => useCampaignAction((id) => `/campaigns/${id}/retry`);
+
+/**
+ * Re-send to the people the broadcast did not reach.
+ *
+ * Its own hook rather than useCampaignAction, because the reply is not a
+ * campaign: it says how many were re-sent to and how many were held back inside
+ * Meta's per-recipient cooldown, and the screen has to report both. The shared
+ * helper typed that reply as `Campaign`, so the old screen read the count off a
+ * cast and showed 0 whenever the shape changed.
+ */
+export function useRetryCampaign() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      id,
+      includeRecentlyMessaged,
+    }: {
+      id: string;
+      includeRecentlyMessaged?: boolean;
+    }) => {
+      const { data } = await api.post<{
+        retried: number;
+        heldBack: number;
+        cooldownHours: number;
+      }>(`/campaigns/${id}/retry`, { includeRecentlyMessaged });
+      return data;
+    },
+    onSuccess: (_data, variables) => {
+      void qc.invalidateQueries({ queryKey: keys.campaigns });
+      void qc.invalidateQueries({ queryKey: keys.campaign(variables.id) });
+      void qc.invalidateQueries({ queryKey: keys.retryPlan(variables.id) });
+    },
+  });
+}
 
 /** Wording a person can act on, for each state the API can report. */
 export const CAMPAIGN_STATUS_LABELS: Record<CampaignStatus, string> = {
