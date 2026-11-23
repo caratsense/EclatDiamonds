@@ -73,14 +73,39 @@ export class IdentityService {
    * ponytail: single-country normaliser + explicit international form. Swap in a
    * real libphonenumber parse when a tenant outside India actually onboards.
    */
-  normalize(kind: ContactKind, raw: string, country = 'IN'): string | null {
+  normalize(
+    kind: ContactKind,
+    raw: string,
+    country = 'IN',
+    /**
+     * The number ALREADY carries its country code, even without a leading '+'.
+     *
+     * A WhatsApp webhook's `from` is documented as the full international
+     * number with the '+' stripped, so the country is already in those digits.
+     * Treating it as a local number and bolting the tenant's country code on
+     * the front invents an address that belongs to nobody.
+     *
+     * That is not hypothetical. A customer wrote in from +65 9383 5143 on
+     * 22 November; `6593835143` has ten digits and begins with a 6, which is
+     * also a valid Indian mobile prefix, so it was stored as `916593835143`.
+     * Two replies were then sent to a number that does not exist and came back
+     * "This number cannot receive WhatsApp messages" (131026) — on a thread the
+     * customer had opened themselves, which is what made it look absurd.
+     *
+     * Ambiguity is why the CALLER has to say this rather than the parser
+     * guessing: ten digits starting 6-9 is a valid Indian mobile AND a valid
+     * number in several other countries. Only the caller knows where the digits
+     * came from. The provider knows; a person typing into a box does not.
+     */
+    opts: { alreadyInternational?: boolean } = {},
+  ): string | null {
     const v = (raw ?? '').trim();
     if (!v) return null;
 
     switch (kind) {
       case 'phone':
       case 'whatsapp': {
-        if (v.startsWith('+')) {
+        if (v.startsWith('+') || opts.alreadyInternational) {
           const digits = v.replace(/\D/g, '');
           // Shortest possible E.164 subscriber number is ~7 digits + country code.
           return digits.length >= 8 && digits.length <= 15 ? digits : null;
