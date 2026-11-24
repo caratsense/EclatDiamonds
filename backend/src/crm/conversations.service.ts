@@ -1996,6 +1996,18 @@ export class ConversationsService {
        */
       broadcast?: boolean;
       campaignId?: string;
+      /**
+       * The last row the caller already has. Everything OLDER than it follows.
+       *
+       * Keyset, not an offset. The inbox reorders itself constantly — a reply
+       * arriving between two pages moves that thread to the top and shifts
+       * every row down one, so `skip: 50` would hand back a row the reader has
+       * already seen and silently drop the one behind it. An id anchors the
+       * page to a thread instead of to a position, and the `id` tiebreak in
+       * the ordering below is what makes the anchor unambiguous when two
+       * threads share a `lastMessageAt` to the millisecond.
+       */
+      cursor?: string;
     } = {},
   ) {
     const take = Math.min(Math.max(opts.limit ?? 50, 1), 200);
@@ -2071,6 +2083,9 @@ export class ConversationsService {
       },
       orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }],
       take,
+      // `skip: 1` because the cursor row is the last one the caller already
+      // rendered; without it every page would repeat its own first thread.
+      ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
       include: {
         /*
          * The customer, plus whatever the branch has tagged them.

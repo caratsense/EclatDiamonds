@@ -241,6 +241,8 @@ export class CrmConversationsController {
     /** Threads a broadcast started: any of them, or one campaign's. */
     @Query('broadcast') broadcast?: string,
     @Query('campaignId') campaignId?: string,
+    /** Id of the last thread already shown; the next page starts below it. */
+    @Query('cursor') cursor?: string,
   ) {
     /*
      * Every one of these narrows the caller's own scope; none widens it. The
@@ -267,6 +269,7 @@ export class CrmConversationsController {
       broadcast: broadcast === 'true',
       campaignId: campaignId || undefined,
       limit: limit ? Number(limit) : undefined,
+      cursor: cursor || undefined,
     });
   }
 

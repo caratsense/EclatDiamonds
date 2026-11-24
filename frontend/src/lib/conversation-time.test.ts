@@ -131,17 +131,28 @@ describe("the time on a bubble", () => {
 });
 
 describe("the stamp beside a thread in the list", () => {
-  it("shows the four shapes the client's screenshot shows", () => {
+  it("gives the hour for today and a real date for everything older", () => {
+    // The client read the first cut of this on a Monday: "dates are still not
+    // appearing, it still says Saturday for last conversation." Only today,
+    // whose date is not in question, goes without one.
     expect(threadStamp("2026-11-24T06:55:00Z", ist())).toBe("12:25 PM");
-    expect(threadStamp("2026-11-23T18:29:00Z", ist())).toBe("Yesterday");
-    expect(threadStamp("2026-11-18T06:00:00Z", ist())).toBe("Wednesday");
-    expect(threadStamp("2026-10-14T06:00:00Z", ist())).toBe("10/14/2026");
+    expect(threadStamp("2026-11-23T18:29:00Z", ist())).toBe("Nov 23");
+    expect(threadStamp("2026-11-18T06:00:00Z", ist())).toBe("Nov 18");
+    expect(threadStamp("2026-10-14T06:00:00Z", ist())).toBe("Oct 14");
   });
 
-  it("switches from weekday to date at seven days", () => {
-    expect(threadStamp("2026-11-18T06:00:00Z", ist())).toBe("Wednesday");
-    expect(threadStamp("2026-11-17T06:00:00Z", ist())).toBe("11/17/2026");
-    expect(threadStamp("2026-11-16T06:00:00Z", ist())).toBe("11/16/2026");
+  it("adds the year only when the thread is not from this one", () => {
+    expect(threadStamp("2026-01-02T06:00:00Z", ist())).toBe("Jan 2");
+    expect(threadStamp("2025-12-31T06:00:00Z", ist())).toBe("Dec 31, 2025");
+  });
+
+  it("reads the date in the BRANCH's clock, not the reader's", () => {
+    // 00:30 on the 25th in Kolkata is still the 24th in UTC.
+    const instant = "2026-11-24T19:00:00Z";
+    expect(threadStamp(instant, { ...ist(), now: new Date("2026-11-30T06:00:00Z") })).toBe("Nov 25");
+    expect(
+      threadStamp(instant, { timeZone: "UTC", now: new Date("2026-11-30T06:00:00Z"), locale: "en-US" }),
+    ).toBe("Nov 24");
   });
 
   it("is empty for a thread with nothing on it", () => {
@@ -150,29 +161,30 @@ describe("the stamp beside a thread in the list", () => {
 });
 
 describe("the day pill inside a thread", () => {
-  it("names today and yesterday in words", () => {
-    // Uppercased by the pill itself, so these read as TODAY and YESTERDAY.
-    expect(daySeparator("2026-11-24T06:55:00Z", ist())).toBe("Today");
-    expect(daySeparator("2026-11-23T18:29:00Z", ist())).toBe("Yesterday");
+  it("carries the word AND the date, because the pill has room for both", () => {
+    // Uppercased by the pill itself: TODAY, NOV 24.
+    expect(daySeparator("2026-11-24T06:55:00Z", ist())).toBe("Today, Nov 24");
+    expect(daySeparator("2026-11-23T18:29:00Z", ist())).toBe("Yesterday, Nov 23");
   });
 
-  it("names a recent day by its weekday and an old one by its date", () => {
-    expect(daySeparator("2026-11-18T06:00:00Z", ist())).toBe("Wednesday");
-    expect(daySeparator("2026-10-14T06:00:00Z", ist())).toBe("10/14/2026");
+  it("names a recent day by its weekday and dates it; an old one by date alone", () => {
+    expect(daySeparator("2026-11-18T06:00:00Z", ist())).toBe("Wednesday, Nov 18");
+    expect(daySeparator("2026-10-14T06:00:00Z", ist())).toBe("Oct 14");
   });
 
   it("says Today for a bubble stamped a minute into tomorrow", () => {
-    // Not "11/25/2026" against a message sitting below one marked Today.
-    expect(daySeparator("2026-11-25T06:00:00Z", ist())).toBe("Today");
+    // A provider clock running seconds ahead must not open a second day pill
+    // below the one that says Today.
+    expect(daySeparator("2026-11-25T06:00:00Z", ist())).toBe("Today, Nov 25");
   });
 });
 
 describe("when we last heard from them", () => {
   it("says the day and the time together", () => {
-    expect(lastInteraction("2026-11-24T06:55:00Z", ist())).toBe("today at 12:25 PM");
-    expect(lastInteraction("2026-11-23T18:29:00Z", ist())).toBe("yesterday at 11:59 PM");
-    expect(lastInteraction("2026-11-18T06:00:00Z", ist())).toBe("Wednesday at 11:30 AM");
-    expect(lastInteraction("2026-10-14T06:00:00Z", ist())).toBe("10/14/2026 at 11:30 AM");
+    expect(lastInteraction("2026-11-24T06:55:00Z", ist())).toBe("today, Nov 24 at 12:25 PM");
+    expect(lastInteraction("2026-11-23T18:29:00Z", ist())).toBe("yesterday, Nov 23 at 11:59 PM");
+    expect(lastInteraction("2026-11-18T06:00:00Z", ist())).toBe("Wednesday, Nov 18 at 11:30 AM");
+    expect(lastInteraction("2026-10-14T06:00:00Z", ist())).toBe("Oct 14 at 11:30 AM");
   });
 
   it("is empty when they have never written", () => {

@@ -1,6 +1,11 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
 import { apiErrorMessage } from "@/lib/utils";
@@ -455,6 +460,73 @@ export function useConversations(params: {
         })
       ).data,
   });
+}
+
+/** How many threads one request asks for. The server's own default is the same. */
+const INBOX_PAGE = 50;
+
+/**
+ * The inbox list, with the rest of it reachable.
+ *
+ * ## What this fixes
+ *
+ * `useConversations` asks for one page and stops. The server's default page is
+ * fifty threads, so the inbox showed the fifty most recent and there was no
+ * control anywhere to see the fifty-first. Client, 24 Nov: "are every convo
+ * visible here, like each and every? I don't think so, as last I can see is of
+ * Saturday." She was right — Saturday was simply where row fifty fell, and
+ * every conversation older than it was unreachable from the screen.
+ *
+ * ## Why keyset and not a page number
+ *
+ * The inbox reorders itself while it is being read: a customer replies, that
+ * thread jumps to the top, and every row below it shifts down one. An offset
+ * would then return a thread the reader has already seen and skip the one
+ * behind it — on a list sorted by recency, paging by position loses rows. The
+ * cursor is the id of the last thread already rendered, so the next page is
+ * anchored to a thread rather than to a count.
+ *
+ * The query key shares the `["crm", "conversations"]` prefix with the single-
+ * page hook on purpose: `useLiveInbox` invalidates that prefix when a push
+ * arrives, and every page loaded so far refetches together.
+ */
+export function useConversationFeed(params: Parameters<typeof useConversations>[0]) {
+  const storeKey = useStoreKey();
+  const query = useInfiniteQuery({
+    queryKey: ["crm", "conversations", "feed", params, storeKey],
+    initialPageParam: undefined as string | undefined,
+    queryFn: async ({ pageParam }) =>
+      (
+        await api.get<ConversationRow[]>("/crm/conversations", {
+          params: {
+            status: params.status,
+            handling: params.handling,
+            channel: params.channel,
+            mine: params.mine ? "true" : undefined,
+            routingReview: params.routingReview ? "true" : undefined,
+            unidentified: params.unidentified ? "true" : undefined,
+            nonAd: params.nonAd ? "true" : undefined,
+            sourcePlatform: params.sourcePlatform,
+            partyId: params.partyId,
+            broadcast: params.broadcast ? "true" : undefined,
+            campaignId: params.campaignId,
+            limit: INBOX_PAGE,
+            cursor: pageParam,
+          },
+        })
+      ).data,
+    /*
+     * A short page is the end of the list. A full one MIGHT be, and asking for
+     * one more that comes back empty is the only way to find out — which is
+     * what the button does when it is pressed, so the cost of being wrong here
+     * is one request, not a missing thread.
+     */
+    getNextPageParam: (last) =>
+      last.length < INBOX_PAGE ? undefined : last[last.length - 1]?.id,
+  });
+  // Flattened, so the call site keeps reading `list.data` as the array it has
+  // always been and nothing downstream has to learn about pages.
+  return { ...query, data: query.data?.pages.flat() };
 }
 
 /**

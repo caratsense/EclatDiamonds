@@ -161,15 +161,42 @@ function weekdayName(d: Date, opts: BranchTimeOptions): string {
   }).format(d);
 }
 
-function numericDate(d: Date, opts: BranchTimeOptions): string {
+/**
+ * The calendar date, written out: "22 Nov", or "14 Oct 2026" in another year.
+ *
+ * ## Why a date is attached to the weekday at all
+ *
+ * The first cut of this followed WhatsApp exactly — today's time, "Yesterday",
+ * then the bare weekday for the rest of the week. The client read it on a
+ * Monday and said: "dates are still not appearing, it still says Saturday for
+ * last conversation." She is right, and WhatsApp is the wrong model here. A
+ * customer scrolling their own chats knows which Saturday is meant because they
+ * were there; a manager auditing eleven branches is asking a different
+ * question — WHICH day was that, to put in a report or against a follow-up —
+ * and a weekday alone cannot answer it. So the word stays, because "Yesterday"
+ * is what makes a list scannable, and the date goes beside it.
+ *
+ * ## Why the year is conditional
+ *
+ * "22 Nov 2026" on a thread from last week is noise in a column this narrow;
+ * "14 Oct" on one from last year is a lie. The year appears exactly when the
+ * thread is not from the current branch-local year.
+ */
+function calendarDate(d: Date, opts: BranchTimeOptions): string {
+  const tz = branchZone(opts.timeZone);
+  const yearOf = (x: Date) => zonedDayKey(x.toISOString(), tz).slice(0, 4);
+  const sameYear = yearOf(d) === yearOf(opts.now ?? new Date());
   return new Intl.DateTimeFormat(opts.locale, {
-    timeZone: branchZone(opts.timeZone),
+    day: "numeric",
+    month: "short",
+    ...(sameYear ? {} : { year: "numeric" }),
+    timeZone: tz,
   }).format(d);
 }
 
 /**
- * The stamp beside a thread in the list: "12:25 PM", "Yesterday", "Wednesday",
- * "10/14/2026" — the four shapes in the client's own WhatsApp screenshot.
+ * The stamp beside a thread in the list: "12:25 PM" for today, and the
+ * calendar date for everything older — "23 Nov", "22 Nov", "14 Oct 2026".
  */
 export function threadStamp(
   iso: string | null | undefined,
@@ -178,10 +205,10 @@ export function threadStamp(
   const d = parse(iso);
   const bucket = dayBucket(iso, opts);
   if (!d || !bucket) return "";
+  // Today is the one bucket with no date on it: the date IS today, and the
+  // thing being asked of a thread touched in the last few hours is the hour.
   if (bucket === "today") return messageTime(iso, opts);
-  if (bucket === "yesterday") return "Yesterday";
-  if (bucket === "this_week") return weekdayName(d, opts);
-  return numericDate(d, opts);
+  return calendarDate(d, opts);
 }
 
 /**
@@ -198,10 +225,11 @@ export function daySeparator(
   const d = parse(iso);
   const bucket = dayBucket(iso, opts);
   if (!d || !bucket) return "";
-  if (bucket === "today") return "Today";
-  if (bucket === "yesterday") return "Yesterday";
-  if (bucket === "this_week") return weekdayName(d, opts);
-  return numericDate(d, opts);
+  const date = calendarDate(d, opts);
+  if (bucket === "today") return `Today, ${date}`;
+  if (bucket === "yesterday") return `Yesterday, ${date}`;
+  if (bucket === "this_week") return `${weekdayName(d, opts)}, ${date}`;
+  return date;
 }
 
 /**
@@ -219,13 +247,14 @@ export function lastInteraction(
   const d = parse(iso);
   const bucket = dayBucket(iso, opts);
   if (!d || !bucket) return "";
+  const date = calendarDate(d, opts);
   const day =
     bucket === "today"
-      ? "today"
+      ? `today, ${date}`
       : bucket === "yesterday"
-        ? "yesterday"
+        ? `yesterday, ${date}`
         : bucket === "this_week"
-          ? weekdayName(d, opts)
-          : numericDate(d, opts);
+          ? `${weekdayName(d, opts)}, ${date}`
+          : date;
   return `${day} at ${messageTime(iso, opts)}`;
 }

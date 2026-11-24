@@ -81,7 +81,7 @@ import type { ConversationRow } from "@/lib/queries/crm";
 import {
   useAddCustomerNote,
   useConversationThread,
-  useConversations,
+  useConversationFeed,
   useCustomer360,
   useCustomerNotes,
   useLiveInbox,
@@ -517,7 +517,7 @@ function ConversationsContent() {
    * answered. A party lookup is already one customer, so it skips the queue
    * filters entirely.
    */
-  const list = useConversations(
+  const list = useConversationFeed(
     partyId
       ? { partyId }
       : {
@@ -1144,6 +1144,40 @@ function ConversationsContent() {
                 );
               })
             )}
+            {/*
+              THE REST OF THE INBOX.
+
+              One request fetches fifty threads, and until this button existed
+              that was the whole of what the screen could ever show — the
+              fifty-first conversation had no control anywhere that would reach
+              it. The client found the edge by reading the dates: "are every
+              convo visible here... last I can see is of Saturday." Saturday was
+              row fifty.
+
+              Shown only while the server has more to give: `hasNextPage` is
+              false as soon as a page comes back short, so the end of a small
+              branch's inbox is silence rather than a button that does nothing.
+            */}
+            {!list.isLoading && !list.isError && list.hasNextPage ? (
+              <div className="p-3">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="w-full text-xs"
+                  disabled={list.isFetchingNextPage}
+                  onClick={() => list.fetchNextPage()}
+                >
+                  {list.isFetchingNextPage ? (
+                    <>
+                      <Loader2 className="mr-1.5 size-3 animate-spin" aria-hidden />
+                      Loading…
+                    </>
+                  ) : (
+                    "Load older conversations"
+                  )}
+                </Button>
+              </div>
+            ) : null}
           </CardContent>
         </Card>
 
@@ -1959,7 +1993,11 @@ function ThreadView({
             below explains why the box is shut, and the template-backed chips
             above it are the thing that still works.
           */}
-          <QuickReplyBar conversationId={conversation.id} onPickWording={setDraft} />
+          <QuickReplyBar
+            conversationId={conversation.id}
+            draft={draft}
+            onPickWording={setDraft}
+          />
 
           {windowOpen ? null : (
             /*

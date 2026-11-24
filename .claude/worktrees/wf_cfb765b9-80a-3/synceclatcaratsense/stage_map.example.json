@@ -1,0 +1,28 @@
+{
+  "_README": "TEMPLATE — do not use as-is. The Gati DepartmentId (shop-floor) and Spm_MfgOrder.OrderStatus codes are per-install INTEGERS whose meaning is unknown here and MUST NOT be guessed. To produce the real file: run discover.bat, open reports/stage_map.suggested.json (discover lists the actual codes this install uses with their counts), confirm each code's meaning WITH THE CLIENT, then save the confirmed mapping as stage_map.json in this folder. Any code left unmapped keeps its order at 'booked' (never guessed).",
+  "_validEclatStages": [
+    "booked",
+    "designing",
+    "casting",
+    "stone_setting",
+    "polishing",
+    "qc",
+    "ready",
+    "delivered",
+    "cancelled"
+  ],
+  "_howToFill": "Each key below is a REAL Gati code (replace the REPLACE_WITH_* placeholders with the integers from discover); each value MUST be one of _validEclatStages. Delete the placeholder rows once the real ones are in.",
+  "departmentToStage": {
+    "REPLACE_WITH_REAL_DepartmentId_for_designing": "designing",
+    "REPLACE_WITH_REAL_DepartmentId_for_casting": "casting",
+    "REPLACE_WITH_REAL_DepartmentId_for_stone_setting": "stone_setting",
+    "REPLACE_WITH_REAL_DepartmentId_for_polishing": "polishing",
+    "REPLACE_WITH_REAL_DepartmentId_for_qc": "qc"
+  },
+  "orderStatusToStage": {
+    "REPLACE_WITH_REAL_OrderStatus_for_booked": "booked",
+    "REPLACE_WITH_REAL_OrderStatus_for_ready": "ready",
+    "REPLACE_WITH_REAL_OrderStatus_for_delivered": "delivered",
+    "REPLACE_WITH_REAL_OrderStatus_for_cancelled": "cancelled"
+  }
+}
