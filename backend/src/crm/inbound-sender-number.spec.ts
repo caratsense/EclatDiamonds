@@ -13,10 +13,16 @@ import { IdentityService } from './identity.service';
  */
 
 describe('a number that arrives from the provider', () => {
-  const identity = new IdentityService(
-    {} as unknown as ConstructorParameters<typeof IdentityService>[0],
-    {} as unknown as ConstructorParameters<typeof IdentityService>[1],
-  );
+  /*
+   * `normalize` is pure — it touches no collaborator — so the three the
+   * constructor asks for are stubs. Spelled out rather than spread, because
+   * the first version of this file passed two and the production image build
+   * failed on it three times: specs ARE compiled by `nest build` here (there
+   * is one tsconfig and it excludes nothing), so a type error in a test file
+   * stops a deploy while `npm run test:unit` stays green.
+   */
+  const stub = {} as never;
+  const identity = new IdentityService(stub, stub, stub);
   const inbound = { alreadyInternational: true };
 
   it('keeps a foreign number exactly as the provider sent it', () => {
