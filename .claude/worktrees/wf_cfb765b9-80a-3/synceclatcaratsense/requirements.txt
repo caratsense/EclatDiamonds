@@ -1,4 +1,0 @@
-# Human-readable entry point. The actual, exact runtime set is deliberately in
-# one lock file so an office PC never receives a different dependency graph just
-# because setup was repeated later.
--r requirements-lock.txt

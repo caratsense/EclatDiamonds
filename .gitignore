@@ -76,3 +76,6 @@ backend/staging-cutover.mjs
 # one built for the client; these are the by-products of rendering it here and
 # they churn on every run.
 docs/usermanual/*.local.*
+
+# Worktrees the agent harness creates; never part of the repo.
+.claude/worktrees/
