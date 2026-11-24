@@ -286,6 +286,26 @@ export class CrmConversationsController {
   }
 
   /**
+   * Where this conversation may be handed to, and who there may take it.
+   *
+   * Declared above `@Get(':id')` for the same reason `queues` is: Nest matches
+   * in declaration order, so a route added below would be swallowed by the id
+   * parameter and answer "conversation not found" for a word.
+   *
+   * Narrow by design — a branch name and a person's name, nothing else. A
+   * manager transferring an enquiry has to name the destination without being
+   * able to read it, which is the whole point of the widening behind it.
+   */
+  @Get('transfer-targets')
+  transferTargets(
+    @CurrentUser() user: AuthUser,
+    @Query('storeId') storeId?: string,
+    @Query('conversationId') conversationId?: string,
+  ) {
+    return this.conversations.transferTargets(user, storeId || undefined, conversationId || undefined);
+  }
+
+  /**
    * 1E - route/assign in one command.
    *
    * Store, owner and handling change together after ONE validation pass, so a

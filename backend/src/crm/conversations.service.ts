@@ -1295,10 +1295,44 @@ export class ConversationsService {
       throw new BadRequestException(`handling must be one of: ${HANDLING.join(', ')}.`);
     }
 
-    // The destination store must be one the CALLER may act in. A request body
-    // can narrow the caller's scope; it can never widen it.
+    /*
+     * A TRANSFER GOES OUTWARD. A manager may give a conversation to another
+     * branch without being able to read that branch.
+     *
+     * The destination used to be restricted to the caller's own stores, which
+     * made the common case impossible: an enquiry arrives at Borivali, plainly
+     * belongs to Bandra, and the Borivali manager is the only person who
+     * handles messages — area managers do not open the inbox. The client's
+     * words: "can we allow them to transfer but not see each other's messages".
+     *
+     * Widening the DESTINATION is safe because nothing else widens:
+     *   - `load()` above already limits WHICH conversations they may touch, so
+     *     they can only give away a thread they already hold. They cannot pull
+     *     one toward themselves from a branch they cannot see.
+     *   - Visibility is store-scoped on read, so the moment it lands at the
+     *     destination it leaves their inbox. Giving is not a way to keep.
+     *   - The destination must still be an active trading branch of THEIR OWN
+     *     organisation, and the new owner must still work there.
+     *
+     * A salesperson is not a router: they work one branch and hand upward, so
+     * for them the destination stays inside their own scope.
+     */
     const targetStoreId = input.storeId !== undefined ? input.storeId : conversation.storeId;
-    if (targetStoreId) this.scope.assertStoreAllowed(user, targetStoreId);
+    if (targetStoreId && targetStoreId !== conversation.storeId) {
+      if (isSalesScoped(user)) {
+        this.scope.assertStoreAllowed(user, targetStoreId);
+      } else {
+        const sameOrg = await this.prisma.store.findFirst({
+          where: { id: targetStoreId, organisationId: user.organisationId },
+          select: { id: true },
+        });
+        // A 404-shaped refusal: an id from another tenant must not be
+        // distinguishable from one that does not exist.
+        if (!sameOrg) throw new ForbiddenException('Store not in your scope');
+      }
+    } else if (targetStoreId) {
+      this.scope.assertStoreAllowed(user, targetStoreId);
+    }
     if (targetStoreId) {
       const physicalStore = await this.prisma.store.findFirst({
         where: {
@@ -1789,6 +1823,91 @@ export class ConversationsService {
    * what a tenant calls a location or a customer is a product decision that
    * belongs to the screen, not to a counting query.
    */
+  /**
+   * Where a conversation may be TRANSFERRED to, and who there may take it.
+   *
+   * Deliberately NOT the general stores and users lists. Those are scoped to
+   * what the caller may act in, which is right for them and wrong here: a
+   * manager handing an enquiry to another branch has to be able to name that
+   * branch and a person at it, while still being unable to read a word of that
+   * branch's inbox.
+   *
+   * So this returns the minimum a handover needs — a branch name, a person's
+   * name and their role — and nothing else. No customers, no counts, no
+   * contact details. The widened permission is "I can give you this", not
+   * "I can see your shop".
+   *
+   * A salesperson sees only their own branches: they work one floor and hand
+   * upward, and the routing decisions above them are not theirs to make.
+   */
+  async transferTargets(user: AuthUser, storeId?: string, conversationId?: string) {
+    const mayRouteAnywhere = !isSalesScoped(user);
+    const stores = await this.prisma.store.findMany({
+      where: {
+        organisationId: user.organisationId,
+        isAggregate: false,
+        isHolding: false,
+        attendanceOnly: false,
+        status: { not: 'closed' },
+        ...(mayRouteAnywhere ? {} : { id: { in: user.storeIds } }),
+      },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    });
+
+    /*
+     * What this thread's own campaign says about where it belongs.
+     *
+     * Not a restriction — a sentence for the person doing the moving. A
+     * Borivali enquiry was moved to Bandra and nobody was told, and the
+     * complaint that followed looked like a routing fault for two days.
+     */
+    let ruleBranch: { campaignName: string; storeId: string; storeName: string } | null = null;
+    if (conversationId) {
+      const convo = await this.prisma.conversation.findFirst({
+        where: { id: conversationId, organisationId: user.organisationId },
+        select: { matchedRuleId: true },
+      });
+      if (convo?.matchedRuleId) {
+        const rule = (await this.adSetRules.list(user.organisationId)).find(
+          (r) => r.id === convo.matchedRuleId,
+        );
+        if (rule?.storeId) {
+          const home = await this.prisma.store.findFirst({
+            where: { id: rule.storeId, organisationId: user.organisationId },
+            select: { id: true, name: true },
+          });
+          if (home) ruleBranch = { campaignName: rule.name, storeId: home.id, storeName: home.name };
+        }
+      }
+    }
+
+    if (!storeId) return { stores, people: [], ruleBranch };
+
+    // Asked for a branch that is not a destination at all: answer with the
+    // list and no people, rather than an error the dialog cannot act on.
+    if (!stores.some((s) => s.id === storeId)) return { stores, people: [], ruleBranch };
+
+    const staff = await this.prisma.user.findMany({
+      where: {
+        organisationId: user.organisationId,
+        isActive: true,
+        userStores: { some: { storeId } },
+      },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, role: true, accessOverrides: true, organisationId: true },
+    });
+    return {
+      stores,
+      ruleBranch,
+      // Somebody who cannot open Conversations would never see the thread they
+      // were just given, so they are not an option.
+      people: staff
+        .filter((u) => canOpen(u, 'conversations'))
+        .map((u) => ({ id: u.id, name: u.name, role: u.role })),
+    };
+  }
+
   async queueCounts(user: AuthUser, requestedStoreId?: string): Promise<Record<string, number>> {
     const branch = this.branchClause(user, requestedStoreId);
     const scoped = (extra: Prisma.ConversationWhereInput): Prisma.ConversationWhereInput => ({

@@ -22,9 +22,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { useAssignConversation } from "@/lib/queries/crm";
-import { useStoresAdmin } from "@/lib/queries/stores";
-import { useStaff } from "@/lib/queries/users";
+import {
+  useAssignConversation,
+  useTransferTargets,
+} from "@/lib/queries/crm";
 import { apiErrorMessage } from "@/lib/utils";
 
 /**
@@ -113,17 +114,22 @@ function AssignForm({
   const [reason, setReason] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const stores = useStoresAdmin();
-  // Only real trading branches can own a conversation; the synthetic "All
-  // Stores" aggregate is not a place anybody works.
-  const options = (stores.data ?? []).filter((s) => !s.isAggregate);
-
   const destination = storeId === NONE ? null : storeId;
-  // Disabled until a destination exists — asking the server for "staff at
-  // nowhere" would return the caller's whole roster, which is precisely the
-  // list we must not offer.
-  const staff = useStaff(destination ?? undefined, { enabled: !!destination });
-  const people = destination ? (staff.data ?? []).filter((u) => u.isActive) : [];
+
+  /*
+   * A HANDOVER, not a view. One call answers both selects.
+   *
+   * This used to read the stores and users lists, which are scoped to what the
+   * caller may act in — so a Borivali manager was offered Borivali and nobody
+   * else, and an enquiry that plainly belonged to Bandra could not be passed
+   * on. Area managers do not open the inbox, so there was no one else to do
+   * it. The server now answers "where may this go, and who there may take it"
+   * without granting any sight of that branch.
+   */
+  const targets = useTransferTargets(destination ?? undefined, conversationId);
+  const options = targets.data?.stores ?? [];
+  const people = destination ? (targets.data?.people ?? []) : [];
+  const ruleBranch = targets.data?.ruleBranch ?? null;
 
   const assign = useAssignConversation(conversationId);
 
@@ -166,11 +172,33 @@ function AssignForm({
           <DialogTitle>Reassign conversation</DialogTitle>
           <DialogDescription>
             Location, owner and handling change together. An owner has to work at the
-            destination.
+            destination. It leaves your inbox once it moves.
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">
+          {/*
+            WHERE ITS OWN CAMPAIGN SAYS IT BELONGS.
+
+            A Borivali enquiry was moved to Bandra Broadway and nobody was told.
+            It had arrived from the Borivali bridal ad, the router had placed it
+            at Borivali with that branch's manager, and one reassign took it
+            away silently — the complaint that followed was "Borivali messages
+            are not reaching Mayank", which looked like a routing fault and was
+            not one.
+
+            Stated, not prevented. Moving it elsewhere is often exactly right;
+            doing it without knowing is what was wrong.
+          */}
+          {ruleBranch && destination && destination !== ruleBranch.storeId && (
+            <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2.5 text-xs text-muted-foreground">
+              This conversation came from{" "}
+              <span className="font-medium text-foreground">{ruleBranch.campaignName}</span>, which
+              routes to <span className="font-medium text-foreground">{ruleBranch.storeName}</span>.
+              Moving it elsewhere is fine — it just will not go back on its own.
+            </p>
+          )}
+
           <div className="space-y-1.5">
             <Label htmlFor="assign-store">Location</Label>
             <Select value={storeId} onValueChange={onStoreChange}>
@@ -186,10 +214,10 @@ function AssignForm({
                 ))}
               </SelectContent>
             </Select>
-            {stores.isError && (
+            {targets.isError && (
               <p className="text-xs text-destructive">
                 Could not load locations.{" "}
-                <button type="button" className="underline" onClick={() => stores.refetch()}>
+                <button type="button" className="underline" onClick={() => targets.refetch()}>
                   Retry
                 </button>
               </p>
@@ -220,17 +248,17 @@ function AssignForm({
                 ))}
               </SelectContent>
             </Select>
-            {destination && staff.isError && (
+            {destination && targets.isError && (
               <p className="text-xs text-destructive">
                 Could not load team members for this location.{" "}
-                <button type="button" className="underline" onClick={() => staff.refetch()}>
+                <button type="button" className="underline" onClick={() => targets.refetch()}>
                   Retry
                 </button>
               </p>
             )}
             {/* An empty roster is stated rather than left as a silent empty
                 dropdown the user keeps reopening. */}
-            {destination && !staff.isLoading && !staff.isError && people.length === 0 && (
+            {destination && !targets.isLoading && !targets.isError && people.length === 0 && (
               <p className="text-xs text-muted-foreground">
                 Nobody is assigned to this location yet.
               </p>

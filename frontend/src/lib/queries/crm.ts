@@ -1201,3 +1201,39 @@ export function useRejectMerge() {
     onSuccess: () => void qc.invalidateQueries({ queryKey: ["crm", "merge-candidates"] }),
   });
 }
+
+/**
+ * Where a conversation may be handed to, and who there may take it.
+ *
+ * Deliberately not the stores and users lists the settings screens use. Those
+ * are scoped to what the caller may ACT IN, which is right for them and wrong
+ * here: a store manager handing an enquiry to another branch has to be able to
+ * name that branch and a person at it, while still being unable to read a word
+ * of that branch's inbox. The client's words: "can we allow them to transfer
+ * but not see each other's messages".
+ *
+ * One call serves both selects. Passing a branch fills `people` for it; the
+ * branch list comes back either way, so changing the destination never leaves
+ * the dialog with nothing to choose from.
+ */
+export function useTransferTargets(storeId?: string, conversationId?: string) {
+  return useQuery({
+    queryKey: ["crm", "transfer-targets", storeId ?? "none", conversationId ?? "none"],
+    queryFn: async () =>
+      (
+        await api.get<{
+          stores: { id: string; name: string }[];
+          people: { id: string; name: string; role: string }[];
+          /** Where this thread's own campaign routes, when it came from one. */
+          ruleBranch: { campaignName: string; storeId: string; storeName: string } | null;
+        }>("/crm/conversations/transfer-targets", {
+          params: {
+            ...(storeId ? { storeId } : {}),
+            ...(conversationId ? { conversationId } : {}),
+          },
+        })
+      ).data,
+    // The destination list does not change while somebody is mid-handover.
+    staleTime: 60_000,
+  });
+}
