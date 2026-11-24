@@ -31,6 +31,7 @@ import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import {
   BarChart,
+  horizontalBarHeight,
   useChartTokens,
   type ChartSeries,
 } from "@/components/chart/echart";
@@ -231,11 +232,15 @@ export default function StoreComparisonPage() {
               </CardDescription>
             </CardHeader>
             <CardContent>
+              {/* A row per branch, best first. This page is the full picture,
+                  so nothing is rolled up the way the dashboard card does — the
+                  height grows with the branch count instead. */}
               <BarChart
                 categories={chartRows.map(storeCompareLabel)}
                 valueFormatter={formatINRCompact}
                 series={chartSeries}
-                height={320}
+                horizontal
+                height={horizontalBarHeight(chartRows.length, chartSeries.length)}
                 emptyMessage="No revenue or targets recorded for any branch yet"
               />
             </CardContent>

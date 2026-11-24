@@ -10,7 +10,13 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { AreaChart, BarChart, DonutChart, useChartTokens } from "@/components/chart/echart";
+import {
+  AreaChart,
+  BarChart,
+  DonutChart,
+  horizontalBarHeight,
+  useChartTokens,
+} from "@/components/chart/echart";
 import { formatINRCompact, formatNumber } from "@/lib/format";
 import type { LeadFunnelDay } from "@/lib/queries/dashboard";
 import {
@@ -151,24 +157,82 @@ export function LeadFunnelChart({
   );
 }
 
-export function StoreComparisonChart({ data, href }: { data: StoreCompare[]; href?: string }) {
-  const categories = data.map(storeCompareLabel);
-  const t = useChartTokens();
+/**
+ * How many branches the dashboard card plots before rolling the rest into one
+ * row.
+ *
+ * The card is a summary that links through to Store Comparison, where every
+ * branch is listed in full with its share and achievement; its job here is
+ * "which branches are carrying the month", not the complete ledger. Six rows
+ * plus the roll-up keeps the card about as tall as the Sales Trend card beside
+ * it in the dashboard's two-column grid — a card that grew to eleven rows
+ * would leave its neighbour half empty.
+ */
+const CARD_BRANCHES = 6;
 
+/**
+ * Best-first, with the tail rolled up — the rows this card actually plots.
+ *
+ * Kept module-level, pure and exported so the component body stays as flat as
+ * its neighbours in this file and the roll-up can be tested without a DOM.
+ */
+export function rankedForCard(data: StoreCompare[]): StoreCompare[] {
+  const ranked = [...data].sort((a, b) => b.revenue - a.revenue);
+  // Rolling one branch up into "Other branches (1)" would hide a name to save
+  // nothing, so the roll-up only starts once it replaces at least two.
+  if (ranked.length <= CARD_BRANCHES + 1) return ranked;
+
+  const tail = ranked.slice(CARD_BRANCHES);
+  const withTarget = tail.filter((s) => s.target != null);
+  return [
+    ...ranked.slice(0, CARD_BRANCHES),
+    {
+      store: `Other branches (${tail.length})`,
+      revenue: tail.reduce((sum, s) => sum + s.revenue, 0),
+      // Only the branches that HAVE a target are summed; a tail where nobody
+      // set one stays null, so the roll-up never invents a target of zero.
+      target: withTarget.length
+        ? withTarget.reduce((sum, s) => sum + (s.target ?? 0), 0)
+        : null,
+    },
+  ];
+}
+
+export function StoreComparisonChart({ data, href }: { data: StoreCompare[]; href?: string }) {
+  const t = useChartTokens();
+  const rows = rankedForCard(data);
+  const rolledUp = rows.length < data.length;
+
+  /*
+   * Bars lie down here (client CEO, 23 Nov).
+   *
+   * Nibhana has eleven trading branches and this card stood all eleven names
+   * on a vertical axis inside a half-width dashboard card — forty pixels per
+   * name. Every label was drawn over its neighbour and the axis read
+   * "MUMBAILEDRPVREASHIBASCHRASHILK SHARPUNE AMANDRAVEAMBLDELHI ROOHRIMRTBAI
+   * BAND". The tooltip was fine; nobody could tell which bar it belonged to.
+   *
+   * See BarChart's `horizontal` for why rotating the labels is not the fix.
+   */
   return (
     <ChartCard
       title="Store Comparison"
-      description="This month's revenue vs target by store"
+      description={
+        rolledUp
+          ? `This month's revenue vs target — top ${CARD_BRANCHES} of ${data.length} branches`
+          : "This month's revenue vs target by store"
+      }
       href={href}
     >
       <BarChart
-        categories={categories}
+        categories={rows.map(storeCompareLabel)}
         valueFormatter={formatINRCompact}
         series={[
-          { name: "Revenue", data: data.map((d) => d.revenue) },
-          { name: "Target", data: data.map((d) => d.target), color: t.palette[2] },
+          { name: "Revenue", data: rows.map((d) => d.revenue) },
+          { name: "Target", data: rows.map((d) => d.target), color: t.palette[2] },
         ]}
-        height={260}
+        horizontal
+        height={horizontalBarHeight(rows.length, 2)}
         emptyMessage="No store revenue or targets recorded this month yet"
       />
     </ChartCard>

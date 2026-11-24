@@ -48,4 +48,30 @@ describe("axis tooltip formatter", () => {
   it("renders nothing for an empty hover rather than an empty frame", () => {
     expect(axisTooltipFormatter()([])).toBe("");
   });
+
+  /*
+   * The client CEO read "Target ₹0" off the Store Comparison card for a branch
+   * nobody had ever set a target on. The dashboard API sends `target: null`
+   * precisely so the chart draws a gap, and this formatter was coercing it to
+   * a confident zero — a figure the business never published.
+   */
+  it("says a series has nothing here rather than printing a target of zero", () => {
+    const html = axisTooltipFormatter({ format: (v) => `₹${v}` })([
+      { marker: "<span>•</span>", seriesName: "Revenue", axisValueLabel: "MUMBAI BORIVALI", value: 0 },
+      { marker: "<span>•</span>", seriesName: "Target", axisValueLabel: "MUMBAI BORIVALI", value: null },
+    ]);
+    // A real zero is still a figure: nothing was billed, and that is worth saying.
+    expect(html).toContain("₹0");
+    expect(html).toContain("—");
+    // ...but only once, for the target.
+    expect(html.match(/₹/g)).toHaveLength(1);
+  });
+
+  it("keeps a null out of the share it would otherwise shrink", () => {
+    const html = axisTooltipFormatter({ shareOfRows: true })([
+      { marker: "", seriesName: "On time", axisValueLabel: "Mon", value: 3 },
+      { marker: "", seriesName: "Not marked", axisValueLabel: "Mon", value: null },
+    ]);
+    expect(html).toContain("100.0%");
+  });
 });

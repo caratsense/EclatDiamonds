@@ -8,6 +8,7 @@ import {
   ChartEmpty,
   EChart,
   emphasisShadow,
+  horizontalBarHeight,
   useChartTokens,
 } from "@/components/chart/echart";
 import {
@@ -103,8 +104,34 @@ export function FootfallByStoreChart({ data }: { data: StoreFootfall[] }) {
         formatter: axisTooltipFormatter({ format: (v) => formatNumber(v) }),
       },
       grid: { left: 8, right: 16, top: 28, bottom: 8, containLabel: true },
-      xAxis: { type: "value", minInterval: 1 },
-      yAxis: { type: "category", data: rows.map((r) => r.name) },
+      xAxis: {
+        type: "value",
+        minInterval: 1,
+        axisLabel: { color: t.muted, fontSize: 12, fontFamily: t.fontSans },
+      },
+      yAxis: {
+        type: "category",
+        data: rows.map((r) => r.name),
+        /*
+         * Pin every branch name and truncate the long ones (client CEO,
+         * 23 Nov). This axis carried no label settings at all, so it ran on
+         * ECharts' `interval: "auto"` — which drops whichever labels would
+         * collide. Three branches fitted; at Nibhana's eleven it silently
+         * dropped half of them and left bars with nothing beside them, the
+         * same disappearing-store-label failure `storeCompareLabel`
+         * documents. It also ran on ECharts' built-in grey, which is 3.4:1 on
+         * the dark card — the muted token is theme-resolved and clears 8:1.
+         */
+        axisLabel: {
+          color: t.muted,
+          fontSize: 12,
+          fontFamily: t.fontSans,
+          interval: 0,
+          width: 160,
+          overflow: "truncate",
+          ellipsis: "…",
+        },
+      },
       series: [
         {
           name: "Today",
@@ -142,7 +169,9 @@ export function FootfallByStoreChart({ data }: { data: StoreFootfall[] }) {
       </CardHeader>
       <CardContent>
         {hasData ? (
-          <EChart option={option} height={240} notMerge />
+          // Sized by the branch count, not fixed: a flat 240 left eleven
+          // branches under twenty pixels of row each.
+          <EChart option={option} height={horizontalBarHeight(rows.length, 2)} notMerge />
         ) : (
           <ChartEmpty height={240} message="No walk-ins recorded yet" />
         )}

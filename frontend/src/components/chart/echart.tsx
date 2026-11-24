@@ -325,7 +325,21 @@ export function axisTooltipFormatter(opts?: {
 
     const body = rows
       .map((r) => {
-        const n = Number(r.value ?? 0);
+        /*
+         * A null datum means this series has NOTHING here, which is not the
+         * same as zero — `ChartSeries.data` spells the distinction out, and
+         * the dashboard API deliberately sends `target: null` for a branch
+         * with no published target so the bar is a gap.
+         *
+         * This row coerced it with `?? 0` and printed "Target ₹0", which is
+         * exactly what the client CEO read off the Store Comparison card for
+         * a branch nobody had ever set a target on. An em dash is what the
+         * Store Comparison table already prints in the same situation.
+         */
+        if (r.value == null || r.value === "") {
+          return tooltipRow(r.marker ?? "", r.seriesName ?? "", "—", "");
+        }
+        const n = Number(r.value);
         const share =
           total > 0
             ? `<span style="opacity:0.7;margin-left:6px">${((Math.abs(n) / total) * 100).toFixed(1)}%</span>`
@@ -609,7 +623,47 @@ export function AreaChart({
   return <EChart option={option} height={height} className={className} notMerge />;
 }
 
-/** Grouped vertical bar chart with rounded caps. */
+interface BarChartProps extends CartesianProps {
+  /**
+   * Lay the bars down so each category gets its own ROW rather than a slot on
+   * a shared x-axis.
+   *
+   * Use it whenever the categories are NAMES rather than dates or buckets.
+   * Nibhana's branches are "MUMBAI BANDRA BROADWAY", "INDORE RATNAMANI
+   * COMPLEX", "BANJARA HILLS HYD" — thirteen to twenty-four characters each.
+   * Standing eleven of those on a vertical axis inside a half-width dashboard
+   * card gives every name about forty pixels, and what the client CEO was
+   * actually shown was every branch name drawn on top of its neighbour: an
+   * axis reading "MUMBAILEDRPVREASHIBASCHRASHILK SHARPUNE".
+   *
+   * Rotating the labels does not rescue that. Four of the eleven branches
+   * begin with "MUMBAI", so a clipped diagonal label is still ambiguous as
+   * well as cramped, and it gets worse as the card narrows. A row per name is
+   * the form the rest of the app already uses for per-store figures
+   * (FootfallByStoreChart, the HRMS "By store" bars) and it holds at any
+   * width, because the names stop competing for horizontal space.
+   *
+   * Pair it with `horizontalBarHeight()` — a lying-down chart is sized by its
+   * data, not by the card.
+   */
+  horizontal?: boolean;
+}
+
+/**
+ * Pixel height for a `horizontal` BarChart plotting `rows` categories.
+ *
+ * Fixing the height instead (FootfallByStoreChart's flat 240) is fine for
+ * three branches and falls apart at eleven: each row is left under twenty
+ * pixels, the names collide and ECharts quietly drops every second one — the
+ * same disappearing-store-label failure `storeCompareLabel` documents. One
+ * band per row, wide enough for the grouped bars inside it, plus the legend.
+ */
+export function horizontalBarHeight(rows: number, seriesCount = 1): number {
+  const band = seriesCount > 1 ? 34 : 26;
+  return Math.max(140, rows * band + 48);
+}
+
+/** Grouped bar chart with rounded caps; vertical unless `horizontal` is set. */
 export function BarChart({
   categories,
   series,
@@ -618,7 +672,8 @@ export function BarChart({
   valueFormatter,
   showLegend,
   emptyMessage,
-}: CartesianProps) {
+  horizontal,
+}: BarChartProps) {
   const t = useChartTokens();
   const legend = showLegend ?? series.length > 1;
 
@@ -633,57 +688,89 @@ export function BarChart({
       series.length === 1
         ? series[0].data.reduce<number>((sum, v) => sum + Math.abs(Number(v) || 0), 0)
         : 0;
+
+    /*
+     * Lying down, the category axis is built from the origin UP, so the order
+     * has to be flipped for the chart to read the way a ranked list reads.
+     * Callers pass best-first; without this the top branch sits on the floor
+     * of the card.
+     */
+    const cats = horizontal ? [...categories].reverse() : categories;
+    const bars = horizontal
+      ? series.map((s) => ({ ...s, data: [...s.data].reverse() }))
+      : series;
+
+    const categoryAxis = {
+      type: "category" as const,
+      data: cats,
+      ...hairlineAxis(t),
+      /*
+       * Every category gets its label. ECharts defaults to
+       * `interval: "auto"`, which drops labels that would overlap — so a
+       * chart with long names rendered bars with blank positions beneath
+       * them and looked like missing data. Truncating is honest; hiding is
+       * not. `hideOverlap` lets ECharts stagger rather than silently drop.
+       */
+      axisLabel: {
+        ...hairlineAxis(t).axisLabel,
+        interval: 0,
+        hideOverlap: false,
+        /*
+         * A safety cap, not the normal case. Lying down, 160px holds about
+         * twenty characters — enough to keep "MUMBAI BANDRA" and "MUMBAI
+         * BANDRA BROADWAY" apart — while stopping one freakishly long branch
+         * name from eating the plot area on a 1280px laptop. Standing up, the
+         * old 92px stays. Either way the tooltip carries the whole name,
+         * which is the only place a reader can still read it.
+         */
+        width: horizontal ? 160 : 92,
+        overflow: "truncate" as const,
+        ellipsis: "…",
+      },
+    };
+
+    // Gridlines and the formatted ticks belong to the measure, whichever way
+    // round the chart is drawn.
+    const valueAxis = {
+      type: "value" as const,
+      ...hairlineAxis(t),
+      splitLine: splitHairline(t),
+      axisLabel: {
+        color: t.muted,
+        fontSize: 12,
+        fontFamily: t.fontSans,
+        formatter: valueFormatter ? (v: number) => valueFormatter(v) : undefined,
+      },
+    };
+
     return {
       legend: legend ? { show: true } : { show: false },
       tooltip: {
         trigger: "axis",
         axisPointer: { type: "shadow" },
-        // The axis label truncates long store names; the tooltip carries the
-        // whole one, which is the only place a reader can still read it.
         formatter: axisTooltipFormatter({ format: valueFormatter, shareTotal }),
       },
-      xAxis: {
-        type: "category",
-        data: categories,
-        ...hairlineAxis(t),
-        /*
-         * Every category gets its label. ECharts defaults to
-         * `interval: "auto"`, which drops labels that would overlap — so a
-         * chart with long names rendered bars with blank positions beneath
-         * them and looked like missing data. Truncating is honest; hiding is
-         * not. `hideOverlap` lets ECharts stagger rather than silently drop.
-         */
-        axisLabel: {
-          ...hairlineAxis(t).axisLabel,
-          interval: 0,
-          hideOverlap: false,
-          width: 92,
-          overflow: "truncate",
-          ellipsis: "…",
-        },
-      },
-      yAxis: {
-        type: "value",
-        ...hairlineAxis(t),
-        splitLine: splitHairline(t),
-        axisLabel: {
-          color: t.muted,
-          fontSize: 12,
-          fontFamily: t.fontSans,
-          formatter: valueFormatter ? (v: number) => valueFormatter(v) : undefined,
-        },
-      },
-      series: series.map((s, i) => {
+      xAxis: horizontal ? valueAxis : categoryAxis,
+      yAxis: horizontal ? categoryAxis : valueAxis,
+      series: bars.map((s, i) => {
         const c = s.color ?? t.palette[i % t.palette.length];
         return {
           name: s.name,
           type: "bar" as const,
           data: s.data,
-          barMaxWidth: 28,
+          // Thinner lying down: a grouped pair has to share one row's band.
+          barMaxWidth: horizontal ? 14 : 28,
           barGap: "30%",
           itemStyle: {
             color: c,
-            borderRadius: [6, 6, 0, 0] as [number, number, number, number],
+            // Round the growing end only, so the bar still reads as starting
+            // at the axis rather than floating.
+            borderRadius: (horizontal ? [0, 6, 6, 0] : [6, 6, 0, 0]) as [
+              number,
+              number,
+              number,
+              number,
+            ],
           },
           /*
            * Hover lifts the bar off the plot with its own colour cast as a soft
@@ -693,13 +780,20 @@ export function BarChart({
            */
           emphasis: {
             focus: "series" as const,
-            itemStyle: { color: c, shadowBlur: 10, shadowColor: hexA(c, 0.4), shadowOffsetY: -1 },
+            itemStyle: {
+              color: c,
+              shadowBlur: 10,
+              shadowColor: hexA(c, 0.4),
+              // The lift goes against the bar's growth, not always upwards.
+              shadowOffsetY: horizontal ? 0 : -1,
+              shadowOffsetX: horizontal ? 1 : 0,
+            },
           },
           blur: { itemStyle: { opacity: 0.3 } },
         };
       }),
     };
-  }, [categories, series, t, valueFormatter, legend]);
+  }, [categories, series, t, valueFormatter, legend, horizontal]);
 
   if (!categories.length || !hasPlottableData(series)) {
     return <ChartEmpty height={height} className={className} message={emptyMessage} />;

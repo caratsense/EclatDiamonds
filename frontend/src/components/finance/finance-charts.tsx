@@ -1,6 +1,11 @@
 "use client";
 
-import { AreaChart, BarChart, useChartTokens } from "@/components/chart/echart";
+import {
+  AreaChart,
+  BarChart,
+  horizontalBarHeight,
+  useChartTokens,
+} from "@/components/chart/echart";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatINRCompact } from "@/lib/format";
 import type { BudgetActual, CashFlowPoint } from "@/lib/mock/finance";
@@ -15,14 +20,19 @@ export function BudgetVarianceChart({ data }: { data: BudgetActual[] }) {
         <CardDescription>Revenue variance by store / region (MTD)</CardDescription>
       </CardHeader>
       <CardContent>
+        {/* A row per branch: `/finance/budget` labels its rows by store NAME,
+            and for a head-office reader that is every branch at once — the
+            same long names that smeared the Store Comparison axis into one
+            unreadable line (client CEO, 23 Nov). */}
         <BarChart
           categories={data.map((d) => d.store)}
           valueFormatter={formatINRCompact}
+          horizontal
           series={[
             { name: "Budget", data: data.map((d) => d.budget), color: t.palette[2] },
             { name: "Actual", data: data.map((d) => d.actual), color: t.palette[0] },
           ]}
-          height={280}
+          height={horizontalBarHeight(data.length, 2)}
           emptyMessage="No budget set and nothing booked this month yet"
         />
       </CardContent>
