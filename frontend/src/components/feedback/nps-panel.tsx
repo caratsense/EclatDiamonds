@@ -54,10 +54,17 @@ const when = (iso: string | null) =>
  * Getting the sheet in.
  *
  * NPS answers are not ours to create: a customer fills the client's Google
- * Form, the answers land in her workbook, and somebody uploads the export. It
- * sits above both tables rather than behind a menu because until it existed
- * there was no route in at all — the model, the matcher, both screens and the
- * Excel export shipped, and production held zero responses.
+ * Form, the answers land in her workbook, and somebody uploads the export.
+ * Until this existed there was no route in at all — the model, the matcher,
+ * both screens and the Excel export shipped, and production held zero
+ * responses.
+ *
+ * It belongs on NPS Responses and nowhere else. It used to sit above BOTH
+ * tables, and the client's first look at Updates was "also in updates why have
+ * u put that sheet": Updates is a register of visits and asks, uploading a
+ * workbook creates no row in it, so a file picker at the top of it answered a
+ * question that screen does not ask. Responses IS the list of what the
+ * workbook holds, so the upload sits there and Updates says where to find it.
  */
 function NpsSheetUpload() {
   const [file, setFile] = useState<File | null>(null);
@@ -189,14 +196,39 @@ function ImportSummary({ result }: { result: NpsImportResult }) {
   );
 }
 
+/**
+ * Visits listed, but not one of them has been asked or has answered — so every
+ * column after the stage can only be a dash.
+ *
+ * That is the state production is actually in: one walk-in on the register, no
+ * ask ever sent, no workbook ever uploaded. A wide table of dashes with
+ * nothing said about it reads as a broken screen rather than as an empty one,
+ * and the register is not empty, so an empty state would be a lie.
+ *
+ * Exported because it decides whether the explanation is shown, and getting it
+ * backwards fails quietly in both directions: a register that has started
+ * filling would keep being told nobody was asked, and an untouched one would
+ * go on showing dashes with no reason given.
+ */
+export function nothingAskedYet(rows: NpsUpdateRow[]): boolean {
+  if (!rows.length) return false;
+  return rows.every(
+    (r) =>
+      !r.initialSentAt &&
+      !r.reminderSentAt &&
+      !r.repliedAt &&
+      !r.submittedAt &&
+      !r.followups.length,
+  );
+}
+
 export function NpsUpdates() {
   const { data, isLoading } = useNpsUpdates({ take: 200 });
   const rows = data?.rows ?? [];
+  const nothingAsked = nothingAskedYet(rows);
+
   return (
     <div className="space-y-4">
-      {/* Above the table in every state: an empty screen is exactly when
-          somebody needs the upload. */}
-      <NpsSheetUpload />
       {isLoading ? (
         <Skeleton className="h-64 w-full" />
       ) : !rows.length ? (
@@ -206,9 +238,42 @@ export function NpsUpdates() {
           description="Every checked-in customer appears here, whether or not they answered."
         />
       ) : (
-        <UpdatesTable rows={rows} total={data?.total ?? rows.length} />
+        <>
+          {nothingAsked ? <NothingAskedYet /> : null}
+          <UpdatesTable rows={rows} total={data?.total ?? rows.length} />
+        </>
       )}
     </div>
+  );
+}
+
+/**
+ * What is missing, in words, above the register.
+ *
+ * Stated as the two separate things that fill the two halves of the table,
+ * because they are filled by two different people doing two different jobs:
+ * the branch sending the ask, and whoever uploads the client's workbook. The
+ * upload itself is not repeated here — putting it on this screen is what the
+ * client objected to — so this names where it lives instead.
+ */
+function NothingAskedYet() {
+  return (
+    <Card>
+      <CardContent className="space-y-1.5 p-4">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Gauge className="h-4 w-4 text-muted-foreground" aria-hidden="true" />
+          Nobody has been asked yet
+        </div>
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          The visits below are listed so a branch can see who is still owed an ask. The message,
+          reminder and reply columns fill in once the after-visit request starts going out, which
+          a manager switches on under Feedback Requests › Ask after a visit. The score and
+          follow-up columns fill in when somebody uploads the NPS workbook under{" "}
+          <span className="font-medium text-foreground">NPS Responses</span> — that upload is the
+          only way form answers reach this screen.
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

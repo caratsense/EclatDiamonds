@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 
 import { isSentBroadcast } from "@/components/crm/broadcast-filter";
 import { primaryContactValue } from "@/components/crm/customer-details-dialog";
+import {
+  fillTemplateBody,
+  templateVariableFills,
+} from "@/components/crm/send-template-dialog";
 import { inboxRefreshTarget } from "@/lib/queries/crm";
 
 /**
@@ -112,5 +116,80 @@ describe("which pushes refresh the inbox", () => {
         inboxRefreshTarget({ kind, entityType: "LeaveRequest", entityId: "x" }),
       ).toEqual({ list: false, conversationId: null });
     }
+  });
+});
+
+describe("sending one template to one customer", () => {
+  const defaults = [
+    { slot: 1, source: "customer_first_name" as const, fallback: "there" },
+    { slot: 2, source: "branch_name" as const, fallback: "our showroom" },
+  ];
+
+  it("fills the slots from the template's own recorded defaults", () => {
+    expect(
+      templateVariableFills(defaults, 2, {
+        customerName: "Priya Shah",
+        branchName: "Surat — Ring Road",
+      }),
+    ).toEqual(["Priya", "Surat — Ring Road"]);
+  });
+
+  it("uses the template's stand-in when the customer has no name on file", () => {
+    // Meta refuses a message with a blank value in it, so the fallback is the
+    // difference between a send that reads oddly and one that never arrives.
+    expect(
+      templateVariableFills(defaults, 2, { customerName: null, branchName: null }),
+    ).toEqual(["there", "our showroom"]);
+  });
+
+  it("leaves a slot nobody described empty, for the sender to fill", () => {
+    // The honest state: the template's author never said what belongs here,
+    // and the person sending is the one who can answer.
+    expect(templateVariableFills(defaults, 3, { customerName: "Priya" })).toEqual([
+      "Priya",
+      "our showroom",
+      "",
+    ]);
+    expect(templateVariableFills(undefined, 1, { customerName: "Priya" })).toEqual([""]);
+  });
+
+  it("sends the same wording for everyone as written", () => {
+    expect(
+      templateVariableFills(
+        [{ slot: 1, source: "fixed", text: "Diwali Collection", fallback: "Diwali Collection" }],
+        1,
+        { customerName: "Priya" },
+      ),
+    ).toEqual(["Diwali Collection"]);
+  });
+
+  it("collapses a value the provider would refuse", () => {
+    // A name saved with a line break in it is still one parameter to Meta.
+    expect(
+      templateVariableFills(defaults, 1, { customerName: "Priya\n  Shah" }),
+    ).toEqual(["Priya"]);
+  });
+
+  it("asks for nothing when the template takes nothing", () => {
+    expect(templateVariableFills(defaults, 0, { customerName: "Priya" })).toEqual([]);
+  });
+
+  it("shows the sender the sentence the customer will read", () => {
+    expect(
+      fillTemplateBody("Hello {{1}}, your order at {{2}} is ready.", ["Priya", "Surat"]),
+    ).toBe("Hello Priya, your order at Surat is ready.");
+  });
+
+  it("keeps an unfilled placeholder visible rather than swallowing it", () => {
+    // A gap has to look like a gap: collapsing {{2}} to nothing would read as
+    // a finished sentence and go out with a hole in it.
+    expect(fillTemplateBody("Hello {{1}}, see you at {{2}}.", ["Priya", "  "])).toBe(
+      "Hello Priya, see you at {{2}}.",
+    );
+    expect(fillTemplateBody("Hello {{1}}.", [])).toBe("Hello {{1}}.");
+  });
+
+  it("reads a placeholder written with spaces inside it", () => {
+    expect(fillTemplateBody("Hello {{ 1 }}.", ["Priya"])).toBe("Hello Priya.");
   });
 });

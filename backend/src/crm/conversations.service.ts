@@ -2105,7 +2105,16 @@ export class ConversationsService {
           },
         },
         assignedUser: { select: { id: true, name: true } },
-        store: { select: { id: true, name: true } },
+        /*
+         * `timezone` because the inbox has to say WHICH DAY a message belongs
+         * to, and that is a question only the branch's own clock can answer.
+         * A message sent at 00:30 in Surat is 19:00 the previous day in UTC, so
+         * a stamp rendered from the server's clock — or from a browser roaming
+         * in another zone — dates the last interaction wrongly for an hour or
+         * more every single day. Same `Store.timezone` the attendance and
+         * reporting code anchors its business days to (common/tz.util.ts).
+         */
+        store: { select: { id: true, name: true, timezone: true } },
         _count: { select: { messages: true } },
         /*
          * The newest message, for the list preview.
@@ -2712,7 +2721,9 @@ export class ConversationsService {
       include: {
         party: { select: { id: true, name: true, phone: true } },
         assignedUser: { select: { id: true, name: true } },
-        store: { select: { id: true, name: true } },
+        // `timezone` for the same reason the list selects it: the thread's day
+        // separators and its "last wrote" line are read in the BRANCH's clock.
+        store: { select: { id: true, name: true, timezone: true } },
       },
     });
     if (!conversation) throw new NotFoundException('Conversation not found');

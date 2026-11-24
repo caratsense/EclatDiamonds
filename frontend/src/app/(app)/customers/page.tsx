@@ -2,7 +2,16 @@
 
 import { type ReactNode, useState } from "react";
 import Link from "next/link";
-import { Ban, CheckSquare, Contact, Pencil, Search, Square, Trash2 } from "lucide-react";
+import {
+  Ban,
+  Building2,
+  CheckSquare,
+  Contact,
+  Pencil,
+  Search,
+  Square,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { ExcelExportButton } from "@/components/common/excel-export-button";
@@ -25,6 +34,13 @@ import { EmptyState } from "@/components/ui/empty-state";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { PaginationBar } from "@/components/ui/pagination-bar";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Table,
@@ -37,10 +53,12 @@ import {
 import { getNavItem } from "@/lib/navigation";
 import { formatINR } from "@/lib/format";
 import {
+  useAssignPartyBranch,
   useBulkDeleteParties,
   useCreateParty,
   useParties,
   useRenameParty,
+  useUnbranchedCustomerCount,
   type BulkDeleteResult,
   type PartyRow,
   type PartyTypeName,
@@ -107,12 +125,30 @@ export default function CustomersPage() {
   const [tagId, setTagId] = useState<string>("");
   const allTags = useLeadTags();
 
+  const baseRole = useSession((s) => s.baseRole);
+  const isHeadOffice = ROLE_RANK[baseRole] >= ROLE_RANK.head_office;
+
+  /*
+   * A CUSTOMER WITH NO BRANCH IS HEAD OFFICE'S (client, 23 Nov): "people who
+   * have no branch should be visible only to head office, from where they could
+   * be reassigned."
+   *
+   * The server decides that; this is the queue that makes it safe. Hiding those
+   * customers from branch staff takes them away from the people most likely to
+   * recognise the name, so head office has to be able to see the whole list of
+   * them in one click — seventeen customers scattered through eight hundred are
+   * hidden just as effectively as they were before.
+   */
+  const [unbranchedOnly, setUnbranchedOnly] = useState(false);
+  const unbranchedCount = useUnbranchedCustomerCount(isHeadOffice);
+
   const { data, isLoading, isError, refetch } = useParties({
     page,
     pageSize,
     q: q.trim() || undefined,
     type: "customer",
     tagId: tagId || undefined,
+    unbranched: unbranchedOnly || undefined,
   });
 
   const rows = data?.items ?? [];
@@ -124,8 +160,7 @@ export default function CustomersPage() {
    * server — deleting a customer is the only bulk action on this screen, so a
    * checkbox a manager cannot act on is just a dead control.
    */
-  const baseRole = useSession((s) => s.baseRole);
-  const canBulkDelete = ROLE_RANK[baseRole] >= ROLE_RANK.head_office;
+  const canBulkDelete = isHeadOffice;
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkOpen, setBulkOpen] = useState(false);
 
@@ -136,7 +171,7 @@ export default function CustomersPage() {
    * delete against a list they can no longer see.
    */
   const storeKey = useStoreKey();
-  useResetOn(`${storeKey}|${q}|${tagId}|${page}|${pageSize}`, () => {
+  useResetOn(`${storeKey}|${q}|${tagId}|${unbranchedOnly}|${page}|${pageSize}`, () => {
     setSelectedIds(new Set());
   });
 
@@ -195,12 +230,42 @@ export default function CustomersPage() {
             ))}
           </select>
         ) : null}
+        {/* Head office's triage queue. Shown with its count whenever anybody is
+            waiting for a branch, and kept on screen while the filter is on so
+            there is always a way back out of it. */}
+        {isHeadOffice && ((unbranchedCount.data ?? 0) > 0 || unbranchedOnly) ? (
+          <Button
+            variant={unbranchedOnly ? "default" : "outline"}
+            className="h-9 gap-1.5 whitespace-nowrap"
+            aria-pressed={unbranchedOnly}
+            onClick={() => {
+              setUnbranchedOnly((on) => !on);
+              setPage(1);
+            }}
+          >
+            <Building2 className="h-4 w-4" />
+            No branch yet
+            {unbranchedCount.data != null ? (
+              <span className="num">· {unbranchedCount.data}</span>
+            ) : null}
+          </Button>
+        ) : null}
         <ExcelExportButton
           path="/parties/export.xlsx"
           fallbackName="customers.xlsx"
           rangedOn="the day the customer was added"
         />
       </div>
+
+      {unbranchedOnly ? (
+        /* Says what this list is and what to do with it. These customers
+           reached us before routing knew a shop, and nobody on the floor can
+           see them — so leaving one here is a decision, not a default. */
+        <p className="mb-4 rounded-lg border border-dashed bg-muted/20 px-4 py-3 text-sm text-muted-foreground">
+          These customers have no branch, so only head office can see them. Open
+          one and give it a branch to hand the customer to that shop.
+        </p>
+      ) : null}
 
       {isError ? (
         <div className="rounded-xl border border-dashed bg-muted/20 px-6 py-14 text-center">
@@ -224,12 +289,20 @@ export default function CustomersPage() {
         </div>
       ) : rows.length === 0 ? (
         <EmptyState
-          icon={Contact}
-          title={q ? "No matches" : "No customers here yet"}
+          icon={unbranchedOnly ? Building2 : Contact}
+          title={
+            unbranchedOnly
+              ? "Every customer has a branch"
+              : q
+                ? "No matches"
+                : "No customers here yet"
+          }
           description={
-            q
-              ? "No party matches your search in this store."
-              : "Customers sync in from billing, or get added when you log a lead or a walk-in. Try switching the store or the filter above."
+            unbranchedOnly
+              ? "Nothing is waiting to be handed to a shop."
+              : q
+                ? "No party matches your search in this store."
+                : "Customers sync in from billing, or get added when you log a lead or a walk-in. Try switching the store or the filter above."
           }
         />
       ) : (
@@ -312,6 +385,13 @@ export default function CustomersPage() {
                         {p.isBlacklisted ? (
                           <Badge variant="destructive" className="gap-1">
                             <Ban className="h-3 w-3" /> Blacklisted
+                          </Badge>
+                        ) : null}
+                        {/* Only head office ever sees one of these, and only
+                            until they hand the customer to a shop. */}
+                        {p.storeId == null ? (
+                          <Badge variant="outline" className="gap-1">
+                            <Building2 className="h-3 w-3" /> No branch
                           </Badge>
                         ) : null}
                       </div>
@@ -713,6 +793,105 @@ function AddCustomerDialog({
   );
 }
 
+/**
+ * The branch this customer belongs to — and head office's way to change it.
+ *
+ * The client, 23 Nov: "people who have no branch should be visible only to head
+ * office, from where they could be reassigned." This is the "from where". A
+ * customer with no branch is invisible to every shop, so the queue they sit in
+ * needs an exit that takes one click from the row itself.
+ *
+ * It also MOVES a customer between branches, which is what the duplicate-number
+ * refusal has been telling managers to ask head office for all along.
+ *
+ * A Gati-synced customer is read-only here: the sync writes the branch on every
+ * run, so a move would hold until tonight and then put the customer back —
+ * worse than no move, because the shop would lose them again silently.
+ */
+function BranchField({
+  party,
+  onPartyChange,
+}: {
+  party: PartyRow;
+  onPartyChange: (party: PartyRow) => void;
+}) {
+  const stores = useSession((s) => s.stores);
+  const assign = useAssignPartyBranch();
+  const [picked, setPicked] = useState<string>("");
+
+  // A different customer is a different question — never carry the last pick.
+  useResetOn(party.id, () => setPicked(""));
+
+  const branches = stores.filter((s) => !s.isAggregate);
+  const target = picked || party.storeId || "";
+
+  if (party.isSynced) {
+    return (
+      <div className="rounded-lg border bg-muted/20 px-3 py-2.5 text-sm">
+        <span className="text-muted-foreground">Branch</span>
+        <p className="font-medium">{party.storeName ?? "—"}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Synced from Gati — the branch has to be changed there, or the next sync
+          puts this one back.
+        </p>
+      </div>
+    );
+  }
+
+  const save = () => {
+    if (!target || target === party.storeId) return;
+    assign.mutate(
+      { id: party.id, storeId: target },
+      {
+        onSuccess: (row) => {
+          onPartyChange(row);
+          setPicked("");
+          toast.success(
+            row.storeName
+              ? `${row.name} is now ${row.storeName}'s customer`
+              : "Branch updated",
+          );
+        },
+        onError: (err) =>
+          toast.error(apiErrorMessage(err, "Could not change the branch.")),
+      },
+    );
+  };
+
+  return (
+    <div className="rounded-lg border bg-muted/20 px-3 py-2.5">
+      <Label className="text-muted-foreground">Branch</Label>
+      <div className="mt-1.5 flex items-center gap-2">
+        <Select value={target} onValueChange={setPicked}>
+          <SelectTrigger className="h-9" aria-label="Branch">
+            <SelectValue placeholder="No branch yet — choose one" />
+          </SelectTrigger>
+          <SelectContent>
+            {branches.map((s) => (
+              <SelectItem key={s.id} value={s.id}>
+                {s.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button
+          size="sm"
+          onClick={save}
+          disabled={assign.isPending || !target || target === party.storeId}
+        >
+          {assign.isPending ? "Saving…" : "Save"}
+        </Button>
+      </div>
+      {party.storeId == null ? (
+        <p className="mt-1.5 text-xs text-muted-foreground">
+          No branch yet, so only head office can see this customer. Giving them a
+          branch puts them on that shop&apos;s list.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 function DetailRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex justify-between gap-4 py-1.5 text-sm">
@@ -736,6 +915,9 @@ function CustomerDetailDialog({
   // The name is what every colleague's list, export and campaign shows, so
   // changing it is a manager's call — the same level as archiving.
   const canRename = ROLE_RANK[baseRole] >= ROLE_RANK.store_manager;
+  // The branch decides whose list, whose targets and whose campaign audience
+  // this customer appears in, so one desk owns the move (client, 23 Nov).
+  const canAssignBranch = ROLE_RANK[baseRole] >= ROLE_RANK.head_office;
   const rename = useRenameParty();
   const [draft, setDraft] = useState<string | null>(null);
 
@@ -846,7 +1028,17 @@ function CustomerDetailDialog({
                 the directory (client, 10 Oct). Typing a new name creates it. */}
             <PartyTagsField partyId={party.id} />
 
+            {/* Head office hands the customer to a shop from here; everyone
+                else reads the branch as a fact among the others below. */}
+            {canAssignBranch ? (
+              <BranchField party={party} onPartyChange={onPartyChange} />
+            ) : null}
+
             <div className="divide-y">
+              {/* Head office gets the editable version above instead. */}
+              {!canAssignBranch ? (
+                <DetailRow label="Branch" value={party.storeName ?? "—"} />
+              ) : null}
               <DetailRow label="Phone" value={party.phone ?? "—"} />
               <DetailRow label="WhatsApp" value={party.whatsapp ?? "—"} />
               <DetailRow label="Email" value={party.email ?? "—"} />

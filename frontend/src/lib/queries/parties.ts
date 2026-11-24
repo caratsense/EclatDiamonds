@@ -43,6 +43,15 @@ export interface PartyRow {
   anniversary: string | null;
   creditLimit: number | null;
   isBlacklisted: boolean;
+  /**
+   * The branch this customer belongs to — null for both when they have none.
+   *
+   * A customer with no branch is visible to head office alone (client, 23 Nov),
+   * so for everyone else these are always set; for head office, a null is a
+   * customer still waiting to be handed to a shop.
+   */
+  storeId: string | null;
+  storeName: string | null;
   salesCount: number;
   /** The customer's tags — chips on the directory row (client, 10 Oct). */
   tags: { id: string; name: string; colour: string | null }[];
@@ -71,6 +80,11 @@ export interface PartyListParams {
   archived?: boolean;
   /** Show only customers wearing this tag. */
   tagId?: string;
+  /**
+   * Head office's triage queue: only the customers with no branch yet. Anyone
+   * else asking gets an empty list — the unbranched are not in their scope.
+   */
+  unbranched?: boolean;
 }
 
 export function useParties(params: PartyListParams) {
@@ -83,6 +97,31 @@ export function useParties(params: PartyListParams) {
     },
     // Keep the previous page on screen while the next loads — no empty flash.
     placeholderData: (prev) => prev,
+  });
+}
+
+/**
+ * How many customers are still waiting for a branch.
+ *
+ * The number is the whole point of the filter: hiding the unbranched from
+ * branch staff is only safe while head office cannot miss them, and seventeen
+ * customers among eight hundred are missed unless something says "seventeen".
+ * Asks for one row and reads the total off the envelope.
+ *
+ * `enabled` is the caller's role check — nobody below head office has an
+ * unbranched customer in scope, so the request would always answer zero.
+ */
+export function useUnbranchedCustomerCount(enabled: boolean) {
+  const storeId = useStoreKey();
+  return useQuery({
+    queryKey: ["parties", "unbranched-count", storeId],
+    queryFn: async () => {
+      const { data } = await api.get<Paginated<PartyRow>>("/parties", {
+        params: { page: 1, pageSize: 1, type: "customer", unbranched: true },
+      });
+      return data.total;
+    },
+    enabled,
   });
 }
 
@@ -128,6 +167,33 @@ export function useRenameParty() {
       void qc.invalidateQueries({ queryKey: ["parties"] });
       // The name is what search and Customer 360 show too.
       void qc.invalidateQueries({ queryKey: ["search"] });
+      void qc.invalidateQueries({ queryKey: ["crm", "customer360"] });
+    },
+  });
+}
+
+/**
+ * Hand a customer to a branch, or move them to another one.
+ *
+ * The way out of head office's "no branch yet" queue (client, 23 Nov): a
+ * customer nobody's shop owns is invisible to the branch staff who would
+ * recognise them, so the queue is only defensible with this beside it. Head
+ * office only, and refused for a Gati-synced customer — the sync writes the
+ * branch on every run and would take them off the shop's list again.
+ *
+ * The reply carries the whole row, so the open dialog shows the new branch
+ * without a refetch.
+ */
+export function useAssignPartyBranch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, storeId }: { id: string; storeId: string }) => {
+      const { data } = await api.post<PartyRow>(`/parties/${id}/branch`, { storeId });
+      return data;
+    },
+    onSuccess: () => {
+      // The directory, the queue's count and Customer 360 all show the branch.
+      void qc.invalidateQueries({ queryKey: ["parties"] });
       void qc.invalidateQueries({ queryKey: ["crm", "customer360"] });
     },
   });

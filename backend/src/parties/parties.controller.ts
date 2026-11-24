@@ -4,6 +4,7 @@ import { PartyType } from '@prisma/client';
 import { PartiesService } from './parties.service';
 import {
   ArchivePartyDto,
+  AssignPartyBranchDto,
   BulkDeletePartiesDto,
   CreatePartyDto,
   RenamePartyDto,
@@ -66,13 +67,22 @@ export class PartiesController {
     @Query('pageSize') pageSize?: string,
     @Query('archived') archived?: string,
     @Query('tagId') tagId?: string,
+    @Query('unbranched') unbranched?: string,
   ) {
     // New endpoint → always the paginated envelope (default page 1).
     const pagination =
       parsePagination(page ?? '1', pageSize) ?? { page: 1, pageSize: DEFAULT_PAGE_SIZE };
     return this.parties.list(
       user,
-      { q, type: type ?? 'customer', archived: archived === 'true', tagId: tagId || undefined },
+      {
+        q,
+        type: type ?? 'customer',
+        archived: archived === 'true',
+        tagId: tagId || undefined,
+        // Head office's "no branch yet" queue. Anyone else asking for it gets
+        // an empty list, because their scope holds no unbranched customer.
+        unbranched: unbranched === 'true',
+      },
       store,
       pagination,
     );
@@ -167,6 +177,28 @@ export class PartiesController {
     @Body() dto: RenamePartyDto,
   ) {
     return this.parties.rename(user, id, dto.name);
+  }
+
+  /**
+   * Give a customer a branch, or move them to another one (client, 23 Nov):
+   * "people who have no branch should be visible only to head office, from
+   * where they could be reassigned."
+   *
+   * Head office only, and `@HumansOnly()` for the same reason bulk delete is:
+   * the branch a customer belongs to decides whose list and whose campaign
+   * audience they land in, and the Gati agent carries head-office reach by
+   * design. Moving customers between shops is not a decision for a token
+   * sitting on a shop machine.
+   */
+  @HumansOnly()
+  @Roles('head_office')
+  @Post(':id/branch')
+  assignBranch(
+    @CurrentUser() user: AuthUser,
+    @Param('id') id: string,
+    @Body() dto: AssignPartyBranchDto,
+  ) {
+    return this.parties.assignBranch(user, id, dto.storeId);
   }
 
   @Roles('store_manager')

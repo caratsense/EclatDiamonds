@@ -184,7 +184,15 @@ function StepFields({
   return (
     <div className="space-y-2">
       <div className="text-sm font-medium">{title}</div>
-      <div className="flex flex-wrap items-end gap-3">
+      {/*
+        THREE FIELDS IN ONE ROW, which is what this row was before the picker.
+
+        `items-start` rather than `items-end`: the template column carries the
+        chosen wording under its dropdown, so it is taller than the two boxes
+        beside it, and bottom-aligning would drag the hours and the time down
+        the screen to meet it.
+      */}
+      <div className="flex flex-wrap items-start gap-3">
         <div className="grid gap-1.5">
           <Label htmlFor={`${idPrefix}-hours`}>Hours after the visit</Label>
           <Input
@@ -208,21 +216,28 @@ function StepFields({
             className="h-9 w-[8rem]"
           />
         </div>
-      </div>
 
-      {/*
-        CHOSEN FROM WHAT META HAS APPROVED, not typed from memory.
+        {/*
+          CHOSEN FROM WHAT META HAS APPROVED, not typed from memory.
 
-        These were two free-text boxes — a template name and a language code —
-        so a typo, a template that was never approved, or one Meta has since
-        paused all looked identical while saving, and the first anybody knew was
-        a customer who never got their feedback request. The picker lists the
-        approved templates for this tenant and carries the language with the
-        name, which is the pair the send actually needs.
-      */}
-      <div className="grid gap-1.5">
-        <Label>WhatsApp template</Label>
+          These were two free-text boxes — a template name and a language code —
+          so a typo, a template that was never approved, or one Meta has since
+          paused all looked identical while saving, and the first anybody knew
+          was a customer who never got their feedback request. The picker lists
+          the approved templates for this tenant and carries the language with
+          the name, which is the pair the send actually needs.
+
+          `compact`, because the first version of this put all five approved
+          templates on the screen as full-width cards with every message body
+          rendered — client: "In NPS it should have been a template dropdown
+          selector, not too much enlarged ... i wanted a dropdown picker".
+          Picking from what Meta approved is the part worth keeping; taking
+          over the screen to do it is not. One dropdown the size of the boxes
+          it replaced, with the chosen wording underneath it.
+        */}
         <TemplatePicker
+          variant="compact"
+          id={`${idPrefix}-template`}
           value={
             step.templateName
               ? { name: step.templateName, languageCode: step.templateLanguage ?? "en" }
@@ -234,8 +249,22 @@ function StepFields({
               templateLanguage: picked?.languageCode ?? "",
             })
           }
+          /*
+           * A blank FIRST template is a real setting, not a mistake: with no
+           * template the send hands the ask to the person who served the
+           * customer (`handToStaff`, "No WhatsApp feedback template is
+           * configured"), so it is offered in words.
+           *
+           * The second request is deliberately not offered it. It has no such
+           * fallback — a second task telling a colleague to nag the same
+           * customer again is work nobody asked for — so "no template" there
+           * means nothing happens at all, and the way to say that is the
+           * tick-box above, not an option that reads like a choice.
+           */
+          noneLabel={step.step === 1 ? "No template — a colleague asks instead" : undefined}
         />
       </div>
+
       <p className="text-xs text-muted-foreground">{whenItGoesOut(step)}</p>
     </div>
   );

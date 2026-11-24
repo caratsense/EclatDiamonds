@@ -6,10 +6,18 @@ import { AlertCircle, Check, MessageSquareText } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   isTemplateSendable,
   useMessageTemplates,
+  type MessageTemplateRow,
   type TemplateVariableDefault,
 } from "@/lib/queries/meta-admin";
 import { cn } from "@/lib/utils";
@@ -42,6 +50,21 @@ import { cn } from "@/lib/utils";
  * so. The server refuses the rest anyway; the point of matching it here is that
  * a manager never picks something at step four and discovers at step six that
  * it cannot go out.
+ *
+ * ## Two sizes, because the two screens are deciding different things
+ *
+ * The broadcast composer (`cards`, the default) is choosing what goes to
+ * several thousand people in one press, and the wording of every candidate
+ * earns its space there: the card list IS the sign-off surface.
+ *
+ * Feedback Requests is not that. It sets two automations up once and then edits
+ * a delay or a time of day, and the same card list took over the whole screen —
+ * the client: "i wanted a dropdown picker in a dialog box where we used to
+ * manually write names ... not too much enlarged". So `compact` draws one
+ * dropdown the size of the two text boxes it replaced, and the wording of the
+ * ONE chosen template underneath it, rather than five bodies she did not ask
+ * to read. One bubble instead of five, still verbatim, still on screen at the
+ * moment she presses Save.
  */
 export interface PickedTemplate {
   name: string;
@@ -68,12 +91,111 @@ export interface PickedTemplate {
   source: string;
 }
 
+/** A template's name and language, as the dropdown identifies one option. */
+function templateName(row: MessageTemplateRow): string {
+  return row.name ?? row.externalId;
+}
+
+/**
+ * One option's value in the dropdown.
+ *
+ * Keyed on name AND language, never on name alone: `order_update` is approved
+ * in en_US and hi_IN independently, and the send needs both halves. `::` cannot
+ * collide — Meta template names are lowercase letters, digits and underscores.
+ */
+export function templateOptionKey(name: string, languageCode: string): string {
+  return `${name}::${languageCode}`;
+}
+
+/**
+ * Nothing chosen. A sentinel because a Radix `SelectItem` may not carry an
+ * empty value, and the same `__all__` trick the catalogue filters use.
+ */
+const NO_TEMPLATE = "__none__";
+
+/**
+ * WHAT HAPPENED TO THE TEMPLATE THIS SETTING WAS SAVED WITH.
+ *
+ * The dropdown offers only sendable templates, so a saved name that has since
+ * been paused by Meta — or that was typed by hand before this list existed —
+ * matches no option and leaves the control showing its placeholder. That is the
+ * one failure this screen must never be quiet about: an automation configured
+ * months ago, a template Meta paused for quality last week, and a settings
+ * screen that looks merely un-filled-in. The person reading it has no reason
+ * to think anything is wrong, and the customer simply never gets asked.
+ *
+ * So the state is named, and the remedies differ: `withdrawn` may come back
+ * with a synchronise, `unrecognised` has to be replaced.
+ */
+export type SavedTemplateState =
+  | { kind: "empty" }
+  | { kind: "offered" }
+  | { kind: "withdrawn"; label: string }
+  | { kind: "unrecognised"; label: string };
+
+export function savedTemplateState(
+  saved: { name: string; languageCode: string } | null,
+  all: MessageTemplateRow[],
+): SavedTemplateState {
+  const name = saved?.name.trim();
+  if (!name) return { kind: "empty" };
+  const languageCode = saved?.languageCode.trim() ?? "";
+  const label = languageCode ? `${name} (${languageCode})` : name;
+
+  const byName = all.filter((row) => templateName(row) === name);
+  const offered = byName.some(
+    (row) => row.metadata.languageCode === languageCode && isTemplateSendable(row),
+  );
+  if (offered) return { kind: "offered" };
+  /*
+   * Matched by name but not offered covers two causes with one remedy: the
+   * approval lapsed or was paused, or the language saved here is not the
+   * language it is approved in. Both are "synchronise and look at it", and
+   * both send nothing today.
+   */
+  return byName.length ? { kind: "withdrawn", label } : { kind: "unrecognised", label };
+}
+
+/** Everything the broadcast wizard needs out of one approved template. */
+function pickOf(row: MessageTemplateRow): PickedTemplate {
+  return {
+    name: templateName(row),
+    languageCode: row.metadata.languageCode,
+    preview: row.metadata.bodyPreview?.trim() ?? "",
+    variableCount: row.metadata.variables?.length ?? 0,
+    variableDefaults: row.metadata.variableDefaults ?? [],
+    source: row.metadata.bodySource ?? "",
+  };
+}
+
 export function TemplatePicker({
   value,
   onChange,
+  variant = "cards",
+  id,
+  label = "WhatsApp template",
+  noneLabel,
 }: {
   value: { name: string; languageCode: string } | null;
   onChange: (picked: PickedTemplate | null) => void;
+  /**
+   * `cards` is the broadcast composer's full list with every body rendered;
+   * `compact` is one dropdown plus the chosen wording. See the note above.
+   */
+  variant?: "cards" | "compact";
+  /** `compact` only: ties the caller's own label text to the dropdown. */
+  id?: string;
+  /** `compact` only: the field's label, which it draws itself so it lines up
+   * with the inputs beside it. */
+  label?: string;
+  /**
+   * `compact` only: offer "no template at all" under this wording.
+   *
+   * Omitted means the field cannot be cleared. Feedback Requests needs it —
+   * a blank first template is a real setting there, and means a colleague asks
+   * the customer in person instead.
+   */
+  noneLabel?: string;
 }) {
   const templates = useMessageTemplates();
 
@@ -81,6 +203,21 @@ export function TemplatePicker({
     () => (templates.data ?? []).filter(isTemplateSendable),
     [templates.data],
   );
+
+  if (variant === "compact") {
+    return (
+      <CompactTemplatePicker
+        value={value}
+        onChange={onChange}
+        id={id}
+        label={label}
+        noneLabel={noneLabel}
+        all={templates.data ?? []}
+        sendable={sendable}
+        isLoading={templates.isLoading}
+      />
+    );
+  }
 
   if (templates.isLoading) return <Skeleton className="h-40 w-full rounded-lg" />;
 
@@ -131,20 +268,7 @@ export function TemplatePicker({
             <button
               key={row.id}
               type="button"
-              onClick={() =>
-                onChange(
-                  chosen
-                    ? null
-                    : {
-                        name,
-                        languageCode: language,
-                        preview: preview ?? "",
-                        variableCount: row.metadata.variables?.length ?? 0,
-                        variableDefaults: row.metadata.variableDefaults ?? [],
-                        source: row.metadata.bodySource ?? "",
-                      },
-                )
-              }
+              onClick={() => onChange(chosen ? null : pickOf(row))}
               className={cn(
                 "flex w-full items-start gap-3 rounded-lg border p-3 text-left transition hover:border-primary/50",
                 chosen && "border-primary bg-primary/5",
@@ -189,6 +313,177 @@ export function TemplatePicker({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+/**
+ * ONE DROPDOWN, AND THE WORDING OF THE ONE TEMPLATE IT HAS CHOSEN.
+ *
+ * ## Why the preview sits under the dropdown and not in the list
+ *
+ * Three places could carry it, and two of them fail the person using it. In
+ * the list, every option grows to the height of a message and we are back to
+ * the wall of green bubbles she asked us to take away. On hover, it is absent
+ * on the tablets the branches use and absent to the keyboard.
+ *
+ * Under the dropdown, it costs one bubble no matter how many templates exist,
+ * it is the wording of the template this setting will actually send, and it is
+ * still on the screen at the moment Save is pressed — which is the moment
+ * somebody is signing off on what a customer receives.
+ */
+function CompactTemplatePicker({
+  value,
+  onChange,
+  id,
+  label,
+  noneLabel,
+  all,
+  sendable,
+  isLoading,
+}: {
+  value: { name: string; languageCode: string } | null;
+  onChange: (picked: PickedTemplate | null) => void;
+  id?: string;
+  label: string;
+  noneLabel?: string;
+  all: MessageTemplateRow[];
+  sendable: MessageTemplateRow[];
+  isLoading: boolean;
+}) {
+  const saved = savedTemplateState(value, all);
+  const chosen =
+    saved.kind === "offered"
+      ? sendable.find(
+          (row) =>
+            templateName(row) === value?.name &&
+            row.metadata.languageCode === value?.languageCode,
+        )
+      : undefined;
+  const preview = chosen?.metadata.bodyPreview?.trim();
+  /*
+   * How many are on file but cannot be sent today. Said as a count rather than
+   * as disabled rows: the list stays the length of what is actually choosable,
+   * and nobody has to wonder why the template they wrote this morning is not
+   * in it.
+   */
+  const held = all.length - sendable.length;
+  /*
+   * A blank setting is drawn as the "none" option SELECTED, not as an empty
+   * box, wherever the caller has said blank means something. On Feedback
+   * Requests it means "a colleague asks instead", and a placeholder reading
+   * "Choose an approved template" would make a deliberate decision look like
+   * an unfinished form every time the screen is opened.
+   */
+  const selected =
+    saved.kind === "offered" && value
+      ? templateOptionKey(value.name, value.languageCode)
+      : saved.kind === "empty" && noneLabel
+        ? NO_TEMPLATE
+        : "";
+
+  return (
+    <div className="grid min-w-[15rem] flex-1 gap-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {isLoading ? (
+        <Skeleton className="h-9 w-full rounded-md" />
+      ) : (
+        <Select
+          value={selected}
+          onValueChange={(key) => {
+            if (key === NO_TEMPLATE) return onChange(null);
+            const row = sendable.find(
+              (r) => templateOptionKey(templateName(r), r.metadata.languageCode) === key,
+            );
+            onChange(row ? pickOf(row) : null);
+          }}
+          /*
+           * Disabled only when there is genuinely nothing to choose. With
+           * nothing approved but "a colleague asks instead" on offer, that
+           * option IS the remedy for a template Meta has paused — locking the
+           * control would leave the only way out of a dead setting closed.
+           */
+          disabled={!sendable.length && !noneLabel}
+        >
+          <SelectTrigger id={id} className="h-9">
+            <SelectValue
+              placeholder={
+                sendable.length ? "Choose an approved template" : "No approved template yet"
+              }
+            />
+          </SelectTrigger>
+          <SelectContent>
+            {noneLabel ? <SelectItem value={NO_TEMPLATE}>{noneLabel}</SelectItem> : null}
+            {sendable.map((row) => {
+              const name = templateName(row);
+              const language = row.metadata.languageCode;
+              return (
+                <SelectItem key={row.id} value={templateOptionKey(name, language)}>
+                  <span className="font-medium">{name}</span>
+                  <span className="ml-2 text-xs text-muted-foreground">{language}</span>
+                </SelectItem>
+              );
+            })}
+            {held > 0 ? (
+              <p className="px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground">
+                {held === 1 ? "1 other template is" : `${held} other templates are`} on file but not
+                approved to send today.
+              </p>
+            ) : null}
+          </SelectContent>
+        </Select>
+      )}
+
+      {/*
+        The empty list has two very different causes and the difference decides
+        what to do next: nothing has ever been written, or something was written
+        and Meta has not approved it. Both roads lead to the same screen, so the
+        line names which one it is rather than leaving somebody to find out.
+      */}
+      {!isLoading && !sendable.length ? (
+        <p className="flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
+          <AlertCircle className="size-3 shrink-0" />
+          {all.length
+            ? `${all.length} ${all.length === 1 ? "template is" : "templates are"} recorded, none approved by Meta in the last day.`
+            : "WhatsApp only allows an approved template for a message a customer did not ask for."}
+          <Link
+            href="/settings/integrations/templates"
+            className="font-medium text-primary hover:underline"
+          >
+            {all.length ? "Synchronise with Meta" : "Write one and submit it"} →
+          </Link>
+        </p>
+      ) : null}
+
+      {saved.kind === "withdrawn" || saved.kind === "unrecognised" ? (
+        <p className="flex flex-wrap items-center gap-1 text-xs text-destructive">
+          <AlertCircle className="size-3 shrink-0" />
+          {saved.kind === "withdrawn"
+            ? `Saved as ${saved.label}, which Meta does not have approved and ready to send today — so nothing goes out until you pick one that is.`
+            : `Saved as ${saved.label}, which is not a template on file for this account — it was typed in before this list existed.`}
+          {saved.kind === "withdrawn" ? (
+            <Link
+              href="/settings/integrations/templates"
+              className="font-medium text-primary hover:underline"
+            >
+              Synchronise with Meta →
+            </Link>
+          ) : null}
+        </p>
+      ) : null}
+
+      {chosen ? (
+        preview ? (
+          <p className="max-w-prose whitespace-pre-line rounded-lg rounded-tl-sm bg-[#d9fdd3] p-2 text-[12px] leading-relaxed text-[#111b21] dark:bg-[#005c4b] dark:text-[#e9edef]">
+            {preview}
+          </p>
+        ) : (
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <MessageSquareText className="size-3 shrink-0" />
+            Approved, but its wording was never recorded here. Synchronise to fetch it.
+          </p>
+        )
+      ) : null}
     </div>
   );
 }

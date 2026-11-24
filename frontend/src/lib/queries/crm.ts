@@ -300,7 +300,19 @@ export interface ConversationRow {
     tags?: { id: string; name: string; colour: string | null }[];
   } | null;
   assignedUser: { id: string; name: string } | null;
-  store?: { id: string; name: string } | null;
+  store?: {
+    id: string;
+    name: string;
+    /**
+     * IANA zone of the branch, e.g. "Asia/Kolkata". Every date and time on this
+     * screen is rendered in it — see `lib/conversation-time.ts` for why the
+     * branch's clock rather than the reader's decides which day a message is on.
+     *
+     * Optional only because a response cached from before the server selected
+     * it would not carry it; `branchZone` falls back to the chain's own zone.
+     */
+    timezone?: string;
+  } | null;
   _count?: { messages: number };
   /**
    * The newest message in the thread, for the list preview. Null when nothing
@@ -640,6 +652,75 @@ export function useSendReply(conversationId: string) {
           `/crm/conversations/${conversationId}/messages`,
           input,
         )
+      ).data,
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["crm", "conversation", conversationId] });
+      void qc.invalidateQueries({ queryKey: ["crm", "conversations"] });
+    },
+  });
+}
+
+/**
+ * Send one approved template into a thread that already exists.
+ *
+ * ## Why this is not `useSendReply`
+ *
+ * `POST /crm/conversations/:id/messages` carries free text and an attachment
+ * and deliberately carries no template — `queueAgentReply` says so in as many
+ * words. Free text is refused by WhatsApp outside the 24-hour customer-care
+ * window, which is precisely the moment this exists for: the window has shut,
+ * and an approved template is the only thing that can still reach the customer.
+ *
+ * ## Why this endpoint
+ *
+ * It is the one `QuickRepliesService.send` already queues template chips
+ * through, so consent, STOP, the window, the provider's approval verdict, the
+ * outbox and the audit trail all apply exactly as they do there. Nothing new
+ * reaches a provider; what is new is being able to pick ANY approved template
+ * rather than only one a manager has saved as a chip.
+ *
+ * ## Why the caller passes a purpose
+ *
+ * Because Meta's own category for the template is the only honest reading of
+ * what it is. Sending an offer template as `service` because it happened to be
+ * pressed inside a support thread would walk a marketing message straight past
+ * recorded consent — the same rule, and the same wording, as the quick-reply
+ * send.
+ */
+export function useSendTemplateReply(conversationId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      /** `MessageTemplateRow.id` — the registered template, not its name. */
+      templateAssetId: string;
+      purpose: "service" | "marketing";
+      /**
+       * What fills `{{1}}`, `{{2}}`… in slot order, already resolved to the
+       * literal words this customer will read. Empty for a template with no
+       * variables: Meta refuses an empty parameter list as firmly as a missing
+       * one, so the block is omitted rather than sent hollow.
+       */
+      values: string[];
+    }) =>
+      (
+        await api.post<{
+          message: { id: string; status: string };
+          deduplicated: boolean;
+          policy?: { mode?: string };
+        }>(`/omnichannel/conversations/${conversationId}/messages`, {
+          purpose: input.purpose,
+          templateAssetId: input.templateAssetId,
+          ...(input.values.length
+            ? {
+                templateComponents: [
+                  {
+                    type: "body",
+                    parameters: input.values.map((text) => ({ type: "text", text })),
+                  },
+                ],
+              }
+            : {}),
+        })
       ).data,
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["crm", "conversation", conversationId] });

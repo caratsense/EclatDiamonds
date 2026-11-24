@@ -58,6 +58,22 @@ export class RenamePartyDto {
 }
 
 /**
+ * POST /parties/:id/branch — hand a customer to a branch (client, 23 Nov):
+ * "people who have no branch should be visible only to head office, from where
+ * they could be reassigned."
+ *
+ * One field, and it is required: there is no "take the branch away" here. A
+ * customer with no branch is one only head office can see, so clearing it would
+ * be a way to quietly pull somebody off a shop's list and into a queue nobody
+ * below head office works.
+ */
+export class AssignPartyBranchDto {
+  @IsString()
+  @IsNotEmpty()
+  storeId!: string;
+}
+
+/**
  * POST /parties/bulk-delete — remove the customers somebody ticked.
  *
  * Capped, because the ids can only have come from one page of the directory and

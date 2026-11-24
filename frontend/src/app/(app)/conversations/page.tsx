@@ -52,6 +52,7 @@ import {
   primaryContactValue,
 } from "@/components/crm/customer-details-dialog";
 import { QuickReplyBar } from "@/components/crm/quick-reply-bar";
+import { SendTemplateDialog } from "@/components/crm/send-template-dialog";
 import { StartWhatsAppDialog } from "@/components/crm/start-whatsapp-dialog";
 import { SectionHeader } from "@/components/section/section-header";
 import { Badge } from "@/components/ui/badge";
@@ -94,6 +95,13 @@ import { useRetryMessage } from "@/lib/queries/meta-admin";
 import { AssignConversationDialog } from "@/components/crm/assign-conversation-dialog";
 import { AuthedAttachment, attachmentLabel } from "@/components/ui/authed-image";
 import { IntentAnalysisPanel } from "@/components/crm/intent-analysis-panel";
+import {
+  daySeparator,
+  lastInteraction,
+  messageTime,
+  threadStamp,
+  zonedDayKey,
+} from "@/lib/conversation-time";
 import { ROLE_RANK } from "@/lib/types";
 import { useSession } from "@/store/use-session";
 import { useFillViewport } from "@/lib/use-fill-viewport";
@@ -1072,12 +1080,21 @@ function ConversationsContent() {
                             {customerName}
                           </span>
                         </div>
+                        {/*
+                          WHEN, not merely at what o'clock.
+
+                          This printed a bare clock time against every thread,
+                          so one last touched in October read exactly like one
+                          last touched an hour ago and the list could not answer
+                          the question it is opened to ask. Now the four shapes
+                          WhatsApp itself uses — today's time, "Yesterday", the
+                          weekday, then the date — read in the BRANCH's clock,
+                          because a message sent at 00:30 in Surat is the
+                          previous day in UTC. See lib/conversation-time.ts.
+                        */}
                         <span className="text-[10px] text-muted-foreground whitespace-nowrap">
                           {c.lastMessageAt
-                            ? new Date(c.lastMessageAt).toLocaleTimeString([], {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })
+                            ? threadStamp(c.lastMessageAt, { timeZone: c.store?.timezone })
                             : "New"}
                         </span>
                       </div>
@@ -1265,6 +1282,8 @@ function ThreadView({
    */
   const profile = useCustomer360(notesPartyId);
   const [draft, setDraft] = useState("");
+  /** The template picker for a thread whose 24-hour window has closed. */
+  const [templateOpen, setTemplateOpen] = useState(false);
 
   // Dialog states for Zithara Right Sidebar Accordions
   const [editCustomerOpen, setEditCustomerOpen] = useState(false);
@@ -1304,6 +1323,14 @@ function ThreadView({
 
   const { conversation, messages } = data;
   const party = conversation.party;
+
+  /*
+   * Every date and time below is read in the BRANCH's clock, with the ticking
+   * `now` above as the reference so "today" stops being today at midnight
+   * while somebody still has the thread open. A thread with no branch yet — an
+   * ad click nobody has routed — falls back to the chain's own zone.
+   */
+  const whenOpts = { timeZone: conversation.store?.timezone, now: new Date(now) };
 
   /*
    * What this customer is actually reached on. `primaryContactValue` prefers a
@@ -1401,12 +1428,16 @@ function ThreadView({
                   that second.
                 */}
                 {conversation.lastInboundAt ? (
+                  /*
+                    The day as well as the hour — the client's own words: "only
+                    if they are of today then it should mention today at so and
+                    so time". "Last wrote 12:25 PM" said the same thing whether
+                    that was this morning or in August, which on the one line
+                    meant to answer "when did we last interact" is worse than
+                    saying nothing.
+                  */
                   <span className="shrink-0">
-                    Last wrote{" "}
-                    {new Date(conversation.lastInboundAt).toLocaleTimeString([], {
-                      hour: "2-digit",
-                      minute: "2-digit",
-                    })}
+                    Last wrote {lastInteraction(conversation.lastInboundAt, whenOpts)}
                   </span>
                 ) : (
                   <span className="shrink-0">No reply yet</span>
@@ -1585,13 +1616,6 @@ function ThreadView({
             }}
           />
 
-          {/* Date separator pill */}
-          <div className="relative z-10 flex justify-center my-2">
-            <span className="rounded-md bg-white/90 dark:bg-[#182229]/90 backdrop-blur-xs px-3 py-0.5 text-[10.5px] font-medium text-muted-foreground shadow-xs border border-black/5 dark:border-white/5 uppercase tracking-wider">
-              Monday
-            </span>
-          </div>
-
           {/* Messages list */}
           <div className="relative z-10 space-y-2">
             {messages.length === 0 ? (
@@ -1599,18 +1623,37 @@ function ThreadView({
                 <p>No messages in this WhatsApp conversation yet.</p>
               </div>
             ) : (
-              messages.map((m) => {
+              messages.map((m, i) => {
                 const isInbound = m.direction === "inbound";
-                const timeStr = new Date(m.sentAt).toLocaleTimeString([], {
-                  hour: "2-digit",
-                  minute: "2-digit",
-                });
+                const timeStr = messageTime(m.sentAt, whenOpts);
+                /*
+                  THE DAY A BUBBLE BELONGS TO, STATED ONCE WHERE IT CHANGES.
+                  A single pill sat above this list reading the word "Monday",
+                  hardcoded — the same word on every thread on every day of the
+                  week, which is worse than no date at all because it reads as
+                  one. This is the real thing: a separator wherever the branch's
+                  calendar day turns over, which is what stops a two-hundred
+                  message thread being undateable.
+                */
+                const dayKey = zonedDayKey(m.sentAt, whenOpts.timeZone);
+                const dayTurned =
+                  i === 0 || dayKey !== zonedDayKey(messages[i - 1].sentAt, whenOpts.timeZone);
 
                 return (
                   <div
                     key={m.id}
                     className={`flex flex-col ${isInbound ? "items-start" : "items-end"}`}
                   >
+                    {/* `w-full` so the pill centres across the canvas rather
+                        than above the bubble it heads — inside the message's
+                        own column so nothing below had to be re-nested. */}
+                    {dayTurned && dayKey ? (
+                      <div className="mb-2 flex w-full justify-center">
+                        <span className="rounded-md bg-white/90 dark:bg-[#182229]/90 backdrop-blur-xs px-3 py-0.5 text-[10.5px] font-medium text-muted-foreground shadow-xs border border-black/5 dark:border-white/5 uppercase tracking-wider">
+                          {daySeparator(m.sentAt, whenOpts)}
+                        </span>
+                      </div>
+                    ) : null}
                     {/*
                       THE ADVERT THAT BROUGHT THEM IN, WHERE WHATSAPP PUTS IT.
 
@@ -1941,11 +1984,36 @@ function ThreadView({
                   : `${party?.name ?? "This customer"} has not written yet, so WhatsApp does not allow a free-form message.`}{" "}
                 An approved template can still reach them.
               </span>
-              <Button asChild size="sm" variant="outline" className="h-7 shrink-0 text-[11px]">
-                <Link href="/campaigns">Send a template</Link>
+              {/*
+                THIS BUTTON USED TO LEAVE THE CONVERSATION (client, 23 Nov:
+                "when i click on send a template it takes me to broadcasts
+                page. it should rather show a list of templates from which i
+                can select and send").
+
+                A broadcast is a mass send to an audience — the wrong object
+                for "reach this one customer, now" — and it asks for an
+                audience, a schedule and an approval first. The customer is
+                already known here and the thread already exists, so the
+                templates come to her instead.
+              */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 shrink-0 text-[11px]"
+                onClick={() => setTemplateOpen(true)}
+              >
+                Send a template
               </Button>
             </div>
           )}
+
+          <SendTemplateDialog
+            open={templateOpen}
+            onOpenChange={setTemplateOpen}
+            conversationId={conversation.id}
+            customerName={party?.name ?? null}
+            branchName={conversation.store?.name ?? null}
+          />
 
           {/* The photo waiting to go. Shown rather than merely counted: the
               one mistake worth catching here is sending the wrong piece. */}

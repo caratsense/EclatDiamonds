@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, Injectable, NotFoundException }
 import { Prisma, PartyType, SpecialRequestKind } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { SpecialRequestsService } from '../special-requests/special-requests.service';
-import { ROLE_LABELS } from '../common/role.util';
+import { ROLE_LABELS, isAllStoreRole } from '../common/role.util';
 import { describeHistory, partyHistory, removalOutcome } from './party-history';
 import { AuditService } from '../common/audit.service';
 import { addExportAboutSheet, rangeWhere, resolveExportRange } from '../common/export-range';
@@ -32,6 +32,14 @@ export interface PartyFilters {
   archived?: boolean;
   /** Show only customers wearing this tag. */
   tagId?: string;
+  /**
+   * Head office's triage queue: ONLY the customers with no branch at all.
+   *
+   * Without it, hiding them from branch staff would just move the problem —
+   * seventeen unbranched customers among eight hundred that head office can see
+   * but never single out is the same invisibility with a different owner.
+   */
+  unbranched?: boolean;
 }
 
 export interface PartyRow {
@@ -54,6 +62,13 @@ export interface PartyRow {
   anniversary: string | null;
   creditLimit: number | null;
   isBlacklisted: boolean;
+  /**
+   * The branch this customer belongs to, and its name — null for both when they
+   * have none. The screen needs the name beside the row to say which shop owns
+   * them, and the null is what head office's triage queue is looking for.
+   */
+  storeId: string | null;
+  storeName: string | null;
   /** Bills this party is linked to — the quick "how much of a customer" signal. */
   salesCount: number;
   /** The customer's tags (client, 10 Oct): chips on the directory row. */
@@ -107,6 +122,8 @@ const PARTY_SELECT = {
   creditLimit: true,
   isBlacklisted: true,
   legacyId: true,
+  storeId: true,
+  store: { select: { name: true } },
   createdAt: true,
   archivedAt: true,
   archiveReason: true,
@@ -139,6 +156,8 @@ function toPartyRow(p: PartySelected): PartyRow {
     anniversary: iso(p.anniversary),
     creditLimit: num(p.creditLimit),
     isBlacklisted: p.isBlacklisted,
+    storeId: p.storeId ?? null,
+    storeName: p.store?.name ?? null,
     salesCount: p._count.sales,
     tags: [...p.partyTagAssignments]
       .sort((a, b) => a.tag.sortOrder - b.tag.sortOrder)
@@ -384,6 +403,82 @@ export class PartiesService {
   }
 
   /**
+   * Hand a customer to a branch (client, 23 Nov).
+   *
+   * The other half of hiding the unbranched. Head office's queue would be a
+   * dead end without it: seventeen names it can see, read and do nothing with.
+   * One action takes a customer out of that queue and puts them on a shop's
+   * list, where the people who serve them can find them.
+   *
+   * It also MOVES a customer between branches, which is the same decision and
+   * the thing the duplicate refusal has been telling managers to ask for ("Ask
+   * head office to reassign them to your branch"). That ask had no answer until
+   * now — the only way to move a customer was a merge.
+   *
+   * Head office only (see the controller). Not because a manager could not be
+   * trusted with the move, but because the branch a customer belongs to decides
+   * whose list, whose targets and whose campaign audience they appear in; one
+   * desk owning that is what keeps two branches from quietly taking turns.
+   *
+   * Refused for a Gati-synced customer, for the same reason `rename` is:
+   * `syncParties` writes `storeId` on every run from Gati's own branch field,
+   * so this would hold until the next sync and then revert — and unlike a name,
+   * the revert would silently take the customer off a shop's list again. None
+   * of the seventeen unbranched customers in production is synced; every one
+   * arrived from a message.
+   *
+   * The customer's CONVERSATIONS are deliberately left where they are. A thread
+   * is routed with its own command (`ConversationsService.assign`), which also
+   * tells the receiving branch it has arrived; moving them silently from here
+   * would hand a branch messages nobody was told about. Head office transfers
+   * the thread in the inbox, as it does today.
+   */
+  async assignBranch(user: AuthUser, id: string, storeId: string): Promise<PartyRow> {
+    this.scope.assertStoreAllowed(user, storeId);
+    await this.scope.assertTradingStore(storeId);
+
+    const party = await this.prisma.party.findFirst({
+      where: { id, ...this.scope.orgFilter(user) },
+      select: { id: true, name: true, storeId: true, legacyId: true },
+    });
+    if (!party || !this.inScope(user, party.storeId)) {
+      throw new NotFoundException('Customer not found');
+    }
+    if (party.legacyId) {
+      throw new BadRequestException(
+        'This customer comes from Gati, which sets the branch on every sync. Change their branch in Gati instead.',
+      );
+    }
+
+    if (party.storeId === storeId) {
+      // Already there. Nothing is written and nothing is audited — the trail is
+      // for decisions that changed something.
+      const unchanged = await this.prisma.party.findUniqueOrThrow({
+        where: { id: party.id },
+        select: PARTY_SELECT,
+      });
+      return toPartyRow(unchanged);
+    }
+
+    const row = await this.prisma.party.update({
+      where: { id: party.id },
+      data: { storeId },
+      select: PARTY_SELECT,
+    });
+
+    await this.audit.record(user, {
+      action: 'crm.contact_branch_assigned',
+      entityType: 'Party',
+      entityId: party.id,
+      storeId,
+      summary: `${row.name} given to ${row.store?.name ?? 'a branch'}`,
+      metadata: { from: party.storeId, to: storeId },
+    });
+
+    return toPartyRow(row);
+  }
+
+  /**
    * Why this customer may not be deleted — or null when nothing stands in the
    * way.
    *
@@ -447,6 +542,42 @@ export class PartiesService {
   }
 
   /**
+   * Which customers this person may READ in the directory.
+   *
+   * A CUSTOMER WITH NO BRANCH BELONGS TO HEAD OFFICE (client, 23 Nov): "people
+   * who have no branch should be visible only to head office, from where they
+   * could be reassigned."
+   *
+   * The directory used to show the unbranched to everybody —
+   * `storeOrUnbranchedFilter`, which exists because a branch picker must not
+   * hide a row that is not AT another branch. That rule still holds for work
+   * nobody owns (an unrouted thread, an organisation-wide task). It is the
+   * wrong rule for a PERSON: an enquiry that arrived with no branch is not
+   * every shop's customer, and eleven branches each seeing the same seventeen
+   * names is eleven shops each able to message them.
+   *
+   * So the widening is head office's alone, and `assignBranch` below is the
+   * door out of it. The inbox already decides it this way — see
+   * `ConversationsService.visibility()`, where head office gets its scope OR a
+   * null store and everyone else gets their branches.
+   *
+   * THE COST, said plainly because it is real: the people most likely to
+   * recognise one of these names are the branch staff who served them, and they
+   * can no longer see them in the directory. That is only acceptable because
+   * head office can list exactly the unbranched ones (`unbranched` above) and
+   * hand each to a branch in one action. Those two are one feature; neither is
+   * safe alone.
+   */
+  private directoryScope(
+    user: AuthUser,
+    headerStore?: string,
+  ): Prisma.PartyWhereInput {
+    return isAllStoreRole(user.role)
+      ? this.scope.storeOrUnbranchedFilter(user, headerStore)
+      : this.scope.storeFilter(user, headerStore);
+  }
+
+  /**
    * The customer directory as a workbook — same scope as the list.
    *
    * The range filters on `createdAt`, the "Added" column: the day the customer
@@ -463,7 +594,7 @@ export class PartiesService {
       where: {
         organisationId: user.organisationId,
         AND: [
-          this.scope.storeOrUnbranchedFilter(user, headerStore),
+          this.directoryScope(user, headerStore),
           ...(isSalesScoped(user) ? [partyWorkedBy(user.id)] : []),
         ],
         archivedAt: null,
@@ -519,14 +650,9 @@ export class PartiesService {
   ): Promise<Paginated<PartyRow>> {
     const where: Prisma.PartyWhereInput = {
       /*
-       * Organisation, then branch — and a customer with no branch is kept.
-       *
-       * `storeFilter` alone excluded every null-store party, which on the live
-       * database is four hundred-odd real customers: the ones an inbound
-       * message created before routing knew a branch. They were reachable from
-       * Customer 360 by id and from nowhere a person could actually look, which
-       * is the same complaint `inScope()` above was written for. See
-       * StoreScopeService.storeOrUnbranchedFilter for the rule.
+       * Organisation, then branch — and a customer with no branch is head
+       * office's, nobody else's. See `directoryScope` for the rule and what it
+       * costs; `unbranched` below is how head office finds them.
        */
       organisationId: user.organisationId,
       /*
@@ -536,7 +662,7 @@ export class PartiesService {
        * every branch, returned by a search box.
        */
       AND: [
-        this.scope.storeOrUnbranchedFilter(user, headerStore),
+        this.directoryScope(user, headerStore),
         // A salesperson's directory is their own customers — never the
         // branch's phone list.
         ...(isSalesScoped(user) ? [partyWorkedBy(user.id)] : []),
@@ -560,6 +686,18 @@ export class PartiesService {
     // Filter by one tag: the chips on the rows are also the way to slice them.
     if (f.tagId) {
       where.partyTagAssignments = { some: { tagId: f.tagId } };
+    }
+    /*
+     * Head office's triage queue — exactly the customers with no branch.
+     *
+     * Not gated by role here, and it does not need to be: `directoryScope`
+     * above has already decided whose rows these are, so for anyone but head
+     * office this narrows a list that contains no unbranched customer to begin
+     * with and returns nothing. The server never has to say "not for you" about
+     * a filter the screen only offers to head office.
+     */
+    if (f.unbranched) {
+      where.storeId = null;
     }
 
     const q = f.q?.trim();
