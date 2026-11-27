@@ -5,6 +5,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { MetalKind, Prisma } from '@prisma/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
+import { tagSlug } from '../crm/lead-tags.service';
 import { gatiComposition, websiteComposition } from '../products/composition';
 import { CatalogueIndexService } from '../products/catalogue-index.service';
 import { karatToMetal } from '../catalogue/metal';
@@ -255,6 +256,9 @@ const STAGE_RANK: Record<string, number> = {
  * other is the failure mode that constant exists to prevent.
  */
 export const TRANSFER_PROTECTED_STOCK_FIELDS = ['storeId', 'status'] as const;
+
+/** The provenance tag put on every customer the ERP sends. */
+const GATI_TAG_NAME = 'Gati';
 
 @Injectable()
 export class SyncService {
@@ -2252,8 +2256,61 @@ export class SyncService {
   }
 
   // ── PartyMst -> Party ────────────────────────────────────────────────────────
+  /**
+   * The tag every customer the ERP sent us carries: "Gati".
+   *
+   * Client, 27 Nov: "all the customers coming from Gati should have a tag of
+   * GATI in customers section." A real tag rather than a badge computed in the
+   * browser, because the useful thing about knowing where a customer came from
+   * is being able to act on it — filter the directory by it, include or exclude
+   * them from a broadcast audience — and a derived chip can do none of that.
+   *
+   * Created on demand and then found by slug, so it is one row per tenant
+   * however many times the sync runs, and so a manager who renames it keeps
+   * their own wording.
+   */
+  private async gatiTagId(organisationId: string): Promise<string | null> {
+    const slug = tagSlug(GATI_TAG_NAME);
+    try {
+      const existing = await this.prisma.leadTag.findFirst({
+        where: { organisationId, slug },
+        select: { id: true },
+      });
+      if (existing) return existing.id;
+      const created = await this.prisma.leadTag.create({
+        data: { organisationId, name: GATI_TAG_NAME, slug, colour: 'muted' },
+        select: { id: true },
+      });
+      return created.id;
+    } catch {
+      // A tag is provenance, not the customer. If this fails the sync must
+      // still deliver the record it was sent.
+      this.logger.warn('Could not resolve the Gati tag; customers synced untagged.');
+      return null;
+    }
+  }
+
+  /**
+   * Put the Gati tag on one customer, once.
+   *
+   * `createMany` with `skipDuplicates` rather than a read-then-write: the sync
+   * re-sends the same party on every run, and this must be a no-op by the
+   * second time rather than a second row or a caught unique-constraint error.
+   */
+  private async markAsFromGati(
+    organisationId: string,
+    partyId: string,
+    tagId: string,
+  ): Promise<void> {
+    await this.prisma.partyTagAssignment
+      .createMany({ data: [{ organisationId, partyId, tagId }], skipDuplicates: true })
+      .catch(() => undefined);
+  }
+
   async syncParties(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const branch = await this.branchResolver('parties', organisationId);
+    // Resolved once for the whole batch, not per customer.
+    const gatiTagId = await this.gatiTagId(organisationId);
     let upserted = 0;
     let skipped = 0;
     for (const r of records) {
@@ -2294,11 +2351,13 @@ export class SyncService {
         legacyUpdatedAt: dt(r.UpdateDate),
       };
       const legacyId = String(r.PartyNo);
-      await this.prisma.party.upsert({
+      const party = await this.prisma.party.upsert({
         where: { organisationId_legacyId: { organisationId, legacyId } },
         create: { legacyId, organisationId, ...data },
         update: data,
+        select: { id: true },
       });
+      if (gatiTagId) await this.markAsFromGati(organisationId, party.id, gatiTagId);
       upserted++;
     }
     return this.result('parties', records, upserted, skipped, branch.report());

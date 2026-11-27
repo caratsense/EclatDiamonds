@@ -280,8 +280,33 @@ export class TemplateSyncService implements OnModuleInit {
             providerStatus: status,
             providerSyncedAt: syncedAt.toISOString(),
             ...(row && typeof row.id === 'string' ? { providerTemplateId: row.id } : {}),
+            /*
+             * META'S CATEGORY IS THE CATEGORY.
+             *
+             * This wrote `providerCategory` and left `category` — the one the
+             * app actually reads — exactly as it was first recorded. Nothing
+             * read `providerCategory` at all, so a reclassification was
+             * collected on every sync and then ignored.
+             *
+             * That is not cosmetic. `send-template-dialog` derives the send's
+             * PURPOSE from `category`: marketing goes out as marketing and
+             * through the consent gate, anything else as service. When Meta
+             * moved two of this tenant's templates from utility to marketing
+             * ("2 of your utility templates were flagged or reclassified as
+             * marketing"), the app went on calling them utility, sent them as
+             * service, and Meta refused them — which is the "this template is
+             * not getting sent" the client reported, with the screen still
+             * showing the old word beside it.
+             *
+             * Both keys are written: `category` because it is what the app
+             * reads, `providerCategory` because a future sync should be able
+             * to tell a reclassification from a local edit.
+             */
             ...(row && typeof row.category === 'string'
-              ? { providerCategory: row.category.toLowerCase() }
+              ? {
+                  category: row.category.toLowerCase(),
+                  providerCategory: row.category.toLowerCase(),
+                }
               : {}),
             /*
              * The wording, refreshed from the provider.

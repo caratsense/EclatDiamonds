@@ -414,52 +414,103 @@ function TagSelectedBar({
             Tag selected
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" className="w-64">
+        {/*
+          OPENS DOWNWARD, AND THE WAY TO MAKE A TAG IS THE FIRST THING IN IT.
+
+          Both halves of this were one bug. The menu listed every existing tag
+          and put the new-tag field underneath them — so with a dozen branch
+          tags the field sat below the fold of a menu that was by then taller
+          than the space under the button, which made Radix flip the whole
+          thing above the trigger and push the field off the top of the screen.
+          The client's reading of it was exactly right: "it is telling me to
+          give an existing tag, there should be an option to create new tag",
+          and "who gives that selector above, it should be below".
+
+          `side="bottom"` with collisions off keeps it under the button, and
+          capping the list is what earns that — a menu that cannot outgrow the
+          space below it never needs to flip.
+        */}
+        <DropdownMenuContent
+          align="start"
+          side="bottom"
+          sideOffset={6}
+          avoidCollisions={false}
+          className="w-72"
+        >
           <DropdownMenuLabel className="text-xs font-medium text-muted-foreground">
-            Give these people a tag
+            Tag {selected.size.toLocaleString()}{" "}
+            {selected.size === 1 ? "person" : "people"}
           </DropdownMenuLabel>
-          {tags.isLoading ? (
-            <p className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</p>
-          ) : (tags.data ?? []).length === 0 ? (
-            <p className="px-2 py-1.5 text-xs text-muted-foreground">
-              No tags yet. Type a name below to make the first one.
-            </p>
-          ) : (
-            (tags.data ?? []).map((t) => (
-              <DropdownMenuItem key={t.id} onSelect={() => run({ tagId: t.id })}>
-                <span
-                  aria-hidden="true"
-                  className="h-2 w-2 shrink-0 rounded-full"
-                  style={{ background: t.colour ?? "var(--muted-foreground)" }}
-                />
-                <span className="truncate">{t.name}</span>
-              </DropdownMenuItem>
-            ))
-          )}
-          <DropdownMenuSeparator />
-          <div className="flex items-center gap-1.5 p-1.5">
+          {/*
+            One field that both finds and creates, rather than a list with a
+            form hidden under it. Typing narrows the tags that exist and offers
+            to make the one that does not, so neither path is buried.
+          */}
+          <div className="p-1.5">
             <Input
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
-              placeholder="New tag name"
+              placeholder="Find or create a tag"
               maxLength={40}
-              // The menu closes on Enter otherwise, losing what was typed.
+              autoFocus
+              // Enter would close the menu and lose what was typed.
               onKeyDown={(e) => {
-                if (e.key === "Enter" && newName.trim().length >= 2) {
-                  e.preventDefault();
-                  run({ tagName: newName.trim() });
-                }
+                if (e.key !== "Enter") return;
+                e.preventDefault();
+                const typed = newName.trim();
+                if (typed.length < 2) return;
+                const exact = (tags.data ?? []).find(
+                  (t) => t.name.toLowerCase() === typed.toLowerCase(),
+                );
+                run(exact ? { tagId: exact.id } : { tagName: typed });
               }}
             />
-            <Button
-              size="icon"
-              variant="outline"
-              aria-label="Make this tag and apply it"
-              disabled={newName.trim().length < 2}
-              onClick={() => run({ tagName: newName.trim() })}
-            >
-              <Plus className="h-4 w-4" />
-            </Button>
+          </div>
+          {newName.trim().length >= 2 &&
+          !(tags.data ?? []).some(
+            (t) => t.name.toLowerCase() === newName.trim().toLowerCase(),
+          ) ? (
+            <DropdownMenuItem onSelect={() => run({ tagName: newName.trim() })}>
+              <Plus className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Create &ldquo;{newName.trim()}&rdquo;</span>
+            </DropdownMenuItem>
+          ) : null}
+          <DropdownMenuSeparator />
+          <div className="max-h-56 overflow-y-auto">
+            {tags.isLoading ? (
+              <p className="px-2 py-1.5 text-sm text-muted-foreground">Loading…</p>
+            ) : (
+              (() => {
+                const typed = newName.trim().toLowerCase();
+                const shown = (tags.data ?? []).filter(
+                  (t) => !typed || t.name.toLowerCase().includes(typed),
+                );
+                if (!(tags.data ?? []).length) {
+                  return (
+                    <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                      No tags yet. Type a name above to make the first one.
+                    </p>
+                  );
+                }
+                if (!shown.length) {
+                  return (
+                    <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                      No tag matches that. Press enter to make it.
+                    </p>
+                  );
+                }
+                return shown.map((t) => (
+                  <DropdownMenuItem key={t.id} onSelect={() => run({ tagId: t.id })}>
+                    <span
+                      aria-hidden="true"
+                      className="h-2 w-2 shrink-0 rounded-full"
+                      style={{ background: t.colour ?? "var(--muted-foreground)" }}
+                    />
+                    <span className="truncate">{t.name}</span>
+                  </DropdownMenuItem>
+                ));
+              })()
+            )}
           </div>
         </DropdownMenuContent>
       </DropdownMenu>
