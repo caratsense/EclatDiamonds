@@ -81,7 +81,8 @@ describe("an item's type and metal", () => {
         item: { ...emptyItem(), itemType: "ALR", metalCode: "G14YG" },
         lists: masterLists(undefined),
         master: undefined,
-        autoRate: (karat: number) => ({ rate: 0, stale: false, fallback: true, note: `${karat}K` }),
+        autoRateFor: (metal: { karat: number | null } | undefined) =>
+          metal ? { rate: 0, stale: false, fallback: true, note: `${metal.karat ?? 0}K` } : null,
         onChange: () => {},
         onFocus: () => {},
       }),

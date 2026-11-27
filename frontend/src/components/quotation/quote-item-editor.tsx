@@ -123,8 +123,33 @@ export const sizeText = (item: ItemRow) => {
   return s && item.sizeUnit ? `${s} ${item.sizeUnit}` : s;
 };
 
-/** The item in another metal. A new metal is a new rate, so a rate typed for the old one is dropped. */
-export const withMetal = (item: ItemRow, metalCode: string): ItemRow => ({ ...item, metalCode, manualRate: "" });
+/**
+ * Is this metal priced as silver rather than by karat?
+ *
+ * The item master has no flag for it, so the name is the only evidence there
+ * is. Read across code, kind and name so a row spelled "SILVER925", kind
+ * "silver" or named "Sterling Silver" all land the same way.
+ */
+export const isSilver = (metal: { code?: string; kind?: string; name?: string }): boolean =>
+  /silver/i.test(`${metal.code ?? ""} ${metal.kind ?? ""} ${metal.name ?? ""}`);
+
+/**
+ * The item in another metal, with that metal's rate already in the box.
+ *
+ * A rate typed for the old metal is dropped — 18K's price is not 9K's. What
+ * replaces it is today's rate for the new one, WRITTEN IN rather than
+ * suggested. It used to be the input's placeholder: the grey text of an empty
+ * box, which every salesperson read as "the rate has not come, type it
+ * yourself" even though the total underneath was already using it. Client,
+ * 27 Nov: "rate is not getting fetched from latest rate of gold, we have to
+ * type it manually, while we have already kept it to fetch latest gold, silver
+ * rate and reflect it there."
+ */
+export const withMetal = (item: ItemRow, metalCode: string, rate?: number | null): ItemRow => ({
+  ...item,
+  metalCode,
+  manualRate: rate != null && rate > 0 ? String(rate) : "",
+});
 
 /**
  * What an item comes to, worked out the way the server does: each line's
@@ -290,7 +315,7 @@ interface ItemEditorProps {
   item: ItemRow;
   lists: Lists;
   master: MaterialMaster | undefined;
-  autoRate: (karat: number) => AutoRate;
+  autoRateFor: (metal: MaterialOption | undefined) => AutoRate | null;
   onChange: (next: ItemRow) => void;
   onRemove?: () => void;
   onFocus: () => void;
@@ -315,7 +340,7 @@ export function QuoteItemEditor({
   item,
   lists,
   master,
-  autoRate,
+  autoRateFor,
   onChange,
   onRemove,
   onFocus,
@@ -325,12 +350,26 @@ export function QuoteItemEditor({
   const styles = useStyleSearch(item.styleNumber);
   const matches = styles.data ?? [];
   const metal = lists.metals.find((m) => m.code === item.metalCode);
-  const auto = metal?.karat ? autoRate(metal.karat) : null;
+  const auto = autoRateFor(metal);
   const goldRate = num(item.manualRate) ?? auto?.rate ?? 0;
   const price = priceItem(item, goldRate);
   const set = (patch: Partial<ItemRow>) => onChange({ ...item, ...patch });
   const setStone = (id: number, patch: Partial<StoneRow>) =>
     set({ stones: item.stones.map((s) => (s.id === id ? nextStone(s, patch, lists) : s)) });
+
+  /**
+   * The style a press of Enter or the load button means.
+   *
+   * An exact code typed in full is itself. Otherwise, one match is
+   * unambiguous and is taken; several are not, and `undefined` lets
+   * `loadStyle` fall back to the typed text so the error names what was asked
+   * for rather than silently loading somebody else's design.
+   */
+  function bestMatch(): string | undefined {
+    const typed = item.styleNumber.trim().toUpperCase();
+    if (matches.some((m) => m.styleCode.toUpperCase() === typed)) return typed;
+    return matches.length === 1 ? matches[0].styleCode : undefined;
+  }
 
   async function loadStyle(code = item.styleNumber.trim()) {
     if (!code || loading) return;
@@ -346,6 +385,13 @@ export function QuoteItemEditor({
         size: bom.itemSize ?? item.size,
         sizeUnit: bom.itemSize ? "" : item.sizeUnit,
         metalCode: metalLine?.code ?? item.metalCode,
+        // The design's metal arrives with today's rate for it, for the same
+        // reason picking one by hand does — nobody should have to retype a
+        // number the screen already knows.
+        manualRate: metalLine?.code
+          ? (withMetal(item, metalLine.code,
+              autoRateFor(lists.metals.find((m) => m.code === metalLine.code))?.rate).manualRate)
+          : item.manualRate,
         weight: metalLine ? String(metalLine.weight) : item.weight,
         stones,
       });
@@ -415,13 +461,27 @@ export function QuoteItemEditor({
                   setStyleOpen(true);
                 }}
                 onFocus={() => setStyleOpen(true)}
-                // A click inside the list is a mousedown first; closing on blur
-                // immediately would eat it, so let the click land.
+                /*
+                 * The list closes on blur, and the delay used to be the whole
+                 * defence: mousedown blurs the input, a 150 ms timer closed the
+                 * list, and the click landed on whatever was still there. Hold
+                 * the button a moment longer than that — or drag a pixel, or
+                 * tap on a touchscreen — and the list unmounted before mouseup,
+                 * so the click never happened and picking a style did nothing
+                 * at all. Client, 27 Nov: "selecting style number from dropdown
+                 * nothing is happening, even after clicking on any style it
+                 * does not come in that box."
+                 *
+                 * The list now refuses the blur outright (onMouseDown
+                 * preventDefault below), so the input never loses focus and
+                 * there is no race to lose. The timer stays for the real blur —
+                 * tabbing or clicking elsewhere — where it is correct.
+                 */
                 onBlur={() => window.setTimeout(() => setStyleOpen(false), 150)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") {
                     e.preventDefault();
-                    void loadStyle(matches.length === 1 ? matches[0].styleCode : undefined);
+                    void loadStyle(bestMatch());
                   } else if (e.key === "Escape") {
                     setStyleOpen(false);
                   }
@@ -430,7 +490,11 @@ export function QuoteItemEditor({
                 autoComplete="off"
               />
               {styleOpen && item.styleNumber.trim() ? (
-                <div className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+                <div
+                  // Keeps focus in the input, so the click always completes.
+                  onMouseDown={(e) => e.preventDefault()}
+                  className="absolute z-50 mt-1 max-h-60 w-full overflow-y-auto rounded-md border bg-popover p-1 shadow-md"
+                >
                   {matches.length === 0 ? (
                     <p className="px-2 py-1.5 text-xs text-muted-foreground">
                       {styles.isFetching ? "Searching…" : "No style matches that."}
@@ -459,7 +523,17 @@ export function QuoteItemEditor({
               size="icon"
               title="Load the design's materials (Enter)"
               disabled={!item.styleNumber.trim() || loading}
-              onClick={() => void loadStyle()}
+              /*
+               * Loads the MATCH, not the half-typed text.
+               *
+               * It passed whatever was in the box, so typing "123" and pressing
+               * it asked the item master for a design called 123, which does
+               * not exist — "the download button is also not working, it's not
+               * getting picked the right style no". It now follows the same
+               * rule the Enter key already did: one match means that one, and
+               * an exact code typed in full still wins.
+               */
+              onClick={() => void loadStyle(bestMatch())}
             >
               <Download className="h-4 w-4" />
               <span className="sr-only">Load style</span>
@@ -526,7 +600,9 @@ export function QuoteItemEditor({
             options={lists.metals}
             value={item.metalCode}
             // Type to search: "14", "18K", "WG", "G18"… and pick.
-            onChange={(code) => onChange(withMetal(item, code))}
+            onChange={(code) =>
+              onChange(withMetal(item, code, autoRateFor(lists.metals.find((m) => m.code === code))?.rate))
+            }
             placeholder="Metal — type 14, WG, G18YG…"
           />
           <span />

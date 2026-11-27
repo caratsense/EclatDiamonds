@@ -34,7 +34,7 @@ import {
   useUploadQuotePhoto,
 } from "@/lib/queries/quotes";
 import { useMetalRates } from "@/lib/queries/integrations";
-import { useMaterials } from "@/lib/queries/materials";
+import { useMaterials, type MaterialOption } from "@/lib/queries/materials";
 import { staleNote } from "@/components/rates/metal-rates-widget";
 import {
   Dialog,
@@ -60,6 +60,7 @@ import {
   priceItem,
   round2,
   sizeText,
+  isSilver,
   type AutoRate,
   type ItemRow,
 } from "@/components/quotation/quote-item-editor";
@@ -209,9 +210,32 @@ export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
           : `${karat}K · ${live.derived ? "derived from 24K by purity" : "today's rate"}`,
     };
   }
-  const karatOf = (item: ItemRow) => lists.metals.find((m) => m.code === item.metalCode)?.karat ?? 0;
+  /**
+   * Today's rate for a chosen metal — by karat for gold, by kind for silver.
+   *
+   * The editor asks this rather than `autoRate`, because the thing it has in
+   * hand is a metal and not a karat, and silver has no karat at all. That gap
+   * is why a silver line used to open with an empty rate box: the lookup had
+   * one door and silver could not reach it. `autoRate` stays as it was for the
+   * validation path, which genuinely is asking about a karat.
+   */
+  function autoRateFor(metal: MaterialOption | undefined): AutoRate | null {
+    if (!metal) return null;
+    if (metal.karat) return autoRate(metal.karat);
+    if (!isSilver(metal)) return null;
+    const live = metalRates.rateForKind("silver");
+    if (!live) return null;
+    return {
+      rate: live.ratePerGram,
+      stale: live.stale ?? false,
+      fallback: false,
+      note: live.stale ? `Silver · ${staleNote(live) ?? "out of date"}` : "Silver · today's rate",
+    };
+  }
+  const metalOf = (item: ItemRow) => lists.metals.find((m) => m.code === item.metalCode);
+  const karatOf = (item: ItemRow) => metalOf(item)?.karat ?? 0;
   const goldRateOf = (item: ItemRow) =>
-    num(item.manualRate) ?? (karatOf(item) ? autoRate(karatOf(item)).rate : 0);
+    num(item.manualRate) ?? autoRateFor(metalOf(item))?.rate ?? 0;
 
   const repairMakingNum = num(repairMaking) ?? 0;
   const disc = {
@@ -674,7 +698,7 @@ export function QuoteBuilder({ open, onOpenChange }: QuoteBuilderProps) {
                       item={it}
                       lists={lists}
                       master={materials.data}
-                      autoRate={autoRate}
+                      autoRateFor={autoRateFor}
                       onChange={(nextItem) => updateItem(i, nextItem)}
                       onRemove={items.length > 1 ? () => setItems((list) => list.filter((x) => x.id !== it.id)) : undefined}
                       onFocus={() => setActiveItem(i)}

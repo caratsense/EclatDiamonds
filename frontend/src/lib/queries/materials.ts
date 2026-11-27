@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
@@ -56,8 +57,28 @@ export function useMaterials() {
 }
 
 /** GET /materials/styles?q= — style numbers containing what was typed. */
+/**
+ * Hold a value still until the typing stops.
+ *
+ * Without this, `useStyleSearch` fired a request per KEYSTROKE: typing 12313
+ * asked the item master five questions, each a new cache key, and the list only
+ * settled when the last of them came back behind the four it was racing.
+ * Client, 27 Nov: "searching dropdown comes on typing really late, like there
+ * is a lot of lag." A quarter of a second is below what a typist notices
+ * between words and above the gap between two letters, so a search now costs
+ * one request instead of one per character.
+ */
+function useSettled<T>(value: T, ms = 250): T {
+  const [settled, setSettled] = useState(value);
+  useEffect(() => {
+    const id = window.setTimeout(() => setSettled(value), ms);
+    return () => window.clearTimeout(id);
+  }, [value, ms]);
+  return settled;
+}
+
 export function useStyleSearch(q: string) {
-  const term = q.trim();
+  const term = useSettled(q.trim());
   return useQuery({
     queryKey: ["materials", "styles", term.toUpperCase()],
     queryFn: async () =>

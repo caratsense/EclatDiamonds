@@ -39,10 +39,28 @@ export interface OmnichannelSummary {
 }
 
 export function useOmnichannelSummary(params: { storeId?: string; days?: number } = {}) {
+  /*
+   * AN EMPTY BRANCH IS NOT A BRANCH.
+   *
+   * The server validates `storeId` as 1-40 characters, so `?storeId=` — which
+   * is what axios sends for an empty string — comes back 400 Bad Request and
+   * every figure on the card goes blank. Production logged exactly that while
+   * the client was reading the screen and telling us the lead analytics were
+   * not showing data.
+   *
+   * Dropped here rather than patched at the call sites: there are two of them
+   * today and the next one would make the same mistake. "No branch" and "this
+   * branch" are the only two things this parameter can mean, and an empty
+   * string is the first of them.
+   */
+  const storeId = params.storeId?.trim() || undefined;
+  const query = { ...params, storeId };
   return useQuery({
-    queryKey: ["crm", "omnichannel", "summary", params],
+    queryKey: ["crm", "omnichannel", "summary", query],
     queryFn: async () => {
-      const { data } = await api.get<OmnichannelSummary>("/crm/omnichannel/summary", { params });
+      const { data } = await api.get<OmnichannelSummary>("/crm/omnichannel/summary", {
+        params: query,
+      });
       return data;
     },
   });

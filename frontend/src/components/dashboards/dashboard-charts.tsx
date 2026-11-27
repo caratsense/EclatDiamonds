@@ -124,10 +124,29 @@ export function LeadFunnelChart({
   const open = Math.max(0, stripCame - stripConverted);
   const rate = stripCame > 0 ? Math.round((stripConverted / stripCame) * 100) : null;
 
+  /*
+   * THE CARD SAYS WHICH DAYS THE RING IS DRAWN FROM.
+   *
+   * The ring reads the day strip and the heading read the chosen period, so on
+   * "Today" with nothing filed yet it announced "Today: 0 came · 0 converted"
+   * above a ring built from the week — a solid circle and a percentage over a
+   * line of zeroes. Client, 27 Nov: the lead analytics are not showing data
+   * correctly. Two windows in one card, and nothing on screen said so.
+   *
+   * The day strip is still the right thing to draw (a pie saying "no data"
+   * beside bars full of this week's leads looked broken, 10 Oct). So the
+   * heading now carries both: the period's own totals, and the window the ring
+   * and bars actually cover.
+   */
+  const stripLabel =
+    days.length > 1 ? `last ${days.length} days` : days.length === 1 ? "that day" : "no days";
   return (
     <ChartCard
       title="Leads — came vs converted"
-      description={`${periodLabel}: ${formatNumber(totals.came)} came · ${formatNumber(totals.converted)} converted`}
+      description={
+        `${periodLabel}: ${formatNumber(totals.came)} came · ${formatNumber(totals.converted)} converted` +
+        ` · ring and bars show the ${stripLabel}`
+      }
       href={href}
     >
       <div className="grid gap-4 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">

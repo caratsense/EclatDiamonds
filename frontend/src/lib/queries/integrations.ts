@@ -93,10 +93,22 @@ export function useMetalRates() {
   function rateFor(karat: number): MetalRate | null {
     const metal = KARAT_METAL[karat];
     if (!metal) return null;
+    return rateForKind(metal);
+  }
+
+  /**
+   * The stored rate for a metal that karat cannot name.
+   *
+   * Silver is the whole of it today. The feed has carried a silver rate all
+   * along, and the quote builder could not reach it because its only way in was
+   * a karat and silver has none — so a silver line opened with an empty rate
+   * box and somebody typed the number that was already on the screen above.
+   */
+  function rateForKind(metal: MetalKind): MetalRate | null {
     return query.data?.find((r) => r.metal === metal) ?? null;
   }
 
-  return { ...query, rateFor };
+  return { ...query, rateFor, rateForKind };
 }
 
 /**

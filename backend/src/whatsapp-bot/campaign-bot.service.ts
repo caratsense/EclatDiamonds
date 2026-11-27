@@ -125,6 +125,34 @@ function phraseQuestion(question: { text: string; options?: string[] }): string 
  * A rule that truly predates the editor carries none of the three fields and
  * is still untouched, which is all the original narrow test was protecting.
  */
+/**
+ * Does this enquiry belong to a person at the branch rather than to the bot?
+ *
+ * Yes when an ADVERT brought it in and no script answers for that advert.
+ *
+ * The client set up three bridal scripts months ago. A blue-diamond advert she
+ * never scripted matched none of them, and the customer was answered anyway —
+ * "Hi 👋", then what are you looking for, then a budget, then when are you
+ * buying — by a questionnaire that predates the campaign editor and runs when
+ * nothing else will. Her instruction, 27 Nov: "if an ad has no script set up on
+ * it it should directly get routed to that particular store for which it is
+ * running, to the store manager."
+ *
+ * The advert is what makes the difference. It was bought for a shop, and the
+ * rule that carries the advert carries that shop, so there is somewhere
+ * specific for the enquiry to go. Organic first contacts — a QR code, Google,
+ * the website — name no branch and have no one waiting, so the questionnaire
+ * stays theirs.
+ */
+export function answeredByBranchNotBot(thread: {
+  /** A campaign script, or the tenant's own walk-in conversation. */
+  scripted: boolean;
+  /** The advert this message carried, or the one the thread was opened by. */
+  adId?: string | null;
+}): boolean {
+  return !thread.scripted && Boolean(thread.adId);
+}
+
 export function hasConfiguredConversation(rule: {
   firstReply?: string | null;
   questions?: unknown[] | null;

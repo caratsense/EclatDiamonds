@@ -14,7 +14,7 @@ import { IdentityService } from '../crm/identity.service';
 import { QualificationService } from '../crm/qualification.service';
 import { StorageService } from '../storage/storage.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
-import { CampaignBotService } from './campaign-bot.service';
+import { CampaignBotService, answeredByBranchNotBot } from './campaign-bot.service';
 import { CustomerBotService } from './customer-bot.service';
 import { MetaAdMetadataService } from '../integrations/meta-ad-metadata.service';
 import { extractMetaReferral } from '../integrations/meta-referral';
@@ -749,6 +749,60 @@ export class WhatsAppBotService {
               if (!turn.handoff) {
                 await this.scoreIntent(organisationId, result.conversationId);
               }
+              return { status: 'processed', organisationId };
+            }
+
+            /*
+             * AN ADVERT WITH NO SCRIPT GOES TO THE SHOP, NOT TO THE BOT.
+             *
+             * Client, 27 Nov: "this script I had set up months before — why is
+             * it still going? If an ad has no script set up on it, it should
+             * directly get routed to that particular store for which it is
+             * running, to the store manager."
+             *
+             * She is right, and the screenshots show exactly what she means: a
+             * blue-diamond advert she never scripted answered a customer with
+             * "Hi 👋", then what are you looking for, then a budget question,
+             * then when are you buying. Four questions nobody wrote, under the
+             * business's name, to somebody who had asked one plain question.
+             * Three ad rules exist in this tenant, all bridal, all scripted;
+             * that advert matches none of them, so the thread fell past both
+             * the campaign script and the tenant default into the questionnaire
+             * that predates either.
+             *
+             * The questionnaire stays for ORGANIC first contacts — somebody who
+             * found the shop on Google or a QR code, where silence is the only
+             * alternative and no branch is implied. An advert is different in
+             * the way that matters: it was bought for a shop, and the rule that
+             * carries the advert carries that shop. So the thread goes to a
+             * person there, and `handToAPerson` already does the whole of it —
+             * adopts the branch the ad names, notifies everybody standing in
+             * it, and takes the thread off the bot.
+             *
+             * When the advert matches no rule at all there is no branch to
+             * adopt, and the handoff says so rather than guessing the nearest
+             * showroom: it lands unbranched, which is head office's queue, and
+             * the warning above names the ad id to add to a campaign.
+             */
+            const adId =
+              referral?.adId ??
+              (
+                await this.prisma.conversation.findFirst({
+                  where: { id: result.conversationId, organisationId },
+                  select: { sourceAdId: true },
+                })
+              )?.sourceAdId ??
+              null;
+            if (answeredByBranchNotBot({ scripted: false, adId })) {
+              await this.handToAPerson(
+                organisationId,
+                result.conversationId,
+                'An advert with no script brought this enquiry in; it needs a person.',
+              );
+              this.logger.log(
+                `  no script for this advert — handed to the branch it belongs to, bot stayed quiet`,
+              );
+              await this.scoreIntent(organisationId, result.conversationId);
               return { status: 'processed', organisationId };
             }
 
