@@ -3325,19 +3325,47 @@ export class SyncService {
   async syncLedger(organisationId: string, records: Rec[]): Promise<SyncResult> {
     const branch = await this.branchResolver('ledger', organisationId);
     // JW = jewellery, M = metal, B = branch-to-branch, prefix SL/PH = sale/purchase.
+    /*
+     * WHICH POSTINGS ARE PROFIT AND LOSS, AND WHICH ARE JUST THINGS MOVING.
+     *
+     * The first cut filed every `B`-prefixed type as income or expense. Those
+     * are branch-to-branch: stock leaving Bandra for Borivali. On 27 Nov that
+     * put ₹1.60 Cr of BJWPH into "Operating Expense" for a single month — 65%
+     * of the total — and the matching BJWSL into revenue. Nothing was earned
+     * and nothing was spent; the same rings were in the same company at the end
+     * of it. The Business Activity screen has always drawn this line ("a
+     * transfer between your own shops is not revenue"); the ledger now draws it
+     * in the same place.
+     *
+     * Buying stock is the second correction. `JWPH` and `MPH` are jewellery and
+     * metal coming IN — cash turning into inventory. That is a balance-sheet
+     * move, not a cost, and it only becomes one when the piece is sold. Filed
+     * as an expense it made ₹84L of stock purchases look like money burned, and
+     * it put every input-GST posting attached to them in the same bucket.
+     *
+     * So `asset` means "this moved, it did not evaporate", and the P&L buckets
+     * keep only what genuinely hits the month: a sale return and job work.
+     *
+     * A caveat worth stating out loud: Gati's Journal carries no rent, salary
+     * or utilities, so Operating Expense reads very low and EBITDA reads close
+     * to revenue. That is the data being thin, not the business being costless,
+     * and no arithmetic here can invent the missing feed.
+     */
     const KIND: Record<string, string> = {
+      // Earned from a customer.
       JWSL: 'income',
-      BJWSL: 'income',
       MSL: 'income',
-      JWPH: 'expense',
-      BJWPH: 'expense',
-      MPH: 'expense',
+      // Stock and metal bought in — inventory, not a cost of the month.
+      JWPH: 'asset',
+      MPH: 'asset',
+      // Between our own shops: an asset changing address.
+      BJWSL: 'asset',
+      BMSL: 'asset',
+      BJWPH: 'asset',
+      BMPH: 'asset',
       VCH: 'asset',
-      // Seen from Aug 2026: branch metal sale/purchase mirror MSL/MPH; a sale
-      // return (JWSR) takes money back out of income; branch job work (BDJOB)
-      // is a cost. Unmapped types still fall to 'asset' below.
-      BMSL: 'income',
-      BMPH: 'expense',
+      // Genuinely of the month: money handed back on a return, and job work
+      // paid for. Unmapped types still fall to 'asset' below.
       JWSR: 'expense',
       BDJOB: 'expense',
     };
@@ -3362,16 +3390,24 @@ export class SyncService {
       const kind = KIND[tranType] ?? 'asset';
       byKind[kind] = (byKind[kind] ?? 0) + 1;
 
-      // Income sits on the credit side of the day book, expense on the debit —
-      // and the counterparty is whichever account is NOT ours.
-      const isIncome = kind === 'income';
-      const counterparty = isIncome ? r.CrAccountNo : r.DrAccountNo;
+      /*
+       * A SALE sits on the credit side of the day book, a purchase on the
+       * debit — and the counterparty is whichever account is NOT ours.
+       *
+       * Read from the TranType rather than from `kind`, because the two stopped
+       * agreeing when branch transfers were reclassified as `asset`. A branch
+       * SALE is still a sale in the day book: its counterparty is the receiving
+       * branch on the credit side, and deriving that from `kind` would silently
+       * have flipped the party on every one of those rows.
+       */
+      const isSaleSide = tranType.endsWith('SL');
+      const counterparty = isSaleSide ? r.CrAccountNo : r.DrAccountNo;
 
       const data = {
         storeId: await branch.resolve(r),
         partyId: parties.get(String(counterparty)) ?? null,
         kind: kind as any,
-        side: (isIncome ? 'credit' : 'debit') as any,
+        side: (isSaleSide ? 'credit' : 'debit') as any,
         amount,
         entryDate: dt(r.Jdate) ?? dt(r.EntryDate) ?? new Date(),
         reference: str(r.DocNo) ?? str(r.TransNo),

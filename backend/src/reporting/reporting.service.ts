@@ -258,6 +258,22 @@ const DSR_DEFINITIONS = {
   visitToSale: 'Check-ins today whose customer was billed today, divided by all check-ins today.',
 } as const;
 
+/**
+ * How long a piece has been sitting, in whole days.
+ *
+ * Live from `inwardDate` so it stays true without a nightly job rewriting the
+ * stored figure, falling back to `ageDays` and then to zero. The same rule as
+ * `liveAgeDays` in the stock services, kept here rather than imported so that
+ * reporting does not reach into another module for one arithmetic line.
+ */
+function ageDaysOf(s: { inwardDate: Date | null; ageDays: number | null }, now: number): number {
+  if (s.inwardDate) {
+    const days = Math.floor((now - s.inwardDate.getTime()) / 86_400_000);
+    return days > 0 ? days : 0;
+  }
+  return s.ageDays ?? 0;
+}
+
 @Injectable()
 export class ReportingService {
   constructor(
@@ -499,15 +515,31 @@ export class ReportingService {
       unitsByCat.set(cat, (unitsByCat.get(cat) ?? 0) + 1);
     }
 
-    // Average age of remaining stock per category (proxy for days-of-stock).
+    /*
+     * Average age of remaining stock per category (proxy for days-of-stock).
+     *
+     * COUNTED FROM `inwardDate`, not from the stored `ageDays`.
+     *
+     * `ageDays` is a snapshot written at import time, and the Gati sync does
+     * not write it at all — every row is null. Reading it meant this table
+     * showed 0 days of stock for all eight categories and labelled every one of
+     * them "Fast", including Bangles & Kadas, which had sold nothing in thirty
+     * days. A merchandising screen that calls dead stock fast is worse than no
+     * screen.
+     *
+     * Stock and Dead Stock already count from the inward date for this exact
+     * reason, so this now matches them; `ageDays` stays as the fallback for a
+     * piece that carries one and no inward date.
+     */
     const stock = await this.prisma.stockItem.findMany({
       where: { storeId: { in: storeIds }, status: { in: ['in_stock', 'aging', 'dead_stock', 'reserved'] } },
-      select: { category: true, ageDays: true },
+      select: { category: true, ageDays: true, inwardDate: true },
     });
+    const now = Date.now();
     const ageByCat = new Map<string, { sum: number; n: number }>();
     for (const s of stock) {
       const acc = ageByCat.get(s.category) ?? { sum: 0, n: 0 };
-      acc.sum += s.ageDays ?? 0;
+      acc.sum += ageDaysOf(s, now);
       acc.n += 1;
       ageByCat.set(s.category, acc);
     }

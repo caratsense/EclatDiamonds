@@ -113,28 +113,55 @@ export class FinanceService {
     // Previous full month, for period-over-period deltas.
     const prevStart = startOfMonthAgoInTz(now, tz, 1);
 
-    // Aggregate revenue (sales + income) and expense for one [gte, lt) window.
+    /*
+     * REVENUE IS WHAT WAS BILLED, AND NOTHING ELSE.
+     *
+     * This used to be `sales + ledger income`, and on 27 Nov it read ₹3.23 Cr
+     * against a month in which every other screen in the product — Store
+     * Comparison, Reporting, the dashboard trend — said ₹73.8L. Four times
+     * over, on the one screen a CEO opens to learn what the business earned.
+     *
+     * Both halves of the sum were wrong in the same direction. Gati's Journal
+     * is double-entry: a jewellery sale posts a `JWSL` row AND appears in the
+     * sales table, so adding the two counted every retail bill twice. And the
+     * larger part, branch sale types (`BJWSL`, `BMSL`), is stock leaving one of
+     * your own shops for another — the Business Activity screen has always
+     * excluded those with the words "a transfer between your own shops is not
+     * revenue", and Finance was the one place that did not.
+     *
+     * So revenue is the Sale table alone, on exactly the terms the rest of the
+     * product uses it: billed, not cancelled, `docType: 'sale'`. Finance now
+     * reconciles with Store Comparison to the rupee, which is the only way
+     * anyone can trust either.
+     */
     const periodTotals = async (gte: Date, lt: Date) => {
-      const [salesAgg, incomeAgg, expenseAgg] = await Promise.all([
+      const [salesAgg, expenseAgg] = await Promise.all([
         this.prisma.sale.aggregate({
           _sum: { totalAmount: true },
           where: { ...storeWhere, isCancelled: false, docType: 'sale', docDate: { gte, lt } },
         }),
         this.prisma.ledgerEntry.aggregate({
           _sum: { amount: true },
-          where: { ...storeWhere, kind: 'income', entryDate: { gte, lt } },
-        }),
-        this.prisma.ledgerEntry.aggregate({
-          _sum: { amount: true },
           where: { ...storeWhere, kind: 'expense', entryDate: { gte, lt } },
         }),
       ]);
-      const revenue = num(salesAgg._sum.totalAmount) + num(incomeAgg._sum.amount);
+      const revenue = num(salesAgg._sum.totalAmount);
       const expense = num(expenseAgg._sum.amount);
-      // No separate COGS is modelled (single `expense` ledger bucket), so gross
-      // profit uses total expense as the cost base. Note the caveat for MIS users.
+      /*
+       * EBITDA SUBTRACTED THE EXPENSES TWICE.
+       *
+       * `grossProfit - expense` where grossProfit is already `revenue -
+       * expense`. On 27 Nov that printed EBITDA of −₹1.68 Cr — a ₹1.7 crore
+       * loss that never happened — and the screen itself showed the working:
+       * revenue ₹3.23 Cr, gross margin ₹77.49L, opex ₹2.46 Cr.
+       *
+       * With a single expense bucket and no COGS or depreciation modelled,
+       * EBITDA and gross profit are the same figure, and saying so plainly is
+       * better than manufacturing a difference by subtracting twice. They
+       * separate the moment a real chart of accounts exists to separate them.
+       */
       const grossProfit = revenue - expense;
-      return { revenue, expense, grossProfit, ebitda: grossProfit - expense };
+      return { revenue, expense, grossProfit, ebitda: grossProfit };
     };
 
     // `now+1ms` so the current, still-open month includes today.

@@ -197,9 +197,22 @@ export class OmnichannelKpiService {
           }))
         : null,
       intentAssessed,
+      /*
+       * LEADS FIRST, BECAUSE LEADS IS THE TOP.
+       *
+       * Conversations led this list, which read as a funnel that got wider at
+       * step two: 363 conversations above 1,302 leads, the second row marked
+       * 100% and the first 28%. Nobody narrows from 363 to 1,302.
+       *
+       * The order was never a descent to begin with. A lead arrives from a
+       * website form or a walk-in with no conversation attached, so
+       * conversations are not the mouth of the funnel — they are how many of
+       * the leads anybody has actually spoken to, which is a far more useful
+       * second step than it ever was a first.
+       */
       funnel: [
-        { key: 'conversations', label: 'Conversations', count: conversations },
         { key: 'leads', label: 'Leads', count: leads },
+        { key: 'conversations', label: 'Conversations', count: conversations },
         { key: 'enquiries', label: 'Enquiries', count: enquiries },
         { key: 'visits', label: 'Visits', count: visits },
         { key: 'converted', label: 'Converted', count: converted },

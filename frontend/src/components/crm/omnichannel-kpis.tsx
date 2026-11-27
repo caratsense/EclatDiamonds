@@ -254,6 +254,17 @@ function Totals({
 
 function Intent({ data, loading }: { data?: OmnichannelSummary; loading: boolean }) {
   const bands = data?.intent ?? null;
+  /*
+   * How many leads have been SCORED — not how many there are.
+   *
+   * The ring used to put this number under the words "Total leads", directly
+   * below a tile reading "LEADS 1,302". On 27 Nov it said 220, so the same
+   * screen gave two different answers to the same question six inches apart,
+   * and the smaller one carried the more authoritative label. 220 was never the
+   * lead count; it is how many of them qualification has got to, and the gap
+   * between the two is itself worth seeing — a thousand leads nobody has
+   * assessed is a fact about the week, not a rounding difference.
+   */
   const total = bands?.reduce((n, b) => n + b.count, 0) ?? 0;
 
   /*
@@ -298,7 +309,7 @@ function Intent({ data, loading }: { data?: OmnichannelSummary; loading: boolean
             className="w-40 shrink-0"
             showLegend={false}
             centerValue={String(total)}
-            centerLabel="Total leads"
+            centerLabel="Leads scored"
             valueFormatter={(v) =>
               `${v} ${v === 1 ? "lead" : "leads"}`
             }
