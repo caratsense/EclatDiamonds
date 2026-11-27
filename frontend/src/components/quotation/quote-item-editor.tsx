@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Download, Plus, Sparkles, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -347,9 +347,34 @@ export function QuoteItemEditor({
 }: ItemEditorProps) {
   const [loading, setLoading] = useState(false);
   const [styleOpen, setStyleOpen] = useState(false);
+  /*
+   * THE RATE IS WRITTEN IN FOR EVERY ITEM THAT ALREADY HAS A METAL.
+   *
+   * Picking a metal and loading a design both seed the box, but neither fires
+   * for a line that arrived with its metal already set — reopening a saved
+   * quote, or a repair line restored from a draft. Those opened with an empty
+   * box again, which is the same complaint in a different doorway: "prewritten
+   * rate should reflect there".
+   *
+   * Seeded once per metal, tracked by the code it was seeded for, so clearing
+   * the box to type a different number is respected and does not refill behind
+   * the typist. Changing the metal is a new rate and seeds again.
+   */
+  const seededFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!item.metalCode || seededFor.current === item.metalCode) return;
+    seededFor.current = item.metalCode;
+    if (item.manualRate.trim()) return;
+    const rate = autoRateFor(metalOf(item.metalCode))?.rate;
+    if (rate && rate > 0) set({ manualRate: String(rate) });
+    // `set` and the lists are stable for the life of one item row; the metal is
+    // the only thing this should react to.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [item.metalCode]);
   const styles = useStyleSearch(item.styleNumber);
   const matches = styles.data ?? [];
-  const metal = lists.metals.find((m) => m.code === item.metalCode);
+  const metalOf = (code: string | undefined) => lists.metals.find((m) => m.code === code);
+  const metal = metalOf(item.metalCode);
   const auto = autoRateFor(metal);
   const goldRate = num(item.manualRate) ?? auto?.rate ?? 0;
   const price = priceItem(item, goldRate);
@@ -390,7 +415,7 @@ export function QuoteItemEditor({
         // number the screen already knows.
         manualRate: metalLine?.code
           ? (withMetal(item, metalLine.code,
-              autoRateFor(lists.metals.find((m) => m.code === metalLine.code))?.rate).manualRate)
+              autoRateFor(metalOf(metalLine.code))?.rate).manualRate)
           : item.manualRate,
         weight: metalLine ? String(metalLine.weight) : item.weight,
         stones,
@@ -601,7 +626,7 @@ export function QuoteItemEditor({
             value={item.metalCode}
             // Type to search: "14", "18K", "WG", "G18"… and pick.
             onChange={(code) =>
-              onChange(withMetal(item, code, autoRateFor(lists.metals.find((m) => m.code === code))?.rate))
+              onChange(withMetal(item, code, autoRateFor(metalOf(code))?.rate))
             }
             placeholder="Metal — type 14, WG, G18YG…"
           />
