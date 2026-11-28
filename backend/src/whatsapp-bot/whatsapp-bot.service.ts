@@ -14,7 +14,11 @@ import { IdentityService } from '../crm/identity.service';
 import { QualificationService } from '../crm/qualification.service';
 import { StorageService } from '../storage/storage.service';
 import { WhatsAppIdentityService } from './whatsapp-identity.service';
-import { CampaignBotService, answeredByBranchNotBot } from './campaign-bot.service';
+import {
+  CampaignBotService,
+  answeredByBranchNotBot,
+  campaignTurnNeedsAnOwner,
+} from './campaign-bot.service';
 import { CustomerBotService } from './customer-bot.service';
 import { MetaAdMetadataService } from '../integrations/meta-ad-metadata.service';
 import { extractMetaReferral } from '../integrations/meta-referral';
@@ -721,6 +725,22 @@ export class WhatsAppBotService {
                 }
                 return t;
               });
+              /*
+               * Who held this thread BEFORE this turn.
+               *
+               * Read before the handoff below can name somebody, so "already
+               * owned" means a person genuinely had it — not one this turn
+               * assigned a moment ago, which would make the ownership rule
+               * below unable to tell its own work from a colleague's.
+               */
+              const heldAlready = Boolean(
+                (
+                  await this.prisma.conversation.findFirst({
+                    where: { id: result.conversationId, organisationId },
+                    select: { assignedUserId: true },
+                  })
+                )?.assignedUserId,
+              );
               if (turn.handoff) {
                 await this.handToAPerson(
                   organisationId,
@@ -729,8 +749,40 @@ export class WhatsAppBotService {
                   turn.handoff.note,
                 );
               }
+              /*
+               * THE AD'S BRANCH TAKES THE LEAD AS SOON AS THE SCRIPT SPEAKS.
+               *
+               * Client, 28 Nov: the thread shows the right store and still
+               * reaches no store manager. An owner used to be named only by the
+               * handoff above, which a customer who reads the campaign's reply
+               * and never writes again never reaches — see
+               * `campaignTurnNeedsAnOwner` for the whole of why, and for why
+               * this rings a branch once rather than on every bot turn.
+               *
+               * `stopTheBot: false` is the load-bearing half. This is
+               * ownership and a bell, NOT a handoff: the script carries on
+               * exactly as it did, so the customer still receives word for word
+               * what the campaign's owner approved — closing message included —
+               * and the real handoff still happens at the end of it.
+               */
+              const ownerNamed = campaignTurnNeedsAnOwner({
+                spoke: Boolean(turn.text),
+                handedOff: Boolean(turn.handoff),
+                owned: heldAlready,
+                namesSomewhere: Boolean(campaignRule.storeId || campaignRule.assignedUserId),
+              });
+              if (ownerNamed) {
+                await this.handToAPerson(
+                  organisationId,
+                  result.conversationId,
+                  'An advert brought this enquiry in and the campaign has answered it.',
+                  undefined,
+                  { stopTheBot: false },
+                );
+              }
               this.logger.log(
-                `  campaign bot (${campaignRule.name}) replied${turn.handoff ? ' and handed off' : ''}`,
+                `  campaign bot (${campaignRule.name}) replied${turn.handoff ? ' and handed off' : ''}` +
+                  (ownerNamed ? ' and gave the branch its owner' : ''),
               );
               /*
                * INTENT SCORE, on this path too.
@@ -1005,13 +1057,40 @@ export class WhatsAppBotService {
    * — and guessing a branch is worse than leaving it in the head-office queue
    * where the non-ad tab surfaces it. The thread still becomes `human`, so the
    * assistant stops.
+   *
+   * ## Two strengths
+   *
+   * By default this ENDS the bot's involvement: a script that finished, a
+   * customer who asked for a person, an assistant that ran out of approved
+   * words. `stopTheBot: false` does the ownership and the bell without that —
+   * see the option below for the one caller that needs it and why.
    */
   private async handToAPerson(
     organisationId: string,
     conversationId: string,
     reason: string,
     handoffNote?: string,
+    options?: {
+      /**
+       * Whether this takes the thread off the bot.
+       *
+       * True everywhere a script has finished, a customer has asked for a
+       * person, or the assistant has run out of what it may say — the thread is
+       * a person's from then on and the bot never speaks on it again.
+       *
+       * False in exactly one place: a campaign script that has spoken but not
+       * finished (client, 28 Nov — the thread shows the branch and reaches
+       * nobody). The branch is given the lead while the script still has its
+       * own approved words to say, so the ownership arrives early and what the
+       * customer receives does not change by a syllable. `handling` and
+       * `handoffReason` are therefore left alone: a thread the bot is still
+       * running has not been handed off, and writing a handoff reason onto it
+       * would tell the inbox a story that is not true yet.
+       */
+      stopTheBot?: boolean;
+    },
   ): Promise<void> {
+    const stopTheBot = options?.stopTheBot !== false;
     const conversation = await this.prisma.conversation.findFirst({
       where: { id: conversationId, organisationId },
       select: {
@@ -1126,8 +1205,7 @@ export class WhatsAppBotService {
     await this.prisma.conversation.update({
       where: { id: conversationId },
       data: {
-        handling: 'human',
-        handoffReason: reason,
+        ...(stopTheBot ? { handling: 'human', handoffReason: reason } : {}),
         // The branch the script named, written now so the thread stops reading
         // as "no store yet" the moment a person owns it.
         ...(storeId && storeId !== conversation.storeId ? { storeId } : {}),
@@ -1233,7 +1311,7 @@ export class WhatsAppBotService {
     }
 
     this.logger.log(
-      `  handed to a person on ${conversationId}` +
+      `  ${stopTheBot ? 'handed to a person' : 'given an owner at its branch'} on ${conversationId}` +
         (owner
           ? ` → ${ownerName ?? owner}, and ${recipients.length} told`
           : storeId

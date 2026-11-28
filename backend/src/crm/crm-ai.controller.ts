@@ -22,6 +22,7 @@ import type { QualificationPolicy } from './qualification-policy';
 import { AdSetRulesService, type AdSetAutomationRule } from './adset-rules.service';
 import { ConversationAiGate } from './ai-responder';
 import { MetaAdsListService } from './meta-ads-list.service';
+import { UnconfiguredCampaignsService } from './unconfigured-campaigns.service';
 import { AuditService } from '../common/audit.service';
 
 export class SaveAiSettingsDto {
@@ -130,6 +131,7 @@ export class CrmQualificationController {
     private readonly adSetRules: AdSetRulesService,
     private readonly aiGate: ConversationAiGate,
     private readonly metaAdsList: MetaAdsListService,
+    private readonly unconfiguredCampaigns: UnconfiguredCampaignsService,
     private readonly audit: AuditService,
   ) {}
 
@@ -177,6 +179,22 @@ export class CrmQualificationController {
   @Post('adset-rules')
   saveAdSetRules(@CurrentUser() user: AuthUser, @Body() body: SaveAdSetRulesDto) {
     return this.adSetRules.replace(user, body.rules);
+  }
+
+  /**
+   * The campaigns that brought in enquiries and carry no rule.
+   *
+   * The eight newest unrouted threads on 28 Nov were all from campaign
+   * "blue diamond 24/11", which has no rule: routing behaved exactly as
+   * configured and the only trace was a warning in a container log, which the
+   * client paying for those clicks cannot read. Read-only, and alongside the
+   * rules on purpose — the gap belongs on the screen where it is closed.
+   */
+  // Management information: store manager and above, never a salesperson.
+  @Roles('store_manager')
+  @Get('unconfigured-campaigns')
+  unconfigured(@CurrentUser() user: AuthUser) {
+    return this.unconfiguredCampaigns.list(user.organisationId);
   }
 
   /**

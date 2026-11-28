@@ -416,6 +416,15 @@ export function useConversations(params: {
   /** Conversations no ad brought in. Head office only; the server refuses others. */
   nonAd?: boolean;
   /**
+   * The threads that belong to NO branch yet. Head office only; the server
+   * refuses others.
+   *
+   * The branch in the top bar is deliberately ignored for this one — a thread
+   * at no branch is not at Bandra either, so the server counts and lists these
+   * outside the branch filter.
+   */
+  unbranched?: boolean;
+  /**
    * Which Meta surface the ad was tapped on — 'instagram' | 'facebook' |
    * 'messenger', or 'unknown' for an ad lead whose referral had no readable
    * source. Distinct from `channel`: one advert runs on both platforms and
@@ -452,6 +461,7 @@ export function useConversations(params: {
             routingReview: params.routingReview ? "true" : undefined,
             unidentified: params.unidentified ? "true" : undefined,
             nonAd: params.nonAd ? "true" : undefined,
+            unbranched: params.unbranched ? "true" : undefined,
             sourcePlatform: params.sourcePlatform,
             partyId: params.partyId,
             broadcast: params.broadcast ? "true" : undefined,
@@ -506,6 +516,7 @@ export function useConversationFeed(params: Parameters<typeof useConversations>[
             routingReview: params.routingReview ? "true" : undefined,
             unidentified: params.unidentified ? "true" : undefined,
             nonAd: params.nonAd ? "true" : undefined,
+            unbranched: params.unbranched ? "true" : undefined,
             sourcePlatform: params.sourcePlatform,
             partyId: params.partyId,
             broadcast: params.broadcast ? "true" : undefined,

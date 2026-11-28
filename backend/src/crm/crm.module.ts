@@ -18,6 +18,7 @@ import { AttributionService } from './attribution.service';
 import { CrmAiProvider } from './crm-ai.provider';
 import { AdSetRulesService } from './adset-rules.service';
 import { MetaAdsListService } from './meta-ads-list.service';
+import { UnconfiguredCampaignsService } from './unconfigured-campaigns.service';
 import { AI_RESPONDER, ConversationAiGate } from './ai-responder';
 import { RequalificationService } from './requalification.service';
 import { AdvancedCrmService } from './advanced-crm.service';
@@ -144,6 +145,10 @@ import { QuickRepliesService } from './quick-replies.service';
     // Lists the Meta account's running campaigns/ads for the campaign editor's
     // picker. Only CrmQualificationController reads it, so it is not exported.
     MetaAdsListService,
+    // Reads the threads back the other way: which campaigns have sent real
+    // customers that no rule claimed. Only CrmQualificationController reads it,
+    // so it is not exported.
+    UnconfiguredCampaignsService,
     ConversationAiGate,
     KnowledgeRetrievalService,
     AiDraftsService,

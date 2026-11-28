@@ -152,6 +152,25 @@ const QUEUES = [
    * the control.
    */
   { key: "non_ad", label: "Non-ad", countKey: "non_ad", headOfficeOnly: true },
+  /*
+   * The threads that belong to no branch at all.
+   *
+   * The other half of the branch filter meaning that branch (client, 28 Nov:
+   * "when she clicks on Mumbai Bandra only the Mumbai Bandra chats should be
+   * there"). Picking a branch no longer shows the unrouted threads, so this is
+   * where somebody goes to find them and hand each to a shop — the same pair
+   * the customer directory already has in its "No branch yet" button.
+   *
+   * Head office only, and the branch in the top bar does not narrow it: the
+   * server counts and lists this queue outside the branch filter, because a
+   * thread at no branch is not at Bandra either.
+   */
+  {
+    key: "unbranched",
+    label: "No branch yet",
+    countKey: "unbranched",
+    headOfficeOnly: true,
+  },
 ];
 
 /**
@@ -505,7 +524,12 @@ function ConversationsContent() {
             ? // Deliberately NOT also filtered to open: the point of this queue is
               // to account for every conversation no ad paid for.
               { nonAd: true }
-            : { status: "open" as const };
+            : queue === "unbranched"
+              ? // Not filtered to open either: a triage queue has to show
+                // everything waiting for a branch, including what somebody
+                // closed without ever routing it.
+                { unbranched: true }
+              : { status: "open" as const };
 
   /*
    * The branch NARROWS the queue; it never replaces it.

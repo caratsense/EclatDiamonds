@@ -237,6 +237,8 @@ export class CrmConversationsController {
     @StoreHeader() store?: string,
     @Query('partyId') partyId?: string,
     @Query('nonAd') nonAd?: string,
+    /** Head office's triage queue: the threads that belong to no branch. */
+    @Query('unbranched') unbranched?: string,
     @Query('sourcePlatform') sourcePlatform?: string,
     /** Threads a broadcast started: any of them, or one campaign's. */
     @Query('broadcast') broadcast?: string,
@@ -247,7 +249,7 @@ export class CrmConversationsController {
     /*
      * Every one of these narrows the caller's own scope; none widens it. The
      * store filter is asserted against their allowed stores in the service, and
-     * `nonAd` is refused there for anyone below head office.
+     * `nonAd` and `unbranched` are refused there for anyone below head office.
      *
      * The branch comes from `@StoreHeader()`, not a bare `@Query('storeId')`.
      * The store switcher in the top bar sends `X-Store-Id` on every request and
@@ -263,6 +265,7 @@ export class CrmConversationsController {
       routingReview: routingReview === 'true',
       unidentified: unidentified === 'true',
       nonAd: nonAd === 'true',
+      unbranched: unbranched === 'true',
       storeId: store || undefined,
       partyId: partyId || undefined,
       sourcePlatform: sourcePlatform || undefined,

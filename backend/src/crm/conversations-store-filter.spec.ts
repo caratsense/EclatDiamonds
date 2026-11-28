@@ -61,10 +61,16 @@ const headOffice: AuthUser = {
   allStores: true,
 };
 
-/** The extra terms `list`/`queueCounts` AND on top of the visibility rule. */
+/**
+ * The branch narrowing `list`/`queueCounts` AND on top of the visibility rule.
+ *
+ * Identified by carrying a `storeId` and no `audience`: the visibility clause
+ * always names the audience, and the per-queue terms (`status`, `handling`, …)
+ * never name a store.
+ */
 function branchTerms(where: Prisma.ConversationWhereInput) {
   const and = (where.AND ?? []) as Prisma.ConversationWhereInput[];
-  return and.filter((term) => 'OR' in term && !('audience' in term));
+  return and.filter((term) => 'storeId' in term && !('audience' in term));
 }
 
 describe('the inbox narrows to the branch in the top bar', () => {
@@ -72,9 +78,7 @@ describe('the inbox narrows to the branch in the top bar', () => {
     const { prisma, wheres } = capturingPrisma();
     await inbox(prisma, scope).list(headOffice, { storeId: 'mumbai-bandra' });
 
-    expect(branchTerms(wheres[0])).toEqual([
-      { OR: [{ storeId: 'mumbai-bandra' }, { storeId: null }] },
-    ]);
+    expect(branchTerms(wheres[0])).toEqual([{ storeId: 'mumbai-bandra' }]);
   });
 
   it('adds nothing when the switcher is on "All Stores"', async () => {
@@ -100,15 +104,51 @@ describe('the inbox narrows to the branch in the top bar', () => {
     );
   });
 
-  it('keeps threads with no branch, so the central queue never disappears', async () => {
-    // An unrouted ad thread belongs to no branch — choosing one must not be the
-    // thing that hides the enquiry nobody has claimed yet.
+  it('does not admit the unbranched threads alongside the branch', async () => {
+    /*
+     * Client, 28 Nov: picking Mumbai Bandra still listed threads labelled "No
+     * store yet". The clause deliberately ORed `storeId: null` in, so every
+     * unrouted enquiry appeared in all eleven branch inboxes at once. A branch
+     * means that branch; the unbranched are reachable through the queue below.
+     */
     const { prisma, wheres } = capturingPrisma();
     await inbox(prisma, scope).list(headOffice, { storeId: 'mumbai-bandra' });
 
-    expect(branchTerms(wheres[0])[0]).toEqual({
-      OR: [{ storeId: 'mumbai-bandra' }, { storeId: null }],
+    const terms = branchTerms(wheres[0]);
+    expect(terms).toHaveLength(1);
+    expect(terms[0]).not.toHaveProperty('OR');
+    expect(terms[0].storeId).toBe('mumbai-bandra');
+  });
+});
+
+describe('the threads that belong to no branch are still reachable', () => {
+  it('lists exactly the unbranched ones, whatever the top bar is pointed at', async () => {
+    // The branch is ignored on purpose: a thread at no branch cannot also be at
+    // Bandra, so honouring the picker here would return nothing at all.
+    const { prisma, wheres } = capturingPrisma();
+    await inbox(prisma, scope).list(headOffice, {
+      storeId: 'mumbai-bandra',
+      unbranched: true,
     });
+
+    expect(branchTerms(wheres[0])).toEqual([{ storeId: null }]);
+  });
+
+  it('refuses the queue to anyone below head office', async () => {
+    // An unrouted thread belongs to nobody yet, so it is head office's to
+    // triage — the same rule the customer directory follows. Refused rather
+    // than quietly answered, because a query parameter is a request.
+    const { prisma } = capturingPrisma();
+    const manager: AuthUser = {
+      ...headOffice,
+      role: 'store_manager',
+      allStores: false,
+      storeIds: ['mumbai-bandra'],
+    };
+
+    await expect(
+      inbox(prisma, scope).list(manager, { storeId: 'mumbai-bandra', unbranched: true }),
+    ).rejects.toThrow(ForbiddenException);
   });
 });
 
@@ -117,12 +157,47 @@ describe('the queue badges count the same branch the list shows', () => {
     const { prisma, wheres } = capturingPrisma();
     await inbox(prisma, scope).queueCounts(headOffice, 'mumbai-bandra');
 
-    expect(wheres.length).toBeGreaterThan(0);
-    for (const where of wheres) {
-      expect(branchTerms(where)).toEqual([
-        { OR: [{ storeId: 'mumbai-bandra' }, { storeId: null }] },
-      ]);
+    // The "no branch yet" badge is the one count a branch cannot narrow — it
+    // has its own expectation below.
+    const branchCounts = wheres.filter(
+      (where) => !branchTerms(where).some((term) => term.storeId === null),
+    );
+    expect(branchCounts.length).toBeGreaterThan(0);
+    for (const where of branchCounts) {
+      expect(branchTerms(where)).toEqual([{ storeId: 'mumbai-bandra' }]);
     }
+  });
+
+  it('counts the unbranched queue outside the branch, so the badge is never a zero', async () => {
+    /*
+     * The badge and the list must say the same thing, and they share
+     * `branchClause` for exactly that reason. ANDing the chosen branch onto a
+     * queue of threads that have no branch would count zero every time a
+     * branch was picked, and the only route to the unrouted enquiries would
+     * look empty.
+     */
+    const { prisma, wheres } = capturingPrisma();
+    await inbox(prisma, scope).queueCounts(headOffice, 'mumbai-bandra');
+
+    const unbranched = wheres.filter((where) =>
+      branchTerms(where).some((term) => term.storeId === null),
+    );
+    expect(unbranched).toHaveLength(1);
+    expect(branchTerms(unbranched[0])).toEqual([{ storeId: null }]);
+  });
+
+  it('offers no unbranched count to a store manager', async () => {
+    // Nobody is told how much work sits in a queue they may not open.
+    const { prisma } = capturingPrisma();
+    const manager: AuthUser = {
+      ...headOffice,
+      role: 'store_manager',
+      allStores: false,
+      storeIds: ['mumbai-bandra'],
+    };
+
+    const counts = await inbox(prisma, scope).queueCounts(manager, 'mumbai-bandra');
+    expect(counts).not.toHaveProperty('unbranched');
   });
 
   it('refuses a branch outside the scope, like the list does', async () => {

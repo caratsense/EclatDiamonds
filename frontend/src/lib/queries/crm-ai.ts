@@ -375,7 +375,54 @@ export function useSaveAdSetRules() {
   return useMutation({
     mutationFn: async (rules: AdSetAutomationRule[]) =>
       (await api.post<AdSetAutomationRule[]>("/crm/qualification/adset-rules", { rules })).data,
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["crm", "qualification", "adset-rules"] }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: ["crm", "qualification", "adset-rules"] });
+      // A campaign that has just been given a script is no longer unconfigured,
+      // and a warning that outlives the thing it warned about is the fastest way
+      // to teach somebody to ignore the panel.
+      void qc.invalidateQueries({
+        queryKey: ["crm", "qualification", "unconfigured-campaigns"],
+      });
+    },
+  });
+}
+
+/** A campaign that has brought in enquiries and carries no script. */
+export interface UnconfiguredCampaign {
+  /** Row identity: the campaign when Meta named one, else the advert itself. */
+  key: string;
+  campaignId: string | null;
+  /** Null when the advert could not be resolved; `adIds` is then all there is. */
+  campaignName: string | null;
+  /** The adverts seen from it, newest arrival first. */
+  adIds: string[];
+  enquiries: number;
+  lastEnquiryAt: string;
+}
+
+export interface UnconfiguredCampaigns {
+  campaigns: UnconfiguredCampaign[];
+  /** The window the counts cover, so the screen can say what it is showing. */
+  sinceDays: number;
+}
+
+/**
+ * The campaigns paying for enquiries that no script answers (client, 28 Nov).
+ *
+ * Read on the Bot Scripts screen because that is where the gap is closed: the
+ * eight newest unrouted threads all came from one campaign with no rule, and
+ * the only record of it was a line in a container log.
+ */
+export function useUnconfiguredCampaigns(enabled = true) {
+  return useQuery({
+    queryKey: ["crm", "qualification", "unconfigured-campaigns"],
+    enabled,
+    // Every advert the server has not seen for six hours costs it one Graph
+    // call. Five minutes here keeps reopening the screen from re-asking what
+    // would answer the same.
+    staleTime: 5 * 60 * 1000,
+    queryFn: async () =>
+      (await api.get<UnconfiguredCampaigns>("/crm/qualification/unconfigured-campaigns")).data,
   });
 }
 

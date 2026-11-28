@@ -3,6 +3,7 @@ import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   AdSetRulesService,
   type AdSetAutomationRule,
+  type AdSetHandling,
   type CampaignQuestion,
 } from '../crm/adset-rules.service';
 import { normaliseDefaultConversation } from '../crm/bot-script.service';
@@ -159,6 +160,149 @@ export function hasConfiguredConversation(rule: {
   closingMessage?: string | null;
 }): boolean {
   return !!(rule.firstReply?.trim() || rule.questions?.length || rule.closingMessage?.trim());
+}
+
+/**
+ * Must this campaign turn put a person on the thread?
+ *
+ * Client, 28 Nov: "it lists the store as Mumbai Bandra correctly, but it is
+ * still not routing to the particular store manager." Both halves of that are
+ * true. The ad rule names a branch and the thread adopts it, so the inbox
+ * shows the right shop — and then nobody is assigned and no bell rings,
+ * because the only thing that ever assigns an owner is the handoff at the END
+ * of a script. A customer who taps the advert, reads the campaign's reply and
+ * never writes again never reaches that end, so the lead sits at the right
+ * branch owned by nobody while the advert goes on being paid for.
+ *
+ * Intake says the same thing from the other side, in `ingestInbound`: "a lead
+ * that routes and is then abandoned mid-qualification therefore never rings …
+ * changing it is a product decision, not a bug to patch from inside intake."
+ * The client has now made that decision.
+ *
+ * So the branch takes the thread as soon as the campaign has SPOKEN, rather
+ * than when the customer finishes answering. ONCE: `owned` is false only until
+ * that first turn assigns somebody, so every later turn of the same script
+ * sees an owner and rings nobody. A bell per bot turn is noise, and noise is
+ * how the one that mattered gets ignored.
+ *
+ * Not on a turn that already hands off — that path hands the thread over
+ * itself, and doing both would ring one branch twice for one lead.
+ *
+ * Not for a script that names neither a branch nor a person: the walk-in
+ * conversation, and any rule saved without a store. There is nobody to name,
+ * and `handToAPerson` rightly refuses to guess the nearest showroom.
+ */
+export function campaignTurnNeedsAnOwner(turn: {
+  /** This turn sent the customer something. */
+  spoke: boolean;
+  /** This turn ends in a handoff, which assigns an owner by itself. */
+  handedOff: boolean;
+  /** Somebody already holds the thread. */
+  owned: boolean;
+  /** The script names a branch, or the person who takes its conversations. */
+  namesSomewhere: boolean;
+}): boolean {
+  return turn.spoke && !turn.handedOff && !turn.owned && turn.namesSomewhere;
+}
+
+/** Where the first thing a customer receives from a rule comes from. */
+export type FirstCustomerMessageSource =
+  /** The owner's first reply, verbatim, with its first question when it has one. */
+  | 'firstReply'
+  /** No first reply: the first question IS the opener. */
+  | 'question'
+  /** No first reply and no questions: the closing line opens and closes at once. */
+  | 'closingMessage'
+  /** No first reply and AI replies on: the assistant writes it from the brief. */
+  | 'assistant'
+  /** Configured, but what would go out is blank — the customer gets an empty line. */
+  | 'blank'
+  /** Nothing is filled in, so `scriptFor` reads the rule as unconfigured. */
+  | 'none'
+  /** A script that will never be sent, because the rule is switched off. */
+  | 'off'
+  /** The same, because its enquiries go straight to a person by choice. */
+  | 'humanOnly';
+
+export interface FirstCustomerMessage {
+  source: FirstCustomerMessageSource;
+  /** The exact text the customer receives, or null when it cannot be known here. */
+  text: string | null;
+}
+
+/**
+ * The FIRST thing a customer receives from this rule, exactly as sent.
+ *
+ * The client, 28 Nov: "the bot is not sending the message as we have set on the
+ * bot script". Nothing was wrong with the sending. Her three live bridal rules
+ * have no first reply and no questions — only a closing message — so the first
+ * message each customer receives is that closing message, which is precisely
+ * what `handle` below does. The editor was what lied: it offered a box headed
+ * "First reply — sent exactly as written", she left it empty, and nothing on
+ * the screen said that leaving it empty does not mean silence.
+ *
+ * So this is `handle`'s own first turn read off it path by path, as a pure
+ * function the editor can show and a test can pin:
+ *
+ *   first reply filled in   → that text, verbatim, with the first question
+ *                             appended after a blank line unless the reply
+ *                             already ends by asking something
+ *   no first reply, AI on   → whatever the assistant writes from the brief
+ *   no first reply, AI off,
+ *     questions filled in   → the first question, which becomes the opener
+ *   no first reply, AI off,
+ *     no questions          → the closing message, and the thread goes to a
+ *                             colleague on that same turn
+ *   nothing filled in       → nothing at all: `scriptFor` reads the rule as
+ *                             unconfigured, so it never speaks
+ *
+ * `DEFAULT_CLOSING` is deliberately absent: it only stands in for a closing
+ * nobody wrote, and a rule with no first reply, no questions and no closing is
+ * unconfigured, so it is never the FIRST thing anybody receives.
+ *
+ * Built from the very primitives the sender uses — `composeOpener`,
+ * `phraseQuestion`, `hasConfiguredConversation` — so a change to the wording
+ * or the composition moves the preview with it.
+ *
+ * `enabled` and `handling` absent mean live and bot-handled: the walk-in
+ * conversation is shaped like a rule but carries no routing of its own.
+ */
+export function firstCustomerMessage(rule: {
+  enabled?: boolean;
+  handling?: AdSetHandling;
+  firstReply?: string | null;
+  questions?: CampaignQuestion[] | null;
+  closingMessage?: string | null;
+  aiReplies?: boolean;
+}): FirstCustomerMessage {
+  // Off and human-only are told apart from unconfigured on purpose: all three
+  // send nothing, but the first two are a WRITTEN script that will never go
+  // out, which is a different thing to tell the person who wrote it.
+  if (rule.enabled === false) return { source: 'off', text: null };
+  if (rule.handling === 'human') return { source: 'humanOnly', text: null };
+  if (!hasConfiguredConversation(rule)) return { source: 'none', text: null };
+
+  // Truthiness, not trimmed, because that is the test `handle` applies: a
+  // first reply of nothing but spaces is sent as it stands, and `blank` below
+  // is how the editor gets to say so.
+  if (rule.firstReply) {
+    const { text } = composeOpener(rule.firstReply, rule.questions);
+    return { source: text.trim() ? 'firstReply' : 'blank', text };
+  }
+
+  // AI replies on, and no opener to send first: there is no turn left for the
+  // questions to be asked on their own, so the model answers the customer's
+  // first message from the brief and no exact text can be shown.
+  if (rule.aiReplies === true) return { source: 'assistant', text: null };
+
+  const first = rule.questions?.[0];
+  if (first) {
+    const text = phraseQuestion(first);
+    return { source: text.trim() ? 'question' : 'blank', text };
+  }
+
+  const closing = rule.closingMessage?.trim();
+  return closing ? { source: 'closingMessage', text: closing } : { source: 'none', text: null };
 }
 
 @Injectable()

@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import {
+  AlertTriangle,
   Link2,
   Megaphone,
   MessageCircleMore,
@@ -40,6 +41,12 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  firstCustomerMessage,
+  firstCustomerMessageNote,
+  firstCustomerMessageSends,
+  type BotScriptDraft,
+} from "@/lib/bot-first-message";
 import {
   adIdFromLink,
   useAdSetRules,
@@ -361,7 +368,22 @@ export function CampaignScriptsConfig() {
             that ad will get its configured conversation.
           </p>
         ) : (
-          rules.map((rule) => (
+          rules.map((rule) => {
+            /*
+             * What this rule actually opens with, for the badge and the quote.
+             *
+             * Forced live and bot-handled on purpose: the row carries its own
+             * "Off" and "Straight to a person" badges, so the only question
+             * left here is whether a script exists at all — and a campaign
+             * switched off for the season still has the one somebody wrote.
+             *
+             * The badge used to ask `rule.firstReply || rule.aiContext`, which
+             * is why the three bridal campaigns of 28 Nov were all listed as
+             * "Routing only — no script" while they were busy sending their
+             * closing message to every customer who tapped the ad.
+             */
+            const first = firstCustomerMessage({ ...rule, enabled: true, handling: "ai" });
+            return (
             <div
               key={rule.id}
               className="flex flex-wrap items-start justify-between gap-3 rounded-lg border p-3"
@@ -380,7 +402,7 @@ export function CampaignScriptsConfig() {
                   {!rule.enabled ? <Badge variant="secondary">Off</Badge> : null}
                   {rule.handling === "human" ? (
                     <Badge variant="outline">Straight to a person</Badge>
-                  ) : rule.firstReply || rule.aiContext ? (
+                  ) : first.source !== "none" ? (
                     <Badge variant="outline" className="text-[var(--success)]">
                       <MessageCircleMore className="mr-1 h-3 w-3" />
                       Scripted
@@ -401,9 +423,12 @@ export function CampaignScriptsConfig() {
                     ? ` · ${rule.questions.length} question${rule.questions.length === 1 ? "" : "s"}`
                     : ""}
                 </p>
-                {rule.firstReply ? (
+                {/* The first message, whichever field it comes out of — not
+                    `rule.firstReply`, which showed these three campaigns as
+                    silent while their closing message was going out. */}
+                {firstCustomerMessageSends(first) && first.text ? (
                   <p className="line-clamp-2 text-xs break-words text-muted-foreground">
-                    “{rule.firstReply}”
+                    Opens with “{first.text}”
                   </p>
                 ) : null}
               </div>
@@ -424,7 +449,8 @@ export function CampaignScriptsConfig() {
                 </Button>
               </div>
             </div>
-          ))
+            );
+          })
         )}
       </CardContent>
 
@@ -694,6 +720,14 @@ export function CampaignScriptsConfig() {
                 placeholder="e.g. Hi! The solitaire ring from our ad starts at ₹85,000 for 0.5 carat (IGI certified)."
                 onChange={(e) => setDraft((d) => ({ ...d, firstReply: e.target.value }))}
               />
+              {/* Under this box, not at the foot of the dialog: leaving it
+                  empty is what the client did, and this is where she has to
+                  learn what empty sends. The questions are read from the rows
+                  as they would be SAVED, so the preview quotes the question the
+                  customer would get rather than the half-typed one. */}
+              <FirstMessagePreview
+                script={{ ...draft, questions: fromQuestionDrafts(questionRows) }}
+              />
             </div>
 
             <QuestionsEditor rows={questionRows} onChange={setQuestionRows} />
@@ -710,7 +744,9 @@ export function CampaignScriptsConfig() {
               />
               <p className="text-xs text-muted-foreground">
                 Sent once every question has been answered, just before the
-                thread goes to a colleague. Leave empty for a neutral line.
+                thread goes to a colleague — or <strong>straight away</strong>,
+                as the only message, when there is no first reply and no
+                questions above it. Leave empty for a neutral line.
               </p>
             </div>
 
@@ -828,6 +864,56 @@ export function CampaignScriptsConfig() {
         </DialogContent>
       </Dialog>
     </Card>
+  );
+}
+
+/**
+ * The first message this campaign will actually send, as the customer gets it.
+ *
+ * The client, 28 Nov: "the bot is not sending the message as we have set on the
+ * bot script". Nothing was wrong with the sending. Her three live bridal
+ * campaigns have an empty first reply and no questions, only a closing message,
+ * so the first thing each customer receives IS that closing message — exactly
+ * what the server does. This screen was what lied to her: a box headed "First
+ * reply — sent exactly as written" with a tempting example inside it, left
+ * empty, and nothing anywhere saying that empty does not mean silent.
+ *
+ * So the preview is computed from what is filled in, by the twin of the
+ * server's own `firstCustomerMessage`, and it is deliberately the whole truth
+ * rather than the flattering part of it: a conversation that sends nothing, or
+ * sends a blank line, says so in warning colours instead of looking unfinished.
+ */
+function FirstMessagePreview({ script }: { script: BotScriptDraft }) {
+  const first = firstCustomerMessage(script);
+  const sends = firstCustomerMessageSends(first);
+  return (
+    <div
+      className={
+        sends
+          ? "grid gap-1.5 rounded-lg border bg-muted/30 p-3"
+          : "grid gap-1.5 rounded-lg border border-warning/40 bg-warning/10 p-3"
+      }
+    >
+      <p className="flex items-center gap-1.5 text-xs font-medium">
+        {sends ? (
+          <MessageCircleMore className="h-3.5 w-3.5 shrink-0" />
+        ) : (
+          <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-warning" />
+        )}
+        What the customer receives first
+      </p>
+      {sends && first.text ? (
+        /* whitespace-pre-wrap: the question is appended after a blank line, and
+           a preview that collapsed it would show one message where WhatsApp
+           shows two paragraphs. */
+        <p className="rounded-md bg-background p-2 text-xs break-words whitespace-pre-wrap">
+          {first.text}
+        </p>
+      ) : null}
+      <p className={sends ? "text-[11px] text-muted-foreground" : "text-[11px] text-warning"}>
+        {firstCustomerMessageNote(first)}
+      </p>
+    </div>
   );
 }
 

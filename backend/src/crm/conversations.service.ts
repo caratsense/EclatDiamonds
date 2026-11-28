@@ -1792,10 +1792,29 @@ export class ConversationsService {
    * from that. `assertStoreAllowed` is what keeps it that way — a branch
    * outside the caller's scope is refused rather than silently honoured.
    *
-   * Unbranched threads stay — see StoreScopeService.storeOrUnbranchedFilter for
-   * the rule and why it is this way round. Here it also means that choosing a
-   * branch never hides the central queue from head office, which is the one
-   * place an unrouted enquiry is waiting for somebody to claim it.
+   * A BRANCH MEANS THAT BRANCH (client, 28 Nov): "when she clicks on Mumbai
+   * Bandra only the Mumbai Bandra chats should be there."
+   *
+   * This used to admit `storeId: null` alongside the chosen branch — the
+   * StoreScopeService.storeOrUnbranchedFilter rule, which exists so a branch
+   * picker never hides a row that is not AT another branch. That rule is right
+   * for a list somebody must not be locked out of, and wrong here: picking
+   * Bandra put every unrouted thread in the Bandra inbox, so the one screen
+   * that is supposed to answer "what is waiting at my shop" answered with other
+   * people's unplaced enquiries, labelled "No store yet". Eleven branches each
+   * saw the same unrouted threads and each could have replied to them.
+   *
+   * Nothing becomes invisible by losing the widening. An unbranched thread is
+   * still in the inbox on All Stores (this adds nothing there), and head office
+   * can list exactly those with `unbranched` below — the same pair the customer
+   * directory uses, where `directoryScope` narrows and the "No branch yet"
+   * queue is how you find what it narrowed away. Neither half is safe alone.
+   *
+   * `unbranched` is head office's own triage queue and ignores the branch
+   * deliberately: a thread at NO branch cannot also be at Bandra, so ANDing the
+   * picker onto it would count and list nothing. The role refusal lives here
+   * rather than in the callers so the list and the badge cannot disagree about
+   * who may see it.
    *
    * Returns an array so an absent branch adds nothing at all rather than a
    * clause that matches everything.
@@ -1803,10 +1822,19 @@ export class ConversationsService {
   private branchClause(
     user: AuthUser,
     requestedStoreId?: string,
+    unbranched = false,
   ): Prisma.ConversationWhereInput[] {
+    if (unbranched) {
+      if (user.role !== 'head_office') {
+        throw new ForbiddenException(
+          'Only head office can read conversations that have no branch yet.',
+        );
+      }
+      return [{ storeId: null }];
+    }
     if (!requestedStoreId || requestedStoreId === 'all') return [];
     this.scope.assertStoreAllowed(user, requestedStoreId);
-    return [{ OR: [{ storeId: requestedStoreId }, { storeId: null }] }];
+    return [{ storeId: requestedStoreId }];
   }
 
   /**
@@ -1910,12 +1938,17 @@ export class ConversationsService {
 
   async queueCounts(user: AuthUser, requestedStoreId?: string): Promise<Record<string, number>> {
     const branch = this.branchClause(user, requestedStoreId);
-    const scoped = (extra: Prisma.ConversationWhereInput): Prisma.ConversationWhereInput => ({
+    const scoped = (
+      extra: Prisma.ConversationWhereInput,
+      terms: Prisma.ConversationWhereInput[] = branch,
+    ): Prisma.ConversationWhereInput => ({
       organisationId: user.organisationId,
-      AND: [this.visibility(user), ...branch, extra],
+      AND: [this.visibility(user), ...terms, extra],
     });
 
-    const queues: [string, Prisma.ConversationWhereInput][] = [
+    // `[key, extra]`, or `[key, extra, branch terms]` for the one queue that is
+    // not counted inside the branch the top bar is pointed at.
+    const queues: [string, Prisma.ConversationWhereInput, Prisma.ConversationWhereInput[]?][] = [
       ['open', { status: 'open' }],
       ['mine', { assignedUserId: user.id }],
       ['unassigned', { handling: 'unassigned' }],
@@ -1932,14 +1965,28 @@ export class ConversationsService {
        * told how many conversations sit in a queue they may not open. That is
        * the rule the storeless central queue already follows.
        */
+      /*
+       * The threads no branch owns, which is where an unrouted enquiry waits.
+       *
+       * Counted OUTSIDE the branch filter (the empty override), because the
+       * branch filter now means that branch alone — see `branchClause`. A
+       * thread at no branch is not at Bandra, so ANDing Bandra onto this would
+       * read zero and the one way head office has of finding these would say
+       * there are none.
+       */
       ...(user.role === 'head_office'
-        ? ([['non_ad', { sourceAdId: null }]] as [string, Prisma.ConversationWhereInput][])
+        ? ([
+            ['non_ad', { sourceAdId: null }],
+            ['unbranched', { storeId: null }, []],
+          ] as [string, Prisma.ConversationWhereInput, Prisma.ConversationWhereInput[]?][])
         : []),
     ];
 
     // One round trip for the whole tab bar rather than eight.
     const counts = await this.prisma.$transaction(
-      queues.map(([, where]) => this.prisma.conversation.count({ where: scoped(where) })),
+      queues.map(([, where, terms]) =>
+        this.prisma.conversation.count({ where: scoped(where, terms) }),
+      ),
     );
     return Object.fromEntries(queues.map(([key], i) => [key, counts[i]]));
   }
@@ -1986,6 +2033,17 @@ export class ConversationsService {
        */
       nonAd?: boolean;
       /**
+       * Queue: the threads that belong to NO branch. HEAD OFFICE ONLY.
+       *
+       * The other half of narrowing the branch filter to the branch. Picking
+       * Bandra no longer shows the unrouted threads, so there has to be one
+       * place they can be looked at deliberately — otherwise they are only ever
+       * seen by somebody scrolling All Stores, which is how an enquiry sits for
+       * a week. The branch in the top bar is ignored for this queue; see
+       * `branchClause`, which is also where the refusal lives.
+       */
+      unbranched?: boolean;
+      /**
        * Threads a BROADCAST started.
        *
        * `true` is any broadcast; a campaign id narrows it to one. Matched on
@@ -2014,7 +2072,7 @@ export class ConversationsService {
     // A requested store is INTERSECTED with the caller's own scope, never
     // substituted for it — a filter must not become a way to read another
     // store's inbox.
-    const branch = this.branchClause(user, opts.storeId);
+    const branch = this.branchClause(user, opts.storeId, opts.unbranched);
     if (opts.nonAd && user.role !== 'head_office') {
       throw new ForbiddenException('Only head office can read conversations no ad brought in.');
     }
