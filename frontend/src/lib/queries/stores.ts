@@ -58,12 +58,21 @@ export interface AdminStore {
   isHolding: boolean;
   /** true for a physical attendance location that does not trade or hold stock. */
   attendanceOnly: boolean;
+  /**
+   * No geofence centre. Attendance still records punches here, but none of
+   * them can be location-checked. Carried on ACTIVE branches too since
+   * 28 Nov — a missing geofence no longer stops a branch going live, so the
+   * screen is now the only thing that keeps saying it is missing.
+   */
+  needsGeo: boolean;
+  /** No region, so this branch is absent from area-manager rollups. */
+  needsRegion: boolean;
   /** Configured weekly off (0 = Sunday). Null when none has been set. */
   weekOffDay?: number | null;
   managers: StoreManager[];
 }
 
-/** A pending branch awaiting the details it needs before it can go live. */
+/** A pending branch awaiting head office's review of the details it is missing. */
 export interface PendingStore {
   id: string;
   name: string;
@@ -75,11 +84,17 @@ export interface PendingStore {
   isHolding: boolean;
   /** Attendance locations are physical, but are not trading branches. */
   attendanceOnly: boolean;
-  /** Geofence (lat/lng) still missing — blocks activation. */
+  /**
+   * Geofence (lat/lng) still missing. Attendance geofencing is off here until
+   * it is set; it does NOT block activation (client, 28 Nov).
+   */
   needsGeo: boolean;
-  /** Region assignment still missing — blocks activation. */
+  /**
+   * Region assignment still missing, so the branch is absent from area
+   * rollups. Does not block activation either.
+   */
   needsRegion: boolean;
-  /** No store-manager login yet — does not block activation. */
+  /** No store-manager login yet. */
   needsManager: boolean;
 }
 
@@ -143,8 +158,10 @@ export function useStoresAdmin() {
 }
 
 /**
- * GET /stores/pending — branches still awaiting geo/region/manager before they
- * can go live. The whole store lifecycle (provision/activate/close/edit) is
+ * GET /stores/pending — branches head office has not reviewed yet, each
+ * flagged with the geo/region/manager details it is still missing (none of
+ * which stops it being activated). The whole store lifecycle
+ * (provision/activate/close/edit) is
  * head-office only, so this is enabled for head office alone (the endpoint 403s
  * below that rank).
  */
@@ -218,10 +235,12 @@ export function useUpdateStore() {
 }
 
 /**
- * PATCH /stores/:id/activate — flip a pending branch to active.
- * The server 400s (with a message) if the geofence or region is still
- * missing, so callers should surface that message and route the user to
- * set those first.
+ * PATCH /stores/:id/activate — flip a pending or closed branch to active.
+ *
+ * It no longer refuses a branch whose geofence or region is missing. Those
+ * serve attendance and area rollups, not trading, and refusing was stopping
+ * the client from opening a shop that was already selling (28 Nov). The gaps
+ * come back on the branch as `needsGeo` / `needsRegion` and stay visible.
  */
 export function useActivateStore() {
   const qc = useQueryClient();

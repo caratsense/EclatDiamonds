@@ -91,6 +91,7 @@ import {
   useUpdateConversation,
 } from "@/lib/queries/crm";
 import { sendFailureReason } from "./message-status";
+import { threadLoadFailure } from "./thread-load-failure";
 import { useRetryMessage } from "@/lib/queries/meta-admin";
 import { AssignConversationDialog } from "@/components/crm/assign-conversation-dialog";
 import { AuthedAttachment, attachmentLabel } from "@/components/ui/authed-image";
@@ -1370,7 +1371,13 @@ function ThreadView({
     return (
       <Card className={`${PANE_HEIGHT} flex items-center justify-center`}>
         <CardContent className="text-center space-y-2">
-          <p className="text-sm text-destructive">{apiErrorMessage(error, "Could not open thread.")}</p>
+          {/*
+            Which failure it was, not just that there was one. The six words
+            this used to show covered a timeout, a dead connection, a gateway
+            giving up and a real refusal alike — see thread-load-failure.ts for
+            the screenshot that cost a day because of it.
+          */}
+          <p className="text-sm text-destructive">{threadLoadFailure(error)}</p>
           <Button size="sm" variant="outline" onClick={() => refetch()}>
             Retry
           </Button>
@@ -1940,9 +1947,28 @@ function ThreadView({
                               <span title={m.error ?? "Not delivered"}>
                                 <AlertCircle className="h-3 w-3 text-red-500" />
                               </span>
-                            ) : (
+                            ) : m.status === "queued" ? (
                               <span title="Waiting to send">
                                 <Clock className="h-3 w-3 text-amber-500" />
+                              </span>
+                            ) : (
+                              /* The amber "Waiting to send" clock used to be
+                                 the catch-all, so every status that is NOT in
+                                 flight wore it: an AI draft waiting on a
+                                 person, and a draft a person declined, both
+                                 looked like messages about to go out. Neither
+                                 will ever leave on its own. 28 Nov, the client
+                                 on a blocked template send: a small clock
+                                 beside a message that had already stopped is
+                                 how she read it as sent. */
+                              <span
+                                title={
+                                  m.status === "rejected"
+                                    ? "Declined — never sent"
+                                    : "Not sent"
+                                }
+                              >
+                                <Clock className="h-3 w-3 text-[#667781] dark:text-[#8696a0]" />
                               </span>
                             )}
                           </span>

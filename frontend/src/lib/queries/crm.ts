@@ -8,6 +8,7 @@ import {
 } from "@tanstack/react-query";
 
 import { api } from "@/lib/api";
+import { templateParameterComponents } from "@/lib/template-parameters";
 import { apiErrorMessage } from "@/lib/utils";
 import { useStoreKey } from "@/lib/queries/keys";
 import { useNotificationStream } from "@/lib/queries/notifications";
@@ -784,8 +785,17 @@ export function useSendTemplateReply(conversationId: string) {
        * one, so the block is omitted rather than sent hollow.
        */
       values: string[];
-    }) =>
-      (
+    }) => {
+      /*
+       * Shaped by `templateParameterComponents` and no longer inline here,
+       * since 28 Nov: a send of "newmessage" with "Sneha" typed into {{1}} was
+       * stored as `templateComponents: [[]]`, and part of why nobody had caught
+       * it was that no test anywhere could say what this request body is
+       * supposed to look like. One function, asserted in
+       * lib/template-parameters.test.ts, now decides it for every caller.
+       */
+      const components = templateParameterComponents(input.values);
+      return (
         await api.post<{
           message: { id: string; status: string };
           deduplicated: boolean;
@@ -793,18 +803,10 @@ export function useSendTemplateReply(conversationId: string) {
         }>(`/omnichannel/conversations/${conversationId}/messages`, {
           purpose: input.purpose,
           templateAssetId: input.templateAssetId,
-          ...(input.values.length
-            ? {
-                templateComponents: [
-                  {
-                    type: "body",
-                    parameters: input.values.map((text) => ({ type: "text", text })),
-                  },
-                ],
-              }
-            : {}),
+          ...(components ? { templateComponents: components } : {}),
         })
-      ).data,
+      ).data;
+    },
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["crm", "conversation", conversationId] });
       void qc.invalidateQueries({ queryKey: ["crm", "conversations"] });

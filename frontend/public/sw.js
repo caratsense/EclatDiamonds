@@ -79,8 +79,39 @@ self.addEventListener("fetch", (event) => {
   // Only our own origin. Cross-origin (e.g. the backend API host) is never cached.
   if (url.origin !== self.location.origin) return;
 
-  // Skip anything API/auth-shaped served from the same origin.
-  if (url.pathname.startsWith("/auth") || url.pathname.startsWith("/api")) return;
+  /*
+   * Skip anything API/auth-shaped served from the same origin.
+   *
+   * `/_api` is where the API actually is: next.config.ts rewrites `/_api/:path*`
+   * to the backend so the browser only ever talks to the origin it loaded the
+   * page from. The underscore is what keeps that path clear of the app's own
+   * routes — and it is also what kept it out of this check, which tested `/api`
+   * and so matched nothing the app sends.
+   *
+   * The JSON calls came to no harm: they fall through every branch below and
+   * the browser fetches them itself. What leaked past were the API responses
+   * that LOOK like files. `assetUrl()` builds `/_api/uploads/….jpg` for every
+   * catalogue photograph, quote attachment and sale document; `isStaticAsset`
+   * matched the extension, so those responses were written into the app-shell
+   * cache and served back stale-while-revalidate — the one thing the header of
+   * this file promises never happens to the API. Measured on 28 Nov by running
+   * this worker for real: after a single request,
+   * `/_api/uploads/products/probe.jpg` was sitting in `caratsense-v1`.
+   *
+   * It buys no speed and is not meant to. A fetch handler that returns without
+   * calling `respondWith` already lets the request go straight to the network,
+   * and the worker is woken for every request either way — so which line
+   * returns changes nothing about the round trip. The same burst measured
+   * 63.3ms per request with this worker controlling the page and 63.1ms
+   * without it, against 50ms of deliberate server delay.
+   */
+  if (
+    url.pathname.startsWith("/auth") ||
+    url.pathname.startsWith("/api") ||
+    url.pathname.startsWith("/_api")
+  ) {
+    return;
+  }
 
   // Skip React Server Component payloads — always fetch fresh to avoid staleness.
   if (url.searchParams.has("_rsc") || req.headers.get("RSC") === "1") return;

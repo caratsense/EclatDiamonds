@@ -15,6 +15,13 @@ import {
  * What is pinned here is that the bubble can be rebuilt from the template the
  * send named, and that it is rebuilt with THIS recipient's values rather than
  * the provider's sample ones.
+ *
+ * And, since 28 Nov, that it never shows a {{n}}. The client sent `newmessage`
+ * from a thread with "Sneha" typed into its one variable; the send stored no
+ * parameters, the template was back under review at Meta so nothing was
+ * delivered, and the thread still read "Hello {{1}}, hope you are having a good
+ * day!". She reasonably concluded a customer had been sent a literal {{1}}.
+ * A customer-facing transcript may not show an unsubstituted placeholder.
  */
 
 const NAILS = {
@@ -58,11 +65,79 @@ describe('rebuilding what a template message showed', () => {
     expect(card?.body).not.toContain('Priya');
   });
 
-  it('leaves an unfilled slot visible rather than blanking it', () => {
-    // An empty slot reads as a sentence the customer was actually sent. A
-    // visible {{2}} reads as the bug it is.
+  it('shows a gap for a slot this send did not record, never the {{n}}', () => {
+    // 28 Nov: the client sent `newmessage` with "Sneha" typed into {{1}}, the
+    // send stored no parameters, the template was under review at Meta so
+    // nothing went out — and the thread drew "Hello {{1}}, hope you are having
+    // a good day!". She read that as a customer having received our markup.
     const card = templateCardFrom('x', { bodySource: 'Hi {{1}}, see {{2}}.' }, ['Anjali']);
-    expect(card?.body).toBe('Hi Anjali, see {{2}}.');
+    expect(card?.body).toBe('Hi Anjali, see ….');
+    expect(card?.body).not.toContain('{{');
+  });
+
+  it('shows a gap for every slot when the send recorded no parameters at all', () => {
+    const card = templateCardFrom(
+      'newmessage',
+      { bodySource: 'Hello {{1}}, hope you are having a good day!' },
+      [],
+    );
+    expect(card?.body).toBe('Hello …, hope you are having a good day!');
+  });
+
+  it('never renders a {{n}} from the preview either', () => {
+    // The fallback path has to be held to the same rule: a synced preview that
+    // kept its markers would otherwise have leaked one by the back door.
+    const card = templateCardFrom('x', { bodyPreview: 'Hello {{1}}.' });
+    expect(card?.body).toBe('Hello ….');
+  });
+
+  it('does not invent the name the send would have fallen back to', () => {
+    // The template's own stand-in reads as a finished sentence, and on a send
+    // that was blocked before it left, a finished sentence is indistinguishable
+    // from a record of something the customer read. Nothing was read.
+    const card = templateCardFrom(
+      'newmessage',
+      {
+        bodySource: 'Hello {{1}}, hope you are having a good day!',
+        bodyPreview: 'Hello Priya, hope you are having a good day!',
+        variableDefaults: [{ slot: 1, source: 'customer_first_name', fallback: 'there' }],
+      },
+      [],
+    );
+    expect(card?.body).not.toContain('there,');
+    expect(card?.body).not.toContain('Priya');
+  });
+
+  it('renders the malformed [[]] shape that the 28 Nov send stored as a gap', () => {
+    // `templateComponents: [[]]` — an array holding an empty array. It carries
+    // no body component, so there is nothing to substitute, and this is the
+    // exact row that put a raw {{1}} on a customer's thread.
+    const parameters = bodyParametersFrom([[]]);
+    expect(parameters).toEqual([]);
+    const card = templateCardFrom('newmessage', { bodySource: 'Hello {{1}}!' }, parameters);
+    expect(card?.body).toBe('Hello …!');
+  });
+
+  it('is unaffected by the send having failed — a template with no variables is exact', () => {
+    // Whether it went out is the delivery row's business, not this card's. A
+    // template with no slots has nothing that could be missing, so a blocked
+    // send still shows the approved wording and the refusal sits beneath it.
+    const card = templateCardFrom('nailsevent', NAILS, []);
+    expect(card?.body).toBe('Join us for our nail art event this Saturday!');
+    expect(card?.body).not.toContain('…');
+  });
+
+  it('keeps a media-header template’s picture when its slot cannot be filled', () => {
+    // The header is the invitation. A send whose body parameters went missing
+    // must still show the photograph the customer was offered.
+    const card = templateCardFrom(
+      'festive_offer',
+      { ...NAILS, bodySource: 'Hello {{1}}, our festive collection is in.' },
+      [],
+    );
+    expect(card?.headerFormat).toBe('IMAGE');
+    expect(card?.headerImageUrl).toBe('https://scontent.whatsapp.net/v/nails.jpg');
+    expect(card?.body).toBe('Hello …, our festive collection is in.');
   });
 
   it('falls back to the preview when the template kept no source text', () => {
@@ -100,6 +175,14 @@ describe('reading the send’s own stored instruction', () => {
   it('is empty for a template that takes no variables', () => {
     expect(bodyParametersFrom([{ type: 'header', parameters: [] }])).toEqual([]);
     expect(bodyParametersFrom(null)).toEqual([]);
+  });
+
+  it('reads nothing out of the malformed shape the 28 Nov send stored', () => {
+    // `[[]]` is what the dialog wrote: an array holding an empty array where a
+    // body component should have been. It must read as "no parameters" and not
+    // throw on the way — this is a read of a row already in the database.
+    const broken = { omnichannel: { templateComponents: [[]] } };
+    expect(bodyParametersFrom(templateComponentsFrom(broken))).toEqual([]);
   });
 
   it('finds nothing on an ordinary typed message', () => {

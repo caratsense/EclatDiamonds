@@ -238,7 +238,24 @@ export default function StoreSetupPage() {
                       {store.attendanceOnly ? (
                         <Badge variant="outline">Attendance only</Badge>
                       ) : null}
+                      {/* A live branch can now be missing both of these — since
+                          28 Nov neither one holds activation up — so this row
+                          is where the gap has to keep showing. Nothing else
+                          will ever mention it again. */}
+                      {store.needsGeo ? (
+                        <Badge variant="warning">Geofence missing</Badge>
+                      ) : null}
+                      {store.needsRegion ? (
+                        <Badge variant="warning">Region missing</Badge>
+                      ) : null}
                     </div>
+                    {store.status !== "closed" && store.needsGeo ? (
+                      <p className="mt-1 text-xs font-normal text-muted-foreground">
+                        Attendance geofencing is off here until this branch has
+                        coordinates — punches are recorded, but none of them is
+                        location-checked.
+                      </p>
+                    ) : null}
                   </TableCell>
                   <TableCell>{store.city}</TableCell>
                   <TableCell>
@@ -309,7 +326,8 @@ export default function StoreSetupPage() {
                           ) : null}
                           {/* Closing is a soft close, so a branch shut for a
                               refit or a season comes back the same way it went
-                              live: readiness is re-checked on the server. */}
+                              live — and, like a first activation, reopening no
+                              longer waits for a geofence or a region. */}
                           {store.status === "closed" ? (
                             <Button
                               variant="outline"
@@ -321,7 +339,7 @@ export default function StoreSetupPage() {
                                   onError: (err) =>
                                     toast.error(
                                       serverMessage(err) ||
-                                        "Could not reopen this branch — check its geofence and region.",
+                                        "Could not reopen this branch.",
                                     ),
                                 })
                               }
@@ -454,16 +472,19 @@ function PendingReviewSection({
 
   function handleActivate(store: PendingStore) {
     activate.mutate(store.id, {
-      onSuccess: () => toast.success(`${store.name} is now active`),
-      onError: (err) => {
-        const msg =
-          serverMessage(err) ||
-          "Could not activate this branch — it may still be missing details.";
-        toast.error(msg);
-        if (isHeadOffice && (store.needsGeo || store.needsRegion)) {
-          onFixDetails(store.id);
-        }
-      },
+      onSuccess: () =>
+        toast.success(
+          store.needsGeo
+            ? `${store.name} is now active — attendance geofencing stays off until it has coordinates`
+            : `${store.name} is now active`,
+        ),
+      // A missing geofence or region is no longer a reason for this to fail, so
+      // a failure here is not something the edit dialog can fix and the screen
+      // must not send anyone there to look. It used to: the client got
+      // "Could not activate this branch — it may still be missing details."
+      // over details that were never the branch's problem.
+      onError: (err) =>
+        toast.error(serverMessage(err) || "Could not activate this branch."),
     });
   }
 
@@ -476,12 +497,13 @@ function PendingReviewSection({
         </Badge>
       </div>
       <p className="mb-3 text-xs text-muted-foreground">
-        New branches stay pending until they have a geofence and a region. Fill
-        those in, then activate to take the branch live.
+        New branches wait here to be reviewed. A missing geofence or region does
+        not hold a branch back — activate it and it starts trading; fill the
+        rest in whenever you want it.
       </p>
       <div className="grid gap-3 sm:grid-cols-2">
         {pending.map((store) => {
-          const blocked = store.needsGeo || store.needsRegion;
+          const incomplete = store.needsGeo || store.needsRegion;
           return (
             <div
               key={store.id}
@@ -510,29 +532,32 @@ function PendingReviewSection({
                 {store.needsManager ? (
                   <Badge variant="secondary">No manager</Badge>
                 ) : null}
-                {!blocked && !store.needsManager ? (
-                  <Badge variant="success">Ready to activate</Badge>
+                {!incomplete && !store.needsManager ? (
+                  <Badge variant="success">All details set</Badge>
                 ) : null}
               </div>
 
-              {blocked ? (
-                isHeadOffice ? (
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Set the {store.needsGeo ? "geofence" : ""}
-                    {store.needsGeo && store.needsRegion ? " and " : ""}
-                    {store.needsRegion ? "region" : ""} before this branch can
-                    go live.
-                  </p>
-                ) : (
-                  <p className="mt-3 text-xs text-muted-foreground">
-                    Ask Head Office to set the geofence and region before this
-                    branch can go live.
-                  </p>
-                )
+              {/* What each gap actually costs, now that neither stops the
+                  branch trading. "Before this branch can go live" was the old
+                  sentence, and it was the wrong one twice over: it was not true
+                  of the region, and the client read it as a shop she could not
+                  open. */}
+              {incomplete ? (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {store.needsGeo
+                    ? "Attendance here cannot be location-checked until the branch has coordinates. "
+                    : ""}
+                  {store.needsRegion
+                    ? "It is missing from area rollups until it has a region. "
+                    : ""}
+                  {isHeadOffice
+                    ? "Neither stops it trading."
+                    : "Neither stops it trading — ask Head Office when you want them set."}
+                </p>
               ) : null}
 
               <div className="mt-3 flex items-center gap-2">
-                {isHeadOffice && blocked ? (
+                {isHeadOffice && incomplete ? (
                   <Button
                     variant="outline"
                     size="sm"
@@ -727,7 +752,7 @@ function AddStoreDialog({
           toast.success(
             store.status === "active"
               ? `${store.name} added and activated`
-              : `${store.name} added — pending review (set geofence & region to activate)`,
+              : `${store.name} added — in Branches to review, activate it whenever you want it trading`,
           );
           reset();
           onOpenChange(false);
@@ -751,7 +776,8 @@ function AddStoreDialog({
           <DialogTitle>Add store</DialogTitle>
           <DialogDescription>
             Provision a new branch. With a geofence and region it goes live
-            immediately; otherwise it stays pending until those are set.
+            immediately; otherwise it waits in Branches to review, where one
+            click activates it.
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3">
@@ -982,7 +1008,7 @@ function EditStoreDialog({
           <DialogTitle>Edit store &amp; geofence</DialogTitle>
           <DialogDescription>
             {isPending
-              ? "Set the geofence and region to clear this branch for activation."
+              ? "Set the geofence to turn on attendance geofencing, and the region to put this branch in area rollups. Neither is needed to activate it."
               : "Update branch details, GPS coordinates, and geofence radius."}
           </DialogDescription>
         </DialogHeader>

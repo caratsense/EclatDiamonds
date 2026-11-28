@@ -30,6 +30,8 @@ const svc = new (HrmsService as unknown as new (...args: unknown[]) => HrmsServi
 );
 const evaluateFence = (...args: any[]) =>
   (svc as any).evaluateFence(...args);
+const unverifiedReason = (...args: any[]) =>
+  (svc as any).unverifiedReason(...args);
 
 describe('HrmsService.evaluateFence', () => {
   it('allows an in-fence check-in and reports it verified', () => {
@@ -73,6 +75,47 @@ describe('HrmsService.evaluateFence', () => {
     const r = evaluateFence(noFence, undefined, undefined, undefined, 'check-in');
     expect(r.withinFence).toBe(false);
     expect(r.distanceM).toBeNull();
+  });
+
+  it('SAFETY: it does not demand a reason for a gap in head office\'s own setup', () => {
+    // A perfectly good fix at a branch with no fence. Since activation stopped
+    // requiring coordinates (28 Nov) a branch can trade for months like this,
+    // and asking every staffer there to justify every punch would be charging
+    // them for a geofence nobody has typed in.
+    const noFence = store({ latitude: null, longitude: null });
+    const r = evaluateFence(noFence, MUMBAI.latitude, MUMBAI.longitude, undefined, 'check-in', 10);
+    expect(r).toEqual({ distanceM: null, withinFence: false });
+  });
+});
+
+/**
+ * The sentence an unverified punch carries.
+ *
+ * Three different things leave a punch unverified, and they used to share two
+ * sentences between them — so each could print the other's. A branch with no
+ * coordinates was reported as "no location fix", which blames a phone that
+ * worked; and a device with no fix at a fenced branch was reported as "no
+ * geofence set", which blames a branch that is set up. Both reach a manager
+ * who has to decide what to do about it.
+ */
+describe('HrmsService.unverifiedReason', () => {
+  it('names the branch, not the phone, when the branch has no geofence', () => {
+    const noFence = store({ latitude: null, longitude: null });
+    expect(unverifiedReason(noFence, null)).toBe(
+      'Borivali has no geofence set, so this punch could not be location-checked',
+    );
+  });
+
+  it('says so even when half the coordinate pair is present', () => {
+    expect(unverifiedReason(store({ longitude: null }), null)).toMatch(/has no geofence set/);
+  });
+
+  it('names the phone when the branch IS fenced and no fix arrived', () => {
+    expect(unverifiedReason(store(), null)).toBe('no location fix at Borivali');
+  });
+
+  it('gives the distance and the allowance when there was a fix to measure', () => {
+    expect(unverifiedReason(store(), 635)).toBe('635 m from Borivali (allowed: 150 m)');
   });
 });
 

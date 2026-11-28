@@ -9,10 +9,23 @@ import axios from "axios";
  * active store (X-Store-Id) so every request is correctly store-scoped
  * server-side. On a 401 we clear the token and bounce to /login.
  */
+/**
+ * How long the browser waits for one API call before giving up on it.
+ *
+ * Named and exported because a screen that fails has to be able to SAY this
+ * number. On 28 Nov the inbox showed "Could not open thread." beside a thread
+ * the list had rendered perfectly, and the one sentence on the screen was the
+ * same whether the server had refused the thread or never answered at all — so
+ * the first day of looking for it went into the wrong half of the system.
+ * React Query retries a query once, so the pane a person screenshots appears
+ * after two of these waits, not one.
+ */
+export const API_TIMEOUT_MS = 15_000;
+
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000",
   headers: { "Content-Type": "application/json" },
-  timeout: 15000,
+  timeout: API_TIMEOUT_MS,
 });
 
 const TOKEN_KEY = "eclat.token";

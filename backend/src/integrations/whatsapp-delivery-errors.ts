@@ -51,17 +51,58 @@ const EXPLANATIONS: Record<string, string> = {
 };
 
 /**
+ * Our OWN refusals, which never reached Meta at all.
+ *
+ * These are stored as `<code>: <sentence>` by `failPermanently`, and the
+ * sentence is already written for a person — so what is added here is only the
+ * part it cannot know: whether pressing "Try again" will change anything, and
+ * whether a customer saw it.
+ *
+ * 28 Nov. The client sent `newmessage` from a thread; Meta had the template
+ * back under review after an edit, so the worker blocked it and the row read
+ * "The provider reports this template as pending." True, and it answered
+ * neither of the two questions she actually had. She retried, and concluded
+ * from the bubble that a customer had been sent a literal {{1}}. Nobody had
+ * been sent anything.
+ */
+const BLOCK_ADVICE: Record<string, string> = {
+  /*
+   * The template, not the recipient. Approval is Meta's to give and an edited
+   * template goes back into the queue for it, so every retry until then
+   * returns this same refusal — which is why the sentence has to say so out
+   * loud rather than leave a shop floor pressing the button.
+   */
+  template_unavailable:
+    'Nothing reached the customer — this was stopped here, before it was sent. ' +
+    'It is the template that cannot send, not this customer, so trying again gives ' +
+    'the same answer: it can go out once the provider has approved the template and ' +
+    'templates have been synchronised.',
+};
+
+/**
  * Turn a stored delivery error into a sentence, leaving anything else as it is.
  *
  * Ours already read plainly — "That is not a usable WhatsApp number" — and
  * must pass through untouched. Only the `Provider error <codes>` form is
  * rewritten, and an unrecognised code still says plainly that Meta refused it
  * and what the code was, so nobody is left with a blank where a reason was.
+ *
+ * A `<code>: <sentence>` refusal of our own keeps its stored sentence and gains
+ * what to do about it, for the few codes where there IS something to say. One we
+ * have nothing to add to passes through with its code prefix exactly as before,
+ * because the screen that shows it already strips that prefix itself.
  */
 export function explainDeliveryError(error: string | null | undefined): string | null {
   if (!error) return null;
   const match = /^Provider error\s+(.+)$/i.exec(error.trim());
-  if (!match) return error;
+  if (!match) {
+    // Lower case opener, so Meta's own "Provider error …" cannot reach here and
+    // a provider sentence like "HTTP 400: …" is not mistaken for one of ours.
+    const ours = /^([a-z][a-z0-9_]*):\s*([\s\S]+)$/.exec(error.trim());
+    if (!ours) return error;
+    const advice = BLOCK_ADVICE[ours[1]];
+    return advice ? `${ours[2].trim()} ${advice}` : error;
+  }
 
   const codes = match[1]
     .split(',')

@@ -143,6 +143,17 @@ const CORE_NAVIGATION = [
   /* Asking how it went, and keeping an unhappy answer off a public review page. */
   'feedback',
   /*
+   * Which advert is bringing the enquiries (client, 28 Nov: "kaun se ad pe
+   * mujhe sabse zyada number of messages aa rahe hain").
+   *
+   * Core because it counts THREADS, not jewellery: wherever `campaigns` and
+   * `conversations` are universal, so is knowing which advert produced the
+   * conversations. In this list or it does not exist — the pack is the
+   * entitlement AND the navigation, which is how NPS shipped invisible the
+   * first time.
+   */
+  'ad-enquiries',
+  /*
    * The screens below were BUILT AND UNREACHABLE.
    *
    * Each has shipped, been tested and been deployed, and then could only be

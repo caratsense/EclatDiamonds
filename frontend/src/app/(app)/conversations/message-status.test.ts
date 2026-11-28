@@ -36,6 +36,18 @@ describe("why a message did not reach the customer", () => {
     }
   });
 
+  it("keeps a blocked-template refusal whole, including what to do about it", () => {
+    // The server now explains this one at the read boundary, so it arrives with
+    // no code to strip. 28 Nov: the client retried a template Meta had back
+    // under review, and the two things she needed to read — that nothing
+    // reached the customer, and that retrying would not change that — are both
+    // in this sentence. Trimming either would undo the fix.
+    const explained =
+      "The provider reports this template as pending. Nothing reached the customer — " +
+      "this was stopped here, before it was sent.";
+    expect(sendFailureReason(explained)).toBe(explained);
+  });
+
   it("keeps every line of a multi-line refusal", () => {
     expect(sendFailureReason("template_unavailable: Not approved.\nSynchronise templates.")).toBe(
       "Not approved.\nSynchronise templates.",

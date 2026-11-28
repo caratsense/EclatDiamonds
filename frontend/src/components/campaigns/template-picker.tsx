@@ -156,8 +156,54 @@ export function savedTemplateState(
   return byName.length ? { kind: "withdrawn", label } : { kind: "unrecognised", label };
 }
 
-/** Everything the broadcast wizard needs out of one approved template. */
-function pickOf(row: MessageTemplateRow): PickedTemplate {
+/**
+ * WHY THIS TEMPLATE CANNOT GO OUT RIGHT NOW, IN META'S OWN WORDS.
+ *
+ * Null for a template that can be sent, so this is the mirror of
+ * `isTemplateSendable` rather than a second opinion about it — the verdict
+ * itself stays in one place and this only explains the no.
+ *
+ * 28 Nov: the client edited `newmessage` at Meta, which takes an approved
+ * template back to PENDING for re-review, and then went to the thread to send
+ * it. Every picker lists only what `isTemplateSendable` allows and said nothing
+ * about the rest, so the template she had just saved had simply vanished from
+ * the list — and the one sentence that explained it was on the asset, on a
+ * settings screen she had no reason to open. A withheld template with no reason
+ * beside it costs as much as an unsendable one offered: both end with somebody
+ * pressing things and waiting.
+ *
+ * `lastError` first because it is the provider's sentence about THIS template
+ * ("Edited at Meta; awaiting review. Provider reports PENDING."), written by
+ * whichever call last heard from Meta. The branches after it are for the states
+ * we can see for ourselves when Meta has said nothing — they mirror the
+ * server's own `templateSendability` codes, in the order it checks them.
+ */
+export function templateUnsendableReason(row: MessageTemplateRow): string | null {
+  if (isTemplateSendable(row)) return null;
+  const stated = row.lastError?.trim();
+  if (stated) return stated;
+  if (!row.isActive) return "Switched off for this connection.";
+  if (!row.lastVerifiedAt) {
+    return "Never confirmed with Meta. Synchronise templates to check it.";
+  }
+  if (row.metadata.providerStatus !== "APPROVED") {
+    return `Meta reports this template as ${row.metadata.providerStatus
+      .toLowerCase()
+      .replace(/_/g, " ")}.`;
+  }
+  // Nothing left: approved, active, and the verdict is older than a day.
+  return "Meta's approval for this is more than a day old. Synchronise templates to confirm it.";
+}
+
+/**
+ * Everything the broadcast wizard needs out of one approved template.
+ *
+ * Exported for its test rather than for another screen: `source` is the one
+ * field a send substitutes into, and taking it from `bodyPreview` instead of
+ * `bodySource` would show a sender Meta's sample name where the customer's
+ * belongs — which is the same confusion as 28 Nov, read backwards.
+ */
+export function pickOf(row: MessageTemplateRow): PickedTemplate {
   return {
     name: templateName(row),
     languageCode: row.metadata.languageCode,
@@ -203,6 +249,15 @@ export function TemplatePicker({
     () => (templates.data ?? []).filter(isTemplateSendable),
     [templates.data],
   );
+  /*
+   * The rest, kept rather than discarded. See `templateUnsendableReason`: a
+   * template that is on file and cannot go out today is a fact a manager needs,
+   * and dropping it here is what made an edited template look deleted.
+   */
+  const held = useMemo(
+    () => (templates.data ?? []).filter((row) => !isTemplateSendable(row)),
+    [templates.data],
+  );
 
   if (variant === "compact") {
     return (
@@ -214,6 +269,7 @@ export function TemplatePicker({
         noneLabel={noneLabel}
         all={templates.data ?? []}
         sendable={sendable}
+        held={held}
         isLoading={templates.isLoading}
       />
     );
@@ -230,26 +286,30 @@ export function TemplatePicker({
      */
     const waiting = (templates.data ?? []).length;
     return (
-      <div className="flex items-start gap-3 rounded-lg border border-dashed p-4">
-        <AlertCircle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        <div className="space-y-1 text-sm">
-          <p className="font-medium">
-            {waiting
-              ? "No template is approved and ready to send"
-              : "No templates yet"}
-          </p>
-          <p className="text-muted-foreground">
-            {waiting
-              ? `${waiting} ${waiting === 1 ? "template is" : "templates are"} recorded, but none has an approval from Meta confirmed in the last day.`
-              : "WhatsApp only allows an approved template for a message a customer did not ask for."}
-          </p>
-          <Link
-            href="/settings/integrations/templates"
-            className="inline-block pt-1 text-sm font-medium text-primary hover:underline"
-          >
-            {waiting ? "Synchronise with Meta" : "Write one and submit it for review"} →
-          </Link>
+      <div className="space-y-2">
+        <div className="flex items-start gap-3 rounded-lg border border-dashed p-4">
+          <AlertCircle className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+          <div className="space-y-1 text-sm">
+            <p className="font-medium">
+              {waiting
+                ? "No template is approved and ready to send"
+                : "No templates yet"}
+            </p>
+            <p className="text-muted-foreground">
+              {waiting
+                ? `${waiting} ${waiting === 1 ? "template is" : "templates are"} recorded, but none has an approval from Meta confirmed in the last day.`
+                : "WhatsApp only allows an approved template for a message a customer did not ask for."}
+            </p>
+            <Link
+              href="/settings/integrations/templates"
+              className="inline-block pt-1 text-sm font-medium text-primary hover:underline"
+            >
+              {waiting ? "Synchronise with Meta" : "Write one and submit it for review"} →
+            </Link>
+          </div>
         </div>
+        {/* Not an empty list: every one of them, and Meta's reason for each. */}
+        <HeldTemplates rows={held} />
       </div>
     );
   }
@@ -313,6 +373,52 @@ export function TemplatePicker({
           );
         })}
       </div>
+      <HeldTemplates rows={held} />
+    </div>
+  );
+}
+
+/**
+ * TEMPLATES ON FILE THAT CANNOT GO OUT TODAY, AND WHY NOT.
+ *
+ * Shown, not hidden, and not clickable. The choice is deliberate: hiding them
+ * kept the list honest about what can be sent but left a manager hunting for a
+ * template that had not gone anywhere (28 Nov — see
+ * `templateUnsendableReason`), while offering them for selection would end in a
+ * filled-in dialog, a press, and a refusal at the provider minutes later.
+ * Disabled with the reason beside it is the only version that answers her
+ * question at the moment she asks it.
+ *
+ * No green bubble here, unlike the cards above: the wording of a template Meta
+ * has not approved is not something anybody should be signing off on. A name,
+ * its language, and the reason.
+ */
+function HeldTemplates({ rows }: { rows: MessageTemplateRow[] }) {
+  if (!rows.length) return null;
+  return (
+    <div className="space-y-1.5 rounded-lg border border-dashed p-3">
+      <p className="text-xs font-medium">
+        {rows.length === 1
+          ? "1 template is on file and cannot be sent today"
+          : `${rows.length} templates are on file and cannot be sent today`}
+      </p>
+      <ul className="space-y-1.5">
+        {rows.map((row) => (
+          <li key={row.id} className="flex flex-wrap items-baseline gap-x-2 gap-y-1 text-xs">
+            <span className="font-medium text-muted-foreground">{templateName(row)}</span>
+            <Badge variant="outline" className="text-[10px]">
+              {row.metadata.languageCode}
+            </Badge>
+            <span className="text-muted-foreground">{templateUnsendableReason(row)}</span>
+          </li>
+        ))}
+      </ul>
+      <Link
+        href="/settings/integrations/templates"
+        className="inline-block pt-0.5 text-xs font-medium text-primary hover:underline"
+      >
+        Synchronise with Meta →
+      </Link>
     </div>
   );
 }
@@ -340,6 +446,7 @@ function CompactTemplatePicker({
   noneLabel,
   all,
   sendable,
+  held,
   isLoading,
 }: {
   value: { name: string; languageCode: string } | null;
@@ -349,6 +456,7 @@ function CompactTemplatePicker({
   noneLabel?: string;
   all: MessageTemplateRow[];
   sendable: MessageTemplateRow[];
+  held: MessageTemplateRow[];
   isLoading: boolean;
 }) {
   const saved = savedTemplateState(value, all);
@@ -361,13 +469,6 @@ function CompactTemplatePicker({
         )
       : undefined;
   const preview = chosen?.metadata.bodyPreview?.trim();
-  /*
-   * How many are on file but cannot be sent today. Said as a count rather than
-   * as disabled rows: the list stays the length of what is actually choosable,
-   * and nobody has to wonder why the template they wrote this morning is not
-   * in it.
-   */
-  const held = all.length - sendable.length;
   /*
    * A blank setting is drawn as the "none" option SELECTED, not as an empty
    * box, wherever the caller has said blank means something. On Feedback
@@ -424,12 +525,29 @@ function CompactTemplatePicker({
                 </SelectItem>
               );
             })}
-            {held > 0 ? (
-              <p className="px-2 pb-1 pt-1.5 text-[11px] text-muted-foreground">
-                {held === 1 ? "1 other template is" : `${held} other templates are`} on file but not
-                approved to send today.
-              </p>
-            ) : null}
+            {/*
+              The rest, named and disabled, each with Meta's reason.
+
+              This used to be a count — "3 other templates are on file but not
+              approved to send today" — which kept the list short but named
+              none of them, and naming them is the part that was needed: on
+              28 Nov the template the client was looking for was one of the
+              ones the count was describing. A disabled row is still one line,
+              so the dropdown stays the size the client asked for ("not too
+              much enlarged"); what it is not is silent.
+            */}
+            {held.map((row) => (
+              <SelectItem
+                key={row.id}
+                value={templateOptionKey(templateName(row), row.metadata.languageCode)}
+                disabled
+              >
+                <span className="font-medium">{templateName(row)}</span>
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {templateUnsendableReason(row)}
+                </span>
+              </SelectItem>
+            ))}
           </SelectContent>
         </Select>
       )}

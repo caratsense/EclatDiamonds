@@ -175,10 +175,16 @@ export class SubmitMessageTemplateDto {
    * decorators: the rules are relational (all cards the same, text on all or
    * none) and a per-field decorator cannot see across the array. The message
    * a person reads about a broken carousel is written there, once.
+   *
+   * `@Type(() => Object)` for the same reason as `templateComponents` below:
+   * without it each card arrives as an `Array` wearing the card's fields as
+   * named properties, which survives `buildTemplatePayload` (it reads the
+   * properties in process) and is lost the moment anything serialises it.
    */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)
+  @Type(() => Object)
   cards?: TemplateCard[];
 
   /*
@@ -191,11 +197,13 @@ export class SubmitMessageTemplateDto {
    *
    * Checked like `cards` above: the array and its ceiling here, the per-button
    * rules in buildTemplatePayload, which can say which button is wrong and
-   * why.
+   * why. `@Type(() => Object)` for the same reason as `cards`, and against the
+   * same 28 Nov fault.
    */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(MAX_TEMPLATE_BUTTONS)
+  @Type(() => Object)
   buttons?: TemplateButton[];
 
   @IsString()
@@ -299,6 +307,7 @@ export class StartWhatsAppThreadDto {
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(50)
+  @Type(() => Object)
   templateComponents?: unknown[];
 
   @IsOptional()
@@ -321,10 +330,23 @@ export class QueueOmnichannelMessageDto {
   @MaxLength(80)
   templateAssetId?: string;
 
-  /** Provider component objects; bounded again by byte size in the service. */
+  /**
+   * Provider component objects; bounded again by byte size in the service.
+   *
+   * `@Type(() => Object)` IS THE FIX FOR 28 NOV, and removing it sends every
+   * customer a literal `{{1}}`. A field declared `unknown[]` reflects as
+   * `design:type = Array`, and class-transformer then applies that type to each
+   * ELEMENT: `{ type: 'body', parameters: [...] }` came back as an `Array`
+   * instance with `type` and `parameters` hanging off it as named properties,
+   * which `JSON.stringify` drops. The row stored `[[]]`, the client's typed
+   * value was gone, and nothing anywhere threw — in process the object still
+   * answered `.type === 'body'`. Naming Object as the element type stops the
+   * coercion and leaves the posted structure, nesting and emoji intact.
+   */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(50)
+  @Type(() => Object)
   templateComponents?: unknown[];
 
   @IsOptional()

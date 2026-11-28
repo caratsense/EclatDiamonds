@@ -343,9 +343,20 @@ export class HrmsService {
     accuracyM?: number,
   ): { distanceM: number | null; withinFence: boolean } {
     if (store.latitude == null || store.longitude == null) {
-      // No geofence configured for this store — nothing to verify against, so
-      // never block or flag. The fence is enforced only when it's actually set.
-      // Allow the punch, but never manufacture verification when no fence is configured.
+      /*
+       * No geofence configured for this store — nothing to verify against, so
+       * never block, and never demand a reason from a staffer for a gap in head
+       * office's own setup. Allow the punch, but never manufacture verification
+       * where there was nothing to verify: `withinFence: false` is what keeps
+       * the register honest about what was and was not checked.
+       *
+       * This stopped being a rare corner on 28 Nov. Activation no longer waits
+       * for coordinates (the client: "the store should at least be activated
+       * without that geofence so that we can start operating on it"), so a live
+       * branch with no fence is now an ordinary state that can last for months
+       * — which is why `unverifiedReason` names it out loud on every punch
+       * instead of letting it read as a broken phone.
+       */
       return { distanceM: null, withinFence: false };
     }
     if (lat == null || lng == null) {
@@ -420,6 +431,26 @@ export class HrmsService {
       );
     }
     return { distanceM: Math.round(dist), withinFence };
+  }
+
+  /**
+   * Why a punch was not geo-verified, in the words whoever reads it needs.
+   *
+   * Three different things leave a punch unverified and they used to share two
+   * sentences between them, so each could print the other's: a branch with no
+   * coordinates was reported as "no location fix", blaming a phone that had
+   * worked perfectly, and a device with no fix at a fenced branch was reported
+   * as "no geofence set for" it. Since activation stopped requiring a geofence
+   * (28 Nov) the first of those is a lasting state rather than a corner — at
+   * Indore Ratnamani Complex every punch takes this path — so the sentence has
+   * to name what is actually missing and who can fix it.
+   */
+  private unverifiedReason(store: StoreCtx, distanceM: number | null): string {
+    if (store.latitude == null || store.longitude == null) {
+      return `${store.name} has no geofence set, so this punch could not be location-checked`;
+    }
+    if (distanceM == null) return `no location fix at ${store.name}`;
+    return `${distanceM} m from ${store.name} (allowed: ${store.geofenceRadiusM} m)`;
   }
 
   // ==========================================================================
@@ -839,15 +870,30 @@ export class HrmsService {
     // provider, is the classic buddy-punching signature — trail it immediately
     // rather than relying on someone opening the report.
     if (!geoExempt && (!withinFence || payload.isMockLocation)) {
+      /*
+       * Whether this branch HAS a fence changes what an unverified punch means.
+       * A branch with coordinates and a punch 600 m away is evidence of
+       * something. A branch with no coordinates measured nothing, so its
+       * punches are evidence of nothing — and since 28 Nov a branch can trade
+       * for months in that state, so the difference has to be carried
+       * explicitly rather than inferred from a null distance.
+       */
+      const fenceConfigured = store.latitude != null && store.longitude != null;
+      const reason = this.unverifiedReason(store, distanceM);
       await this.audit.record(user, {
         action: 'attendance.offsite_punch',
         entityType: 'AttendanceRecord',
         entityId: row.id,
         storeId,
-        summary: `${user.name} checked in ${
-          distanceM != null ? `${distanceM} m from` : 'with no geofence set for'
-        } ${store.name}${payload.isMockLocation ? ' (mock location reported)' : ''}`,
-        metadata: { distanceM, isMockLocation: payload.isMockLocation, note: payload.checkInNote },
+        summary: `${user.name} checked in — ${reason}${
+          payload.isMockLocation ? ' (mock location reported)' : ''
+        }`,
+        metadata: {
+          distanceM,
+          fenceConfigured,
+          isMockLocation: payload.isMockLocation,
+          note: payload.checkInNote,
+        },
       });
 
       /*
@@ -864,32 +910,56 @@ export class HrmsService {
        *
        * Best-effort, after the punch is durable. A notification failure must
        * never cost somebody their shift record.
+       *
+       * A branch with no geofence is the exception. "Needs review" is a lie
+       * there: nobody can review a punch against a fence that does not exist,
+       * and at a dozen staff a day it would bury the drifted fixes this exists
+       * to surface. It becomes one notice a day about the BRANCH, pointing at
+       * the screen where coordinates are actually set. A mock-location report
+       * still goes through as a punch to review — a faked provider is
+       * suspicious whether or not the shop has a fence.
        */
+      const unfencedBranch = !fenceConfigured && !payload.isMockLocation;
       await this.notifications
         .emitToApprovers(
           storeId,
           'store_manager',
-          {
-            kind: 'attendance_review',
-            title: `Check-in needs review — ${user.name}`,
-            body:
-              `${
-                distanceM != null
-                  ? `${distanceM} m from ${store.name} (allowed: ${store.geofenceRadiusM} m)`
-                  : `no location fix at ${store.name}`
-              }${payload.isMockLocation ? ' · device reported a mock location' : ''}` +
-              `${payload.checkInNote ? ` — "${payload.checkInNote}"` : ''}`,
-            // The store's register, not the HR landing: a punch to review is
-            // reviewed on Attendance > Team.
-            href: '/hrms/attendance',
-            storeId,
-            entityType: 'AttendanceRecord',
-            entityId: row.id,
-            actorId: user.id,
-            actorName: user.name,
-            // One per punch, so a retry refreshes rather than stacks.
-            dedupeKey: `attendance:offsite:${row.id}:in`,
-          },
+          unfencedBranch
+            ? {
+                kind: 'attendance_review',
+                title: `${store.name} has no geofence set`,
+                body:
+                  `Attendance is being recorded here, but no punch can be ` +
+                  `location-checked until the branch has coordinates.`,
+                // Store Setup, not the register: the thing to fix is the branch.
+                href: '/settings/stores',
+                storeId,
+                entityType: 'Store',
+                entityId: storeId,
+                // Once a day for the branch — it is the same missing geofence
+                // all day, and the punch that revealed it is not the point.
+                dedupeKey: `attendance:nogeofence:${storeId}:${date
+                  .toISOString()
+                  .slice(0, 10)}`,
+              }
+            : {
+                kind: 'attendance_review',
+                title: `Check-in needs review — ${user.name}`,
+                body:
+                  `${reason}${
+                    payload.isMockLocation ? ' · device reported a mock location' : ''
+                  }` + `${payload.checkInNote ? ` — "${payload.checkInNote}"` : ''}`,
+                // The store's register, not the HR landing: a punch to review is
+                // reviewed on Attendance > Team.
+                href: '/hrms/attendance',
+                storeId,
+                entityType: 'AttendanceRecord',
+                entityId: row.id,
+                actorId: user.id,
+                actorName: user.name,
+                // One per punch, so a retry refreshes rather than stacks.
+                dedupeKey: `attendance:offsite:${row.id}:in`,
+              },
           user.id,
         )
         .catch((error: unknown) => {
@@ -913,17 +983,31 @@ export class HrmsService {
        * next week rings again rather than hiding behind the third's dedupe.
        */
       const monthStart = new Date(`${date.toISOString().slice(0, 7)}-01T00:00:00.000Z`);
-      const offsiteThisMonth = await this.prisma.attendanceRecord.count({
-        where: {
-          organisationId: user.organisationId,
-          staffId: user.id,
-          geoVerified: false,
-          // A waived punch was never checked - it is not an off-site strike.
-          geoWaived: false,
-          checkInAt: { not: null },
-          date: { gte: monthStart },
-        },
-      });
+      /*
+       * A punch at a branch with NO geofence is not a strike, for the same
+       * reason a waived one is not: it was never checked against anything.
+       * Since activation stopped requiring coordinates (28 Nov) this is no
+       * longer hypothetical — unguarded, every staffer at Indore Ratnamani
+       * Complex would be reported to head office for a pattern of off-site
+       * punching by their third day, over a gap in head office's own setup.
+       * Today's punch is excluded by not asking at all; the month's earlier
+       * ones by the store filter, which is what catches a staffer rotating
+       * between a fenced branch and an unfenced one.
+       */
+      const offsiteThisMonth = !fenceConfigured
+        ? 0
+        : await this.prisma.attendanceRecord.count({
+            where: {
+              organisationId: user.organisationId,
+              staffId: user.id,
+              geoVerified: false,
+              // A waived punch was never checked - it is not an off-site strike.
+              geoWaived: false,
+              checkInAt: { not: null },
+              date: { gte: monthStart },
+              store: { latitude: { not: null }, longitude: { not: null } },
+            },
+          });
       if (offsiteThisMonth >= 3) {
         await this.notifications
           .emitToApprovers(

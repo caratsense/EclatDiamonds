@@ -48,6 +48,11 @@ import {
   templateSendability,
   type ProviderTemplateStatus,
 } from './omnichannel-policy';
+import {
+  TemplateParameterError,
+  normaliseTemplateComponents,
+  templateSlotCount,
+} from './template-parameters';
 import { templateKey } from './template-sync.service';
 import { variableDefaultsFrom, type TemplateVariableDefault } from './template-draft';
 import { planReadReceipt } from './read-receipt';
@@ -823,6 +828,19 @@ export class OmnichannelService implements OnModuleInit {
     const template = input.templateAssetId
       ? await this.loadApprovedTemplate(user.organisationId, input.templateAssetId)
       : null;
+    /*
+     * 28 Nov: the one funnel every send passes through re-derives the parameter
+     * block from the values inside it, instead of writing whatever arrived.
+     *
+     * A template send from the thread stored `templateComponents: [[]]` — the
+     * client's typed "Sneha" lost in the request pipeline — and this was the
+     * last place that could have noticed. It did not, because it only measured
+     * the block in bytes. So a template with variables could be queued with
+     * nothing filling them, and the customer reads the raw `{{1}}`.
+     */
+    const templateComponents = template
+      ? this.normalisedTemplateComponents(template, input.templateComponents)
+      : input.templateComponents;
     const consent = conversation.partyId
       ? await this.resolveConsent(
           user.organisationId,
@@ -857,7 +875,7 @@ export class OmnichannelService implements OnModuleInit {
     const instructions: MessageInstructions = {
       purpose: input.purpose,
       ...(template ? { templateAssetId: template.id } : {}),
-      ...(input.templateComponents ? { templateComponents: input.templateComponents } : {}),
+      ...(templateComponents ? { templateComponents } : {}),
       ...(document ? { document } : {}),
       ...(input.campaignId ? { campaignId: input.campaignId } : {}),
       queuedAt: now.toISOString(),
@@ -2548,6 +2566,31 @@ export class OmnichannelService implements OnModuleInit {
       throw new NotFoundException('Customer not found');
     }
     return party;
+  }
+
+  /**
+   * The parameter block this send will actually carry, or a refusal naming the
+   * template and the slot.
+   *
+   * A 400 and not a silent repair: the values are the words a customer reads,
+   * this product does not know what belongs in a slot nobody filled, and the
+   * sender is looking at a screen where they can type it. The sentence is
+   * `TemplateParameterError`'s own, which the dialog already shows verbatim.
+   */
+  private normalisedTemplateComponents(
+    template: { name: string | null; externalId: string; metadata: unknown },
+    components?: unknown[],
+  ): unknown[] | undefined {
+    try {
+      return normaliseTemplateComponents({
+        templateName: template.name ?? template.externalId,
+        slots: templateSlotCount(template.metadata),
+        components,
+      });
+    } catch (error) {
+      if (error instanceof TemplateParameterError) throw new BadRequestException(error.message);
+      throw error;
+    }
   }
 
   private assertComponentsBounded(components?: unknown[]): void {

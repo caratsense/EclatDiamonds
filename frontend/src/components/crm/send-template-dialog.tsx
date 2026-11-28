@@ -17,6 +17,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
   TemplatePicker,
+  templateUnsendableReason,
   type PickedTemplate,
 } from "@/components/campaigns/template-picker";
 import type { TemplateVariableDefault } from "@/lib/queries/meta-admin";
@@ -149,16 +150,28 @@ export function SendTemplateDialog({
    * contract untouched, and costs no extra call.
    */
   const templates = useMessageTemplates();
-  const row = useMemo(() => {
-    if (!picked) return undefined;
-    return (templates.data ?? [])
-      .filter(isTemplateSendable)
-      .find(
-        (t) =>
-          (t.name ?? t.externalId) === picked.name &&
-          t.metadata.languageCode === picked.languageCode,
-      );
+  const matches = useMemo(() => {
+    if (!picked) return [];
+    return (templates.data ?? []).filter(
+      (t) =>
+        (t.name ?? t.externalId) === picked.name &&
+        t.metadata.languageCode === picked.languageCode,
+    );
   }, [picked, templates.data]);
+  /** Only a template the shared verdict still allows may carry the send. */
+  const row = matches.find(isTemplateSendable);
+  /*
+   * WHY A PICKED TEMPLATE CANNOT CARRY THIS SEND.
+   *
+   * The verdict is a snapshot: a template approved when this list was fetched
+   * can be edited at Meta, or paused by it, before Send is pressed — and then
+   * `row` is undefined. Until this was here that state drew a greyed-out Send
+   * button and nothing else, which is a dead end with no sentence in it. On
+   * 28 Nov that is exactly where the client ended up: a filled-in dialog, a
+   * send that was accepted and then refused at the provider boundary with
+   * `template_unavailable`, and no reason on screen either side of it.
+   */
+  const withheld = row ? null : matches.length ? templateUnsendableReason(matches[0]) : null;
 
   const defaults = useMemo(
     () =>
@@ -252,6 +265,12 @@ export function SendTemplateDialog({
             }}
           />
 
+          {withheld ? (
+            <p className="text-[11px] text-destructive">
+              This template cannot be sent at the moment. {withheld}
+            </p>
+          ) : null}
+
           {picked && picked.variableCount > 0 ? (
             <div className="space-y-2">
               <Label className="text-xs">What goes in this message</Label>
@@ -287,6 +306,28 @@ export function SendTemplateDialog({
                 {fillTemplateBody(source, values)}
               </p>
             </div>
+          ) : picked && picked.variableCount > 0 ? (
+            /*
+             * No wording to substitute into, so the finished sentence is said
+             * to be unavailable rather than approximated.
+             *
+             * The only thing on file for a template recorded before body
+             * source was stored is `bodyPreview`, and that has META'S OWN
+             * SAMPLE NAMES baked into it — the picker shows "Hello Priya,
+             * hope you are having a good day!" above. Filling that in, or
+             * leaving it as the last word on screen with no note, invites the
+             * reading the client made on 28 Nov from the other direction: she
+             * saw a `{{1}}` in the thread and concluded a customer had been
+             * sent one. A sender reading "Priya" here would conclude the
+             * opposite just as reasonably, and be just as wrong.
+             */
+            <p className="text-[11px] text-amber-700 dark:text-amber-400">
+              The only wording on file for this template is Meta&apos;s example,
+              which carries the sample names rather than this customer&apos;s — so
+              the finished sentence cannot be shown here. What you have typed
+              above is what fills the blanks when it goes. Synchronise templates
+              to fetch the wording as written.
+            </p>
           ) : null}
         </div>
 

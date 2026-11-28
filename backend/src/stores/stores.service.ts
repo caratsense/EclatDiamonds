@@ -16,6 +16,7 @@ import {
   CreateStoreDto,
   UpdateStoreDto,
 } from './dto/stores.dto';
+import { refuseActivation, storeSetupGaps } from './store-readiness';
 
 /** Pull a store's assigned store-managers alongside it (for the admin store view). */
 const STORE_INCLUDE = {
@@ -60,6 +61,7 @@ export class StoresService {
     const managers = (store.userStores ?? [])
       .filter((us: any) => (us.role ?? us.user.role) === 'store_manager')
       .map((us: any) => ({ id: us.user.id, name: us.user.name, email: us.user.email }));
+    const gaps = storeSetupGaps(store);
     return {
       id: store.id,
       name: store.name,
@@ -92,6 +94,12 @@ export class StoresService {
       latitude: store.latitude != null ? Number(store.latitude) : null,
       longitude: store.longitude != null ? Number(store.longitude) : null,
       geofenceRadiusM: store.geofenceRadiusM ?? null,
+      // What this branch is INCOMPLETE without, carried on every store rather
+      // than only on the pending ones. Since 28 Nov neither gap stops a branch
+      // trading, so a live branch can hold one — and if the state is no longer
+      // a gate, the screen has to be the thing that keeps saying it is there.
+      needsGeo: gaps.needsGeo,
+      needsRegion: gaps.needsRegion,
       // The store's configured weekly off. Exposed because the HRMS screen that
       // EDITS it had no way to READ it, so it seeded the control from a
       // hardcoded default — showing a day that was not necessarily the one
@@ -202,12 +210,18 @@ export class StoresService {
 
     await this.assertRegion(user.organisationId, dto.regionId);
 
-    // A store may only go live with geofence coords + a region set — the same
-    // invariant activate() enforces. If the creator supplied everything it's
-    // active immediately; otherwise it lands pending until activated (no live
-    // store can exist without a geofence).
-    const hasGeo = dto.latitude != null && dto.longitude != null;
-    const ready = hasGeo && !!dto.regionId;
+    // A branch provisioned with everything filled in needs no review, so it
+    // starts active. One with a gap still lands `pending` — not because the gap
+    // stops it trading (since 28 Nov it does not; see `store-readiness.ts`) but
+    // because "Branches to review" is the only place anyone is told the gap
+    // exists. Activating it from there is one click and no longer refused.
+    const gaps = storeSetupGaps({
+      attendanceOnly: false,
+      latitude: dto.latitude ?? null,
+      longitude: dto.longitude ?? null,
+      regionId: dto.regionId ?? null,
+    });
+    const setupComplete = !gaps.needsGeo && !gaps.needsRegion;
     const store = await this.prisma.store.create({
       data: {
         id,
@@ -217,8 +231,8 @@ export class StoresService {
         name: dto.name,
         city: dto.city,
         regionId: dto.regionId || null,
-        status: ready ? 'active' : 'pending',
-        isActive: ready,
+        status: setupComplete ? 'active' : 'pending',
+        isActive: setupComplete,
         isHolding: false,
         latitude: dto.latitude != null ? String(dto.latitude) : null,
         longitude: dto.longitude != null ? String(dto.longitude) : null,
@@ -238,8 +252,12 @@ export class StoresService {
 
   /**
    * PATCH /stores/:id/activate (area_manager+, in scope) — take a branch live.
-   * Geofence coordinates and a region MUST be set first (attendance geofencing
-   * and area rollups depend on them).
+   *
+   * Activation requires only what TRADING requires, which is nothing this
+   * endpoint can check: a shop either exists or it does not. A missing geofence
+   * or region used to be refused here and is not any more — see
+   * `store-readiness.ts` for the client's request of 28 Nov and why the two are
+   * different things. They come back as gaps on the branch instead.
    *
    * It reopens a closed branch as well as activating a pending one. A shop shut
    * for a refit or a season comes back, and `close()` is deliberately a soft
@@ -251,24 +269,22 @@ export class StoresService {
     // Authorize before describing the target. Otherwise a caller could probe a
     // foreign id and distinguish an aggregate/holding row by its error message.
     this.scope.assertStoreAllowed(user, store.id);
-    if (store.isAggregate) {
-      throw new BadRequestException('The aggregate "All Stores" view cannot be activated');
-    }
-    if (store.isHolding) {
-      throw new BadRequestException('The unassigned import bucket is not a physical branch');
-    }
-    if (store.isActive || store.status === 'active') {
-      throw new ConflictException('This branch is already active');
-    }
-
-    const missing: string[] = [];
-    if (store.latitude == null || store.longitude == null) missing.push('geofence coordinates');
-    if (!store.attendanceOnly && !store.regionId) missing.push('region');
-    if (missing.length) {
-      throw new BadRequestException(`Cannot activate: set ${missing.join(' and ')} first`);
+    switch (refuseActivation(store)) {
+      case 'aggregate':
+        throw new BadRequestException('The aggregate "All Stores" view cannot be activated');
+      case 'holding':
+        throw new BadRequestException('The unassigned import bucket is not a physical branch');
+      case 'already_active':
+        throw new ConflictException('This branch is already active');
     }
 
     const updated = await this.prisma.$transaction(async (tx) => {
+      // The claim is about the LIFECYCLE alone, so two activates racing still
+      // yield exactly one activation and one audit entry. It deliberately no
+      // longer repeats the geofence/region conditions: while it did, a second
+      // attempt on a branch with no coordinates failed here instead of above,
+      // and the client was told "Branch details changed while it was being
+      // activated" about a branch nobody had touched.
       const claimed = await tx.store.updateMany({
         where: {
           id,
@@ -276,15 +292,12 @@ export class StoresService {
           status: { in: ['pending', 'closed'] },
           isActive: false,
           isHolding: false,
-          latitude: { not: null },
-          longitude: { not: null },
-          ...(store.attendanceOnly ? {} : { regionId: { not: null } }),
         },
         data: { status: 'active', isActive: true },
       });
       if (claimed.count !== 1) {
         throw new ConflictException(
-          'Branch details changed while it was being activated. Review and try again.',
+          'Someone else opened or closed this branch a moment ago. Reload and try again.',
         );
       }
       const saved = await tx.store.findFirstOrThrow({
@@ -338,9 +351,10 @@ export class StoresService {
   }
 
   /**
-   * GET /stores/pending (area_manager+, store-scoped) — branches awaiting setup
-   * (typically Gati auto-detected), newest first, each flagged with what's still
-   * missing before it can be activated.
+   * GET /stores/pending (area_manager+, store-scoped) — branches awaiting
+   * review (typically Gati auto-detected), newest first, each flagged with
+   * what is still missing. None of those flags blocks activation any more; they
+   * are what head office is here to fill in.
    */
   async listPending(user: AuthUser) {
     const stores = await this.prisma.store.findMany({
@@ -359,12 +373,10 @@ export class StoresService {
     });
     return stores.map((s) => {
       const view = this.toView(s);
-      return {
-        ...view,
-        needsGeo: s.latitude == null || s.longitude == null,
-        needsRegion: !s.regionId,
-        needsManager: view.managers.length === 0,
-      };
+      // needsGeo/needsRegion come from the view now — one rule, in
+      // `storeSetupGaps`, so this list and the branch table cannot disagree
+      // about whether a branch has a geofence.
+      return { ...view, needsManager: view.managers.length === 0 };
     });
   }
 
@@ -436,27 +448,13 @@ export class StoresService {
       data.regionId = regionId;
     }
 
-    // A live branch may be relocated, but it may not be left in a state the
-    // activation endpoint itself would reject. Check the effective post-patch
-    // values so one request can fill a legacy gap, while explicit runtime nulls
-    // and an empty region are treated as removals rather than as "not supplied".
-    if (store.status === 'active' || store.isActive) {
-      const nextLatitude =
-        dto.latitude !== undefined ? dto.latitude : store.latitude;
-      const nextLongitude =
-        dto.longitude !== undefined ? dto.longitude : store.longitude;
-      const nextRegionId =
-        dto.regionId !== undefined ? dto.regionId || null : store.regionId;
-      const missing: string[] = [];
-      if (nextLatitude == null) missing.push('latitude');
-      if (nextLongitude == null) missing.push('longitude');
-      if (!store.attendanceOnly && !nextRegionId) missing.push('region');
-      if (missing.length) {
-        throw new BadRequestException(
-          `An active branch must keep ${missing.join(', ')} configured`,
-        );
-      }
-    }
+    // There is deliberately NO readiness guard on a live branch here. It used
+    // to refuse any edit that left an active branch without coordinates or a
+    // region, mirroring the old activation rule — so once activation stopped
+    // demanding them, this would have gone on failing every ordinary save
+    // (a city correction, a phone number) on exactly the branches the client
+    // had just been allowed to open. A live branch with a gap is a legitimate
+    // state; the gap is reported on the branch, not defended here.
 
     // Address/contact: an explicitly-sent empty string clears the field, while an
     // omitted key leaves it alone — so a manager can delete a wrong value without

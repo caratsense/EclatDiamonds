@@ -38,7 +38,7 @@ export const MODULES = [
   // Inventory & Supply
   'inventory', 'stock-transfers', 'inventory/dead-stock', 'inventory/by-store',
   // Marketing & Inbound
-  'campaigns', 'lead-forms', 'marketing',
+  'campaigns', 'lead-forms', 'marketing', 'ad-enquiries',
   // HRM
   'settings/team', 'hrms', 'sales-performance', 'settings/targets', 'hrms/payroll',
   'hrms/employees',
@@ -96,6 +96,14 @@ const STORE_MANAGER: ModuleSlug[] = [
    * they apply to head office.
    */
   'campaigns',
+  /*
+   * Which advert is bringing the enquiries (client, 28 Nov). At store level,
+   * where it means the branch's own share of each advert: a manager running
+   * one shop still has to know whether the adverts head office is paying for
+   * are reaching them, and the figures are already narrowed to the branches
+   * they can see.
+   */
+  'ad-enquiries',
   'payments', 'loyalty/programme',
   'inventory', 'stock-transfers', 'inventory/dead-stock', 'inventory/by-store', 'data/images',
   'settings/team', 'sales-performance', 'settings/targets', 'hrms/payroll',
@@ -138,6 +146,9 @@ const MARKETING: AccessMap = {
   ...at('store', [
     'conversations', 'crm', 'calling', 'reminders', 'customers', 'feedback',
     'conversations/sla', 'customers/archived', 'campaigns', 'lead-forms', 'marketing', 'settings/lead-tags',
+    // Whoever buys the adverts is the first person who needs to know which of
+    // them is working.
+    'ad-enquiries',
   ]),
   ...at('own', ['hrms', 'tasks']),
 };
@@ -358,6 +369,14 @@ const ROUTE_MODULES: [prefix: string, module: ModuleSlug | null][] = [
   ['calling', 'calling'],
   ['campaigns', 'campaigns'],
   ['audiences', 'campaigns'],
+  /*
+   * The enquiry count per advert has its own screen, so it has its own entry —
+   * longest prefix wins, so this beats the spend/ROAS mapping below it. Split
+   * on purpose: the count is derived from our own threads and a store manager
+   * reads it, while spend ingestion is commercially sensitive and belongs with
+   * Broadcasts, where the ad account is connected.
+   */
+  ['attribution/meta-ads/enquiries', 'ad-enquiries'],
   ['attribution/meta-ads', 'campaigns'],
   ['marketing', 'marketing'],
   ['leads', 'crm'],

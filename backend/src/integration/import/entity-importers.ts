@@ -185,7 +185,9 @@ const stores: EntityImporter = {
       return 'updated';
     }
     // Imported stores land `pending` (no geofence/region yet) — same rule as a
-    // Gati-detected branch; HO activates them after setting coordinates.
+    // Gati-detected branch. Pending means head office has not reviewed them,
+    // not that they are unfit to open: activation stopped waiting for
+    // coordinates on 28 Nov (see stores/store-readiness.ts).
     await prisma.store.create({
       data: {
         organisationId: org,

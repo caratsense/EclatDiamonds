@@ -30,6 +30,9 @@ const A = {
   office: 'store-holding-office',
   pending: 'store-holding-pending',
   pendingRace: 'store-holding-pending-race',
+  unfenced: 'store-holding-unfenced',
+  unfencedOffice: 'store-holding-unfenced-office',
+  activateRace: 'store-holding-activate-race',
   newLegacy: 'STORE-HOLDING-NEW',
   orphanParty: 'STORE-HOLDING-PARTY',
   rejectedManager: 'manager.store-holding-e2e@test.local',
@@ -359,21 +362,187 @@ describe('Store holding/location lifecycle (e2e)', () => {
     expect(unchanged).toMatchObject({ status: 'pending', isActive: false, city: 'Pune' });
   });
 
-  it('an active branch cannot be edited into a live store with incomplete readiness', async () => {
+  it('an active branch may be edited back to having no geofence or region', async () => {
+    // This used to be refused, mirroring the old activation rule. Once
+    // activation stopped demanding coordinates (client, 28 Nov) the guard
+    // became a trap: every ordinary save on a branch she had just been allowed
+    // to open — a city correction, a phone number — would have failed with
+    // "An active branch must keep latitude, longitude configured".
+    await prisma.store.create({
+      data: {
+        id: A.unfenced,
+        organisationId: A.org,
+        name: 'Indore Ratnamani Complex',
+        city: 'Indore',
+        regionId: A.region,
+        latitude: '22.7196000',
+        longitude: '75.8577000',
+        status: 'active',
+        isActive: true,
+      },
+    });
+
     for (const body of [{ latitude: null }, { longitude: null }, { regionId: '' }]) {
       const res = await request(app.getHttpServer())
-        .patch(`/stores/${A.active}`)
+        .patch(`/stores/${A.unfenced}`)
         .set(auth(hoToken))
         .send(body);
-      expect(res.status).toBe(400);
-      expect(String(res.body.message)).toMatch(/active|geofence|region/i);
+      expect(res.status).toBe(200);
     }
 
-    const unchanged = await prisma.store.findUniqueOrThrow({ where: { id: A.active } });
-    expect(unchanged.status).toBe('active');
-    expect(unchanged.regionId).toBe(A.region);
-    expect(unchanged.latitude).not.toBeNull();
-    expect(unchanged.longitude).not.toBeNull();
+    const edited = await prisma.store.findUniqueOrThrow({ where: { id: A.unfenced } });
+    expect(edited).toMatchObject({
+      status: 'active',
+      isActive: true,
+      latitude: null,
+      longitude: null,
+      regionId: null,
+    });
+
+    // And the gap keeps being reported on the branch itself, which is now the
+    // only thing that ever mentions it.
+    const listed = await request(app.getHttpServer()).get('/stores').set(auth(hoToken));
+    expect(listed.status).toBe(200);
+    expect(
+      (listed.body as Array<{ id: string; needsGeo: boolean; needsRegion: boolean }>).find(
+        (s) => s.id === A.unfenced,
+      ),
+    ).toMatchObject({ needsGeo: true, needsRegion: true });
+
+    // Gone on the way out: the sync readiness assertion further down lists
+    // every branch with no coordinates, by exact name.
+    await prisma.store.delete({ where: { id: A.unfenced } });
+  });
+
+  it('a branch with neither a geofence nor a region goes live anyway', async () => {
+    /*
+     * The report: the client could not activate INDORE RATNAMANI COMPLEX. The
+     * screen said "Geofence missing" and "Region missing" and the toast said
+     * "Could not activate this branch — it may still be missing details."
+     * Her answer, 28 Nov: "for activation this shouldn't be there. Geofencing
+     * could be set up later on when we want it. The store should at least be
+     * activated without that geofence so that we can start operating on it."
+     */
+    await prisma.store.create({
+      data: {
+        id: A.unfenced,
+        organisationId: A.org,
+        name: 'Ratnamani Complex',
+        city: 'Indore',
+        status: 'pending',
+        isActive: false,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .patch(`/stores/${A.unfenced}/activate`)
+      .set(auth(hoToken));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      status: 'active',
+      isActive: true,
+      // Activated, and still honest about what it has not got.
+      needsGeo: true,
+      needsRegion: true,
+    });
+    expect(await prisma.store.findUniqueOrThrow({ where: { id: A.unfenced } })).toMatchObject({
+      status: 'active',
+      isActive: true,
+    });
+    expect(
+      await prisma.auditLog.count({
+        where: { organisationId: A.org, action: 'store.activate', entityId: A.unfenced },
+      }),
+    ).toBe(1);
+
+    await prisma.store.delete({ where: { id: A.unfenced } });
+  });
+
+  it('an attendance-only office with no coordinates at all goes live', async () => {
+    // An office exists FOR attendance, so a missing geofence is the thing it
+    // most wants filled in — and still not a reason to refuse to open it.
+    // A missing region is not even a gap for it: it sells nothing, so it is in
+    // no sales area's rollup by design.
+    await prisma.store.create({
+      data: {
+        id: A.unfencedOffice,
+        organisationId: A.org,
+        name: 'Indore Back Office',
+        city: 'Indore',
+        attendanceOnly: true,
+        status: 'pending',
+        isActive: false,
+      },
+    });
+
+    const res = await request(app.getHttpServer())
+      .patch(`/stores/${A.unfencedOffice}/activate`)
+      .set(auth(hoToken));
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      status: 'active',
+      isActive: true,
+      needsGeo: true,
+      needsRegion: false,
+    });
+
+    await prisma.store.delete({ where: { id: A.unfencedOffice } });
+  });
+
+  it('two activates racing yield exactly one activation and one audit entry', async () => {
+    // The lifecycle claim is the only thing standing between a double-click and
+    // two activation events. It used to repeat the geofence and region
+    // conditions as well, which is how the second attempt on a branch with no
+    // coordinates came back as "Branch details changed while it was being
+    // activated" — about a branch nobody had touched.
+    await prisma.store.create({
+      data: {
+        id: A.activateRace,
+        organisationId: A.org,
+        name: 'Activate Race Branch',
+        city: 'Indore',
+        status: 'pending',
+        isActive: false,
+      },
+    });
+
+    const originalTransaction = (prisma.$transaction as any).bind(prisma);
+    let rivalActivated = false;
+    const transactionSpy: jest.SpyInstance = jest.spyOn(prisma as any, '$transaction');
+    transactionSpy.mockImplementation(async (...args: any[]) => {
+      if (!rivalActivated && typeof args[0] === 'function') {
+        rivalActivated = true;
+        await prisma.store.update({
+          where: { id: A.activateRace },
+          data: { status: 'active', isActive: true },
+        });
+      }
+      return originalTransaction(...args);
+    });
+
+    try {
+      const res = await request(app.getHttpServer())
+        .patch(`/stores/${A.activateRace}/activate`)
+        .set(auth(hoToken));
+      expect(res.status).toBe(409);
+      expect(String(res.body.message)).toMatch(/opened or closed/i);
+    } finally {
+      transactionSpy.mockRestore();
+    }
+
+    expect(rivalActivated).toBe(true);
+    expect(await prisma.store.findUniqueOrThrow({ where: { id: A.activateRace } })).toMatchObject({
+      status: 'active',
+      isActive: true,
+    });
+    // The loser wrote nothing, audit included.
+    expect(
+      await prisma.auditLog.count({
+        where: { organisationId: A.org, action: 'store.activate', entityId: A.activateRace },
+      }),
+    ).toBe(0);
+
+    await prisma.store.delete({ where: { id: A.activateRace } });
   });
 
   it('an active attendance-only office can be edited without assigning a sales region', async () => {
@@ -437,28 +606,20 @@ describe('Store holding/location lifecycle (e2e)', () => {
     expect(Number(raced.latitude)).toBeCloseTo(19.2, 6);
   });
 
-  it('a closed branch reopens through the activation endpoint, and only when ready', async () => {
+  it('a closed branch reopens through the activation endpoint, geofence or no geofence', async () => {
     await prisma.store.update({
       where: { id: A.active2 },
       data: { status: 'closed', isActive: false, latitude: null, longitude: null },
     });
 
-    // Closed is a soft state, but reopening is held to the same readiness as a
-    // first activation: no coordinates, no reopen.
-    const notReady = await request(app.getHttpServer())
-      .patch(`/stores/${A.active2}/activate`)
-      .set(auth(hoToken));
-    expect(notReady.status).toBe(400);
-    expect(String(notReady.body.message)).toMatch(/geofence/i);
-
-    await prisma.store.update({
-      where: { id: A.active2 },
-      data: { latitude: 19.07, longitude: 72.87 },
-    });
+    // Closed is a soft state, and reopening is held to the same rule as a first
+    // activation — which since 28 Nov does not include a geofence. A shop back
+    // from a refit must not be kept shut over coordinates nobody has typed in.
     const reopened = await request(app.getHttpServer())
       .patch(`/stores/${A.active2}/activate`)
       .set(auth(hoToken));
     expect(reopened.status).toBe(200);
+    expect(reopened.body).toMatchObject({ status: 'active', needsGeo: true });
     expect(await prisma.store.findUniqueOrThrow({ where: { id: A.active2 } })).toMatchObject({
       status: 'active',
       isActive: true,
@@ -474,6 +635,13 @@ describe('Store holding/location lifecycle (e2e)', () => {
       .patch(`/stores/${A.active2}/activate`)
       .set(auth(hoToken));
     expect(again.status).toBe(409);
+
+    // Put its coordinates back: the sync readiness assertion further down lists
+    // every branch that has none, by exact name.
+    await prisma.store.update({
+      where: { id: A.active2 },
+      data: { latitude: 19.07, longitude: 72.87 },
+    });
   });
 
   it('an area manager cannot edit a same-tenant branch outside their assigned scope', async () => {

@@ -1,9 +1,23 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { IsIn, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Length,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 import { Roles } from '../auth/roles.decorator';
 import { AuthUser, CurrentUser } from '../common/auth-user';
 import { RateLimit } from '../common/rate-limit';
+import { StoreHeader } from '../common/store-header.decorator';
+import { AdEnquiryCountsService } from './ad-enquiry-counts.service';
 import { MetaAdsInsightsService } from './meta-ads-insights.service';
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -32,10 +46,20 @@ export class MetaAdsPerformanceDto extends MetaAdsSyncDto {
   model?: 'first_touch' | 'last_touch';
 }
 
+export class AdEnquiryCountsDto {
+  @IsOptional() @IsString() @Length(1, 40) storeId?: string;
+
+  /** `@Type` is required: a query parameter arrives as a string and `@IsInt()` rejects "90". */
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(365) days?: number;
+}
+
 /** Measured Meta spend and ROAS. No route accepts a token or account id. */
 @Controller('attribution/meta-ads')
 export class MetaAdsAttributionController {
-  constructor(private readonly insights: MetaAdsInsightsService) {}
+  constructor(
+    private readonly insights: MetaAdsInsightsService,
+    private readonly enquiryCounts: AdEnquiryCountsService,
+  ) {}
 
   /** Queueing can consume a provider rate limit, so only head office may do it. */
   @Roles('head_office')
@@ -50,5 +74,23 @@ export class MetaAdsAttributionController {
   @Get('performance')
   performance(@CurrentUser() user: AuthUser, @Query() query: MetaAdsPerformanceDto) {
     return this.insights.performance(user, query);
+  }
+
+  /**
+   * Which advert brought the most enquiries (client, 28 Nov). Counted from our
+   * own threads, so it needs no Meta connection and no ad account — a tenant
+   * whose token has expired still gets the counts, named by advert id.
+   *
+   * Branch from the store switcher unless the caller named one, as every other
+   * reporting screen reads it.
+   */
+  @Roles('store_manager')
+  @Get('enquiries')
+  enquiries(
+    @CurrentUser() user: AuthUser,
+    @Query() query: AdEnquiryCountsDto,
+    @StoreHeader() store?: string,
+  ) {
+    return this.enquiryCounts.report(user, { ...query, storeId: query.storeId ?? store });
   }
 }

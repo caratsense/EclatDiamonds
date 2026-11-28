@@ -127,10 +127,20 @@ export class CreateCampaignDto {
    * checked in campaign-variables against the template Meta actually approved,
    * which a decorator here cannot see; the ceiling is Meta's own limit on body
    * variables.
+   *
+   * `@Type(() => Object)` NAMES THE ELEMENT TYPE, and without it every mapping
+   * posted here was destroyed before it reached the database — 28 Nov, found on
+   * the thread-send path and identical here. `unknown[]` reflects as
+   * `design:type = Array`, main.ts turns on `enableImplicitConversion`, and
+   * class-transformer then applies Array to each ELEMENT: every row became an
+   * `Array` carrying `slot`, `source` and `fallback` as named properties, which
+   * `toJsonOrNull` wrote to Prisma as `[[]]`. At launch `parseVariableMappings`
+   * then read a row with no source and refused the whole broadcast.
    */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)
+  @Type(() => Object)
   templateVariables?: unknown[];
 
   @IsOptional()
@@ -202,10 +212,20 @@ export class UpdateCampaignDto {
    * checked in campaign-variables against the template Meta actually approved,
    * which a decorator here cannot see; the ceiling is Meta's own limit on body
    * variables.
+   *
+   * `@Type(() => Object)` NAMES THE ELEMENT TYPE, and without it every mapping
+   * posted here was destroyed before it reached the database — 28 Nov, found on
+   * the thread-send path and identical here. `unknown[]` reflects as
+   * `design:type = Array`, main.ts turns on `enableImplicitConversion`, and
+   * class-transformer then applies Array to each ELEMENT: every row became an
+   * `Array` carrying `slot`, `source` and `fallback` as named properties, which
+   * `toJsonOrNull` wrote to Prisma as `[[]]`. At launch `parseVariableMappings`
+   * then read a row with no source and refused the whole broadcast.
    */
   @IsOptional()
   @IsArray()
   @ArrayMaxSize(10)
+  @Type(() => Object)
   templateVariables?: unknown[];
 
   @IsOptional()

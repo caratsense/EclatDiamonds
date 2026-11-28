@@ -58,8 +58,13 @@ const MAX_FALLBACK = 60;
  * Meta's own rule about parameter content: no newline, no tab, and no run of
  * four or more spaces. A pasted name with a line break in it would be refused
  * at the provider, so it is flattened here rather than sent and rejected.
+ *
+ * Exported since 28 Nov, when a thread send turned out to be shaping its own
+ * parameters: omnichannel/template-parameters imports this rather than
+ * restating it, because a broadcast and a one-off send that collapse a pasted
+ * name differently are two products.
  */
-function flatten(value: string): string {
+export function flatten(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 

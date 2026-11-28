@@ -29,7 +29,10 @@ export interface TemplateCard {
   headerText: string | null;
   /** Meta's CDN address for the approved header file. Expires. */
   headerImageUrl: string | null;
-  /** The approved wording, with this send's own variables substituted. */
+  /**
+   * The approved wording, with this send's own variables substituted. A value
+   * this send did not record reads as a gap, never as `{{n}}` — see `fillSlots`.
+   */
   body: string | null;
   footerText: string | null;
 }
@@ -61,7 +64,11 @@ export function templateCardFrom(
    * right words.
    */
   const source = str(raw.bodySource);
-  const body = source ? fillSlots(source, parameters) : str(raw.bodyPreview);
+  const text = source ?? str(raw.bodyPreview);
+  // Both paths go through `fillSlots`, so NEITHER can reach the bubble with a
+  // {{n}} still in it — a synced preview that kept its markers would otherwise
+  // have slipped out unfilled; see the 28 Nov note on `fillSlots`.
+  const body = text ? fillSlots(text, parameters) : null;
 
   return {
     name,
@@ -74,16 +81,39 @@ export function templateCardFrom(
 }
 
 /**
+ * A value belonged here and we do not hold it. Never `{{n}}`.
+ */
+const UNFILLED_SLOT = '…';
+
+/**
  * Substitute {{1}}, {{2}}… with the values this send supplied.
  *
- * A slot with no value is LEFT AS IT IS rather than emptied. An unfilled slot
- * is a bug worth seeing; a silently blank one reads as a sentence the customer
- * was actually sent.
+ * A slot with no value becomes a visible gap. It used to be left exactly as it
+ * was, on the reasoning that an unfilled slot is a bug worth seeing — and it
+ * is, but not HERE, in the one place that claims to be a record of what a
+ * customer read.
+ *
+ * On 28 Nov the client sent `newmessage` from a thread and typed "Sneha" into
+ * its one variable. The send stored `templateComponents: [[]]` — an array
+ * holding an empty array, no parameters at all — and Meta had the template back
+ * under review, so the send was blocked and nothing left the building. The
+ * bubble nevertheless drew "Hello {{1}}, hope you are having a good day!", and
+ * she concluded a customer had been sent our own markup. Her words: "it is
+ * showing bracket 1 and not Sneha there, when I have already set it in the
+ * template part."
+ *
+ * The gap is the weakest claim of the three available. `{{n}}` asserts the
+ * customer was shown markup. `bodyPreview` would assert a name she never saw —
+ * the reason this function exists at all. The template's own stand-in from
+ * `variableDefaults` would read as a finished sentence, indistinguishable from
+ * a true record of a message that in this case never went out. A gap asserts
+ * only that something belonged there; when the send failed, the refusal
+ * underneath the bubble says the rest.
  */
 function fillSlots(text: string, parameters: string[]) {
-  return text.replace(/\{\{\s*(\d+)\s*\}\}/g, (whole, index: string) => {
+  return text.replace(/\{\{\s*(\d+)\s*\}\}/g, (_whole, index: string) => {
     const value = parameters[Number(index) - 1];
-    return typeof value === 'string' && value.length ? value : whole;
+    return typeof value === 'string' && value.length ? value : UNFILLED_SLOT;
   });
 }
 

@@ -33,6 +33,7 @@ import {
   MessageSquareHeart,
   MessageSquarePlus,
   MessageSquareReply,
+  MousePointerClick,
   PackageX,
   Percent,
   PhoneCall,
@@ -898,6 +899,26 @@ export const NAV_ITEMS: NavItem[] = [
     roles: ["store_manager", "area_manager", "head_office"],
   },
   {
+    /*
+     * Which advert is bringing the enquiries (client, 28 Nov): "kaun se ad pe
+     * mujhe sabse zyada number of messages aa rahe hain ... So I want like a
+     * count."
+     *
+     * In Reports rather than beside Broadcasts, because the job is reading a
+     * number over a period she picks, not sending anything — and because the
+     * person who asks it is the person already in Reports comparing branches.
+     */
+    module: 16,
+    slug: "ad-enquiries",
+    title: "Advert Enquiries",
+    purpose: "Which advert brought the most enquiries, how many wrote back, and to which branch.",
+    primaryAction: "",
+    icon: MousePointerClick,
+    group: "Reports",
+    rank: 35,
+    roles: ["store_manager", "area_manager", "head_office"],
+  },
+  {
     module: 10,
     slug: "reporting/scheduled",
     title: "Scheduled Reports",
@@ -1118,6 +1139,13 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
   "customers",
   "customers/archived",
   "conversations/sla",
+  /*
+   * Which advert is bringing the enquiries (client, 28 Nov). Core in the
+   * backend pack too — counting threads per advert is not a jewellery habit —
+   * and both halves were added together, which is the rule the quick-replies
+   * note below spells out.
+   */
+  "ad-enquiries",
   "tasks",
   "reminders",
   "catalogue",

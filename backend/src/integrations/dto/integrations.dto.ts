@@ -1,3 +1,4 @@
+import { Type } from 'class-transformer';
 import {
   IsArray,
   IsEmail,
@@ -37,9 +38,18 @@ export class SendWhatsAppDto {
   @MaxLength(10)
   languageCode?: string;
 
-  /** WhatsApp template component objects (header/body/button parameters). */
+  /**
+   * WhatsApp template component objects (header/body/button parameters).
+   *
+   * `@Type(() => Object)` for the same reason as `templateComponents` on
+   * QueueOmnichannelMessageDto, and the same 28 Nov fault: without it
+   * class-transformer reads the reflected `Array` as the type of each ELEMENT
+   * and every component serialises to `[]`, so the quote's figures reached Meta
+   * as `[[]]` and the customer would have read the template's raw `{{n}}`.
+   */
   @IsOptional()
   @IsArray()
+  @Type(() => Object)
   components?: unknown[];
 
   /**
