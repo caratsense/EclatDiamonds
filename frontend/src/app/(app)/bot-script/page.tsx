@@ -20,17 +20,25 @@ const nav = getNavItem("bot-script")!;
  * answers) is gone from this screen: switching the walk-in conversation OFF is
  * what keeps that legacy questionnaire running.
  *
- * Above both, and only when there is something to say: the campaigns that have
- * actually sent enquiries and carry no script (client, 28 Nov). A campaign with
- * no rule used to fail into a container log, so from here it looked like a
- * campaign that had never run.
+ * Beneath the campaign list, and only when there is something to say: the
+ * campaigns that have actually sent enquiries and carry no script (client,
+ * 28 Nov). A campaign with no rule used to fail into a container log, so from
+ * here it looked like a campaign that had never run.
+ *
+ * It opened ABOVE the campaigns, on the argument that a warning should be the
+ * first thing read. The client moved it down the same day, and she is right:
+ * this screen is opened to write a script, and the panel is a list of
+ * campaigns that need one — so it reads as the tail of the list rather than a
+ * preface to it. Putting it first pushed the thing she came to do off the top
+ * of the screen, which is a strange way to treat a page somebody visits on
+ * purpose.
  */
 export default function BotScriptPage() {
   return (
     <div className="space-y-6">
       <SectionHeader title={nav.title} purpose={nav.purpose} />
-      <UnconfiguredCampaignsPanel />
       <CampaignScriptsConfig />
+      <UnconfiguredCampaignsPanel />
       <WalkInConversationConfig />
     </div>
   );

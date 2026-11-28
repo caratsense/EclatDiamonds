@@ -152,7 +152,7 @@ const CORE_NAVIGATION = [
    * entitlement AND the navigation, which is how NPS shipped invisible the
    * first time.
    */
-  'ad-enquiries',
+  'ad-analytics',
   /*
    * The screens below were BUILT AND UNREACHABLE.
    *

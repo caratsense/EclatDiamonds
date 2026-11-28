@@ -38,7 +38,7 @@ export const MODULES = [
   // Inventory & Supply
   'inventory', 'stock-transfers', 'inventory/dead-stock', 'inventory/by-store',
   // Marketing & Inbound
-  'campaigns', 'lead-forms', 'marketing', 'ad-enquiries',
+  'campaigns', 'lead-forms', 'marketing', 'ad-analytics',
   // HRM
   'settings/team', 'hrms', 'sales-performance', 'settings/targets', 'hrms/payroll',
   'hrms/employees',
@@ -103,7 +103,7 @@ const STORE_MANAGER: ModuleSlug[] = [
    * are reaching them, and the figures are already narrowed to the branches
    * they can see.
    */
-  'ad-enquiries',
+  'ad-analytics',
   'payments', 'loyalty/programme',
   'inventory', 'stock-transfers', 'inventory/dead-stock', 'inventory/by-store', 'data/images',
   'settings/team', 'sales-performance', 'settings/targets', 'hrms/payroll',
@@ -148,7 +148,7 @@ const MARKETING: AccessMap = {
     'conversations/sla', 'customers/archived', 'campaigns', 'lead-forms', 'marketing', 'settings/lead-tags',
     // Whoever buys the adverts is the first person who needs to know which of
     // them is working.
-    'ad-enquiries',
+    'ad-analytics',
   ]),
   ...at('own', ['hrms', 'tasks']),
 };
@@ -376,7 +376,7 @@ const ROUTE_MODULES: [prefix: string, module: ModuleSlug | null][] = [
    * reads it, while spend ingestion is commercially sensitive and belongs with
    * Broadcasts, where the ad account is connected.
    */
-  ['attribution/meta-ads/enquiries', 'ad-enquiries'],
+  ['attribution/meta-ads/enquiries', 'ad-analytics'],
   ['attribution/meta-ads', 'campaigns'],
   ['marketing', 'marketing'],
   ['leads', 'crm'],

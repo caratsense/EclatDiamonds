@@ -1347,6 +1347,8 @@ function ThreadView({
   // Dialog states for Zithara Right Sidebar Accordions
   const [editCustomerOpen, setEditCustomerOpen] = useState(false);
   const [noteDialogOpen, setNoteDialogOpen] = useState(false);
+  /** Whether the notes already on this customer are unrolled beneath the row. */
+  const [notesOpen, setNotesOpen] = useState(false);
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [noteText, setNoteText] = useState("");
   const [taskTitle, setTaskTitle] = useState("");
@@ -2387,25 +2389,77 @@ function ThreadView({
               */}
             </div>
 
-            <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">
-              <span className="font-medium flex items-center gap-1.5">
-                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                Notes
-                {/* The real count, so a thread with history says so before it
-                    is opened. Omitted rather than shown as 0 while loading. */}
-                {notes.data?.length ? (
-                  <span className="num text-[10px] text-muted-foreground">
-                    ({notes.data.length})
-                  </span>
-                ) : null}
-              </span>
-              <button
-                type="button"
-                onClick={() => setNoteDialogOpen(true)}
-                className="text-primary hover:underline text-[11px] font-medium"
-              >
-                + Add
-              </button>
+            {/*
+              NOTES OPEN. They used to only count.
+
+              The row carried "(1)" and an Add button and nothing else — so a
+              note could be written, counted and then never read again by
+              anybody, including the person who wrote it. Client, 28 Nov: "it
+              shows Notes (1), that is a note has been added there, but I cannot
+              see it when I click on it."
+
+              The count is the affordance: a row that says there is something
+              behind it has to open. It starts closed because the panel is a
+              column of sections and one of them unrolling on every thread would
+              push the rest off the screen.
+            */}
+            <div className="hover:bg-muted/30 transition-colors">
+              <div className="p-3 flex items-center justify-between">
+                <button
+                  type="button"
+                  onClick={() => setNotesOpen((v) => !v)}
+                  // Not a button at all when there is nothing to show: a
+                  // control that opens an empty drawer teaches people to stop
+                  // pressing it.
+                  disabled={!notes.data?.length}
+                  aria-expanded={notesOpen}
+                  className="font-medium flex items-center gap-1.5 disabled:cursor-default"
+                >
+                  <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                  Notes
+                  {/* The real count, so a thread with history says so before it
+                      is opened. Omitted rather than shown as 0 while loading. */}
+                  {notes.data?.length ? (
+                    <>
+                      <span className="num text-[10px] text-muted-foreground">
+                        ({notes.data.length})
+                      </span>
+                      <ChevronDown
+                        className={`h-3 w-3 text-muted-foreground transition-transform ${
+                          notesOpen ? "" : "-rotate-90"
+                        }`}
+                        aria-hidden
+                      />
+                    </>
+                  ) : null}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setNoteDialogOpen(true)}
+                  className="text-primary hover:underline text-[11px] font-medium"
+                >
+                  + Add
+                </button>
+              </div>
+              {notesOpen && notes.data?.length ? (
+                <ul className="space-y-2 px-3 pb-3">
+                  {notes.data.map((n) => (
+                    <li key={n.id} className="rounded-md border border-border/70 bg-muted/20 p-2">
+                      <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+                        {n.text}
+                      </p>
+                      <p className="mt-1 text-[10px] text-muted-foreground">
+                        {n.authorName ?? "Someone who has since left"}
+                        {" · "}
+                        {lastInteraction(n.createdAt, whenOpts)}
+                        {/* A note left against one enquiry is not a note about
+                            the person, and reading it as one misleads. */}
+                        {n.onLead ? " · on an enquiry" : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
             </div>
 
             <div className="p-3 flex items-center justify-between hover:bg-muted/30 transition-colors">

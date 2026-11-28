@@ -909,8 +909,8 @@ export const NAV_ITEMS: NavItem[] = [
      * person who asks it is the person already in Reports comparing branches.
      */
     module: 16,
-    slug: "ad-enquiries",
-    title: "Advert Enquiries",
+    slug: "ad-analytics",
+    title: "Ad Analytics",
     purpose: "Which advert brought the most enquiries, how many wrote back, and to which branch.",
     primaryAction: "",
     icon: MousePointerClick,
@@ -1145,7 +1145,7 @@ export const CORE_NAVIGATION: readonly string[] = Object.freeze([
    * and both halves were added together, which is the rule the quick-replies
    * note below spells out.
    */
-  "ad-enquiries",
+  "ad-analytics",
   "tasks",
   "reminders",
   "catalogue",

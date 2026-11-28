@@ -62,7 +62,7 @@ import { advertLabel, campaignLabel, chartRows } from "./ad-enquiry-labels";
  * cost figure assembled here would be a guess about real money.
  */
 export default function AdEnquiriesPage() {
-  const item = getNavItem("ad-enquiries");
+  const item = getNavItem("ad-analytics");
   const role = useSession((s) => s.role);
   const currentStore = useSession((s) => s.currentStore);
   const [days, setDays] = useState<number>(30);
@@ -80,7 +80,7 @@ export default function AdEnquiriesPage() {
   return (
     <div>
       <SectionHeader
-        title={item?.title ?? "Advert Enquiries"}
+        title={item?.title ?? "Ad Analytics"}
         purpose={item?.purpose}
         actions={
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
